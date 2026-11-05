@@ -103,6 +103,8 @@ Chaque touche reste modifiable : `--keybind_a=Return,Space`, `--keybind_right_sh
 
 Test sans écran : `./input_test.sh essai 70 "e" "Down" "Return"` (Xvfb + XTest via
 `tools/xkeys.py`, une capture `runs/essai_<n>.png` après chaque groupe de touches).
+Le Dashboard ignore les appuis pendant ses animations : un appui par étape. Avec lavapipe, certaines
+transitions d'écran se figent ; `DASH_GDB=1 DASH_STEP=4` (exécution sous gdb, plus lente) les évite.
 
 ## Profil joueur
 
@@ -139,10 +141,26 @@ placés dans `dash/assets/profiles/<XUID>/` :
   profil de démonstration (deux jeux fictifs, succès en partie obtenus, images générées).
 - Gamerscore de la carte : somme des jeux (`--dash_gamerscore=-1`, défaut), 0 sans GPD ; une valeur
   ≥ 0 le fixe.
-- Écrans vérifiés : **Achievements** (tous jeux : nombre de succès, Gamerscore obtenu/total, images)
-  et **Played Games** (liste, succès, Gamerscore, icônes). Le détail d'un jeu (Entrée) ne s'ouvre pas
-  encore.
-- `XamIsSystemTitleId` est implémentée : le stub du SDK faisait passer tout jeu pour un titre système.
+- Un vrai jeu : `tools/spa_to_gpd.py` construit le GPD d'un jeu à partir de ses données de titre
+  (ressource SPA `<TitleID>` de son XEX : succès, descriptions, images, icône) et l'ajoute aux jeux
+  joués ; `--earned id,id` marque des succès comme obtenus (progression fictive). Exemple avec Skate :
+  ```sh
+  tools/xexinfo/build/xexinfo ../Skate1Recompiled/game/default.xex work/skate.pe
+  python3 tools/xex_resource.py ../Skate1Recompiled/game/default.xex work/skate.pe 45410813 work/45410813.spa
+  python3 tools/spa_to_gpd.py work/45410813.spa dash/assets/profiles/B13EBABEBABEBABE --earned 7,8,12,16,24
+  ```
+- Écrans vérifiés : **Achievements** (tous jeux), **Played Games** (liste, succès, Gamerscore,
+  icônes), **Game Summary** d'un jeu (icône, derniers succès avec leurs images, totaux).
+- **Achievements d'un jeu** (Game Summary > Achievements) : sur la console, c'est l'interface de XAM
+  (`XamShowAchievementsUI`), que l'émulation haut niveau n'a pas. `src/dash_xam_ui.cpp` la remplace
+  par un écran ImGui : tous les succès du jeu (obtenus d'abord, puis verrouillés en grisé, secrets
+  masqués), images, points, progression ; Haut/Bas pour parcourir, Échap/B pour fermer. Comme XAM,
+  il envoie `XN_SYS_UI` et suspend les entrées du Dashboard. Test direct :
+  `DASH_ENV="DASH_TEST_XAMUI=45410813" ./input_test.sh essai 70 "Down" "Escape"`.
+- `XamIsSystemTitleId` et `XamIsXbox1TitleId` sont implémentées : leurs stubs renvoyaient l'identifiant
+  du jeu (donc « vrai »), si bien que tout jeu passait pour un titre système (exception C++ fatale
+  dans Achievements) ou pour un jeu Xbox originale (sauvegardes cherchées dans `fusion:\UDATA`).
+- Images : `XamReadTile` (listes) et `XamReadTileEx` (Game Summary) partagent la même recherche.
 
 Pour que la carte se remplisse, tous les réglages qu'elle demande doivent exister : le SDK fait
 échouer la lecture entière si un seul est inconnu. `ApplyProfileSettings()` déclare donc les

@@ -17,6 +17,7 @@ set(DASH_SOURCES
     src/diag_hooks.cpp
     src/dash_profile.cpp
     src/dash_achievements.cpp
+    src/dash_xam_ui.cpp
 )
 
 if(WIN32)

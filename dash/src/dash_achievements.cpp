@@ -265,6 +265,9 @@ u32 XamReadTile_entry(u32 tile_type, u32 title_id, u64 tile_id, u32 user_index,
     }
     *buffer_size = length;
   }
+  REXLOG_INFO("[dash] XamReadTile(type={}, titre={:08X}, id={:#x}, tampon={}) -> {:#x}, {} octets",
+              uint32_t(tile_type), uint32_t(title_id), uint64_t(tile_id), buffer ? "oui" : "non",
+              result, length);
   if (overlapped) {
     system::kernel_state()->CompleteOverlappedImmediateEx(overlapped, result, result, length);
     return X_ERROR_IO_PENDING;
@@ -279,6 +282,42 @@ u32 XamIsSystemTitleId_entry(u32 title_id) {
   if ((title_id >> 16) == 0xFFFE) return 1;
   if ((title_id & 0xFF000000) == 0x58000000) return ((title_id >> 16) & 0xFF) != 0x41;
   return 0;
+}
+
+// Jeu Xbox originale ? Les titres Xbox 360 ont un numéro de jeu (16 bits bas) >= 0x7D0.
+// Même piège que ci-dessus : le stub renvoyait l'identifiant, tout jeu passait pour Xbox 1
+// (le Dashboard cherchait alors ses sauvegardes dans fusion:\UDATA).
+u32 XamIsXbox1TitleId_entry(u32 title_id) {
+  if (title_id == 0xFFFE0000) return 1;  // Dashboard Xbox 1
+  if (title_id == 0 || (title_id >> 16) == 0xFFFE) return 0;
+  return (title_id & 0xFFFF) < 0x7D0;
+}
+
+// Succès d'un jeu avec leurs images, pour l'écran de remplacement de XAM (dash_xam_ui.cpp).
+struct TitleView {
+  std::u16string name;
+  std::vector<std::pair<gpd::Achievement, std::vector<uint8_t>>> items;
+};
+
+TitleView GetTitleView(uint32_t title_id) {
+  std::lock_guard lock(g_mutex);
+  TitleView view;
+  for (auto& t : Data().dash.Titles()) {
+    if (t.title_id == title_id) view.name = t.name;
+  }
+  if (auto* f = TitleGpd(title_id)) {
+    auto list = f->Achievements();
+    std::sort(list.begin(), list.end(), [](auto& a, auto& b) {
+      if (a.earned() != b.earned()) return a.earned();          // obtenus d'abord,
+      if (a.earned()) return a.unlock_time > b.unlock_time;     // les plus récents en tête
+      return a.id < b.id;
+    });
+    for (auto& a : list) {
+      auto img = f->Get(gpd::kImage, a.image_id);
+      view.items.emplace_back(a, img ? *img : std::vector<uint8_t>{});
+    }
+  }
+  return view;
 }
 
 // Gamerscore obtenu, d'après les GPD (0 sans données).
@@ -297,3 +336,4 @@ REX_HOOK(__imp__XamUserCreateAchievementEnumerator,
          dash::achievements::XamUserCreateAchievementEnumerator_entry)
 REX_HOOK(__imp__XamReadTile, dash::achievements::XamReadTile_entry)
 REX_HOOK(__imp__XamIsSystemTitleId, dash::achievements::XamIsSystemTitleId_entry)
+REX_HOOK(__imp__XamIsXbox1TitleId, dash::achievements::XamIsXbox1TitleId_entry)

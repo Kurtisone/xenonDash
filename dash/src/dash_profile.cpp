@@ -58,6 +58,7 @@ uint32_t xeXamEnumerate(uint32_t handle, uint32_t flags, rex::MappedPtr<void> bu
 
 namespace dash::achievements {
 int32_t GpdGamerscore();
+std::vector<uint8_t> FindTile(uint32_t type, uint32_t title_id, uint64_t tile_id);
 }
 
 namespace dash::profile {
@@ -278,12 +279,15 @@ std::vector<uint8_t> LoadGamerPic(uint64_t xuid, bool small) {
 // l'opération tout de suite et on renvoie ERROR_IO_PENDING.
 u32 XamReadTileEx_entry(u32 tile_type, u32 title_id, u64 tile_id, u32 user_index, u32 flag,
                         u32 unk, mapped_void buffer, mapped_u32 buffer_size, u32 overlapped) {
-  (void)tile_id; (void)flag; (void)unk;
+  (void)flag; (void)unk;
   X_RESULT result = X_ERROR_FILE_NOT_FOUND;
   uint32_t length = 0;
-  bool is_gamer_tile = tile_type == kTileTypeGamerTile || tile_type == kTileTypeGamerTileSmall;
-  if (is_gamer_tile && title_id == kDashTitleId && user_index == 0 && buffer_size) {
-    auto png = LoadGamerPic(LocalXuid(), tile_type == kTileTypeGamerTileSmall);
+  // Image du joueur (types 2/3), icône de jeu (1) ou de succès (0) : même recherche que XamReadTile.
+  bool gamer_tile = tile_type == kTileTypeGamerTile || tile_type == kTileTypeGamerTileSmall;
+  auto png = (gamer_tile && (title_id != kDashTitleId || user_index != 0))
+                 ? std::vector<uint8_t>{}
+                 : achievements::FindTile(tile_type, title_id, tile_id);
+  if (!png.empty() && buffer_size) {
     length = uint32_t(png.size());
     if (!buffer || *buffer_size < length) {
       result = kErrorInsufficientBuffer;
@@ -293,8 +297,8 @@ u32 XamReadTileEx_entry(u32 tile_type, u32 title_id, u64 tile_id, u32 user_index
     }
     *buffer_size = length;
   }
-  REXLOG_INFO("[dash] XamReadTileEx(type={}, titre={:08X}) -> {:#x}, {} octets", uint32_t(tile_type),
-              uint32_t(title_id), result, length);
+  REXLOG_INFO("[dash] XamReadTileEx(type={}, titre={:08X}, id={:#x}) -> {:#x}, {} octets",
+              uint32_t(tile_type), uint32_t(title_id), uint64_t(tile_id), result, length);
   if (overlapped) {
     system::kernel_state()->CompleteOverlappedImmediateEx(overlapped, result, result, length);
     return X_ERROR_IO_PENDING;

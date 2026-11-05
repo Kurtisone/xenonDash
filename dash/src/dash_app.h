@@ -13,11 +13,22 @@
 namespace dash::profile {
 void ApplyProfileSettings();
 }
+namespace rex::ui {
+class WindowedAppContext;
+class ImGuiDrawer;
+class ImmediateDrawer;
+}  // namespace rex::ui
+namespace dash::xamui {
+void Init(rex::ui::WindowedAppContext* app, rex::ui::ImGuiDrawer* imgui, rex::ui::ImmediateDrawer* immediate);
+bool IsOpen();
+}
 #include "null_audio.h"
 #include <rex/rex_app.h>
 #include <rex/filesystem/devices/host_path_device.h>
 #include <rex/logging.h>
+#include <rex/input/input_system.h>
 #include <rex/runtime.h>
+#include <rex/ui/imgui_drawer.h>
 
 class DashApp : public rex::ReXApp {
  public:
@@ -53,6 +64,15 @@ class DashApp : public rex::ReXApp {
   // à remplir avec le contenu extrait du dump NAND.
   void OnPostSetup() override {
     dash::profile::ApplyProfileSettings();
+    // Interfaces XAM remplacées par ImGui (dash_xam_ui.cpp) : entrées du Dashboard suspendues
+    // tant qu'elles sont affichées.
+    dash::xamui::Init(&app_context(), imgui_drawer(), immediate_drawer());
+    if (auto* input = static_cast<rex::input::InputSystem*>(runtime()->input_system());
+        input && imgui_drawer()) {
+      auto* drawer = imgui_drawer();
+      input->SetActiveCallback(
+          [drawer] { return !dash::xamui::IsOpen() && !drawer->GetIO().WantCaptureMouse; });
+    }
     auto flash = game_data_root() / "flash";
     if (!std::filesystem::is_directory(flash)) {
       REXLOG_WARN("[dash] {} absent : la flash (\\SystemRoot) ne sera pas montée", flash.string());
