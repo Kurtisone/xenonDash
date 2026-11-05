@@ -15,6 +15,7 @@ set(DASH_SOURCES
     src/main.cpp
     src/kernel_stubs.cpp
     src/diag_hooks.cpp
+    src/dash_profile.cpp
 )
 
 if(WIN32)

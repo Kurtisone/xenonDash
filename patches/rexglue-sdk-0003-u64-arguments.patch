@@ -1,0 +1,59 @@
+diff --git a/include/rex/ppc/function.h b/include/rex/ppc/function.h
+index 611a52f..787fe44 100644
+--- a/include/rex/ppc/function.h
++++ b/include/rex/ppc/function.h
+@@ -104,24 +104,26 @@ struct ArgTranslator {
+   // Get integer argument value from register or stack
+   static constexpr uint64_t GetIntegerArgumentValue(const PPCContext& ctx, uint8_t* base,
+                                                     size_t arg) noexcept {
++    // Registre complet : un paramètre u64 (XUID, etc.) occupe les 64 bits ; les
++    // paramètres plus petits sont tronqués par la conversion vers leur type.
+     if (arg <= 7) {
+       switch (arg) {
+         case 0:
+-          return ctx.r3.u32;
++          return ctx.r3.u64;
+         case 1:
+-          return ctx.r4.u32;
++          return ctx.r4.u64;
+         case 2:
+-          return ctx.r5.u32;
++          return ctx.r5.u64;
+         case 3:
+-          return ctx.r6.u32;
++          return ctx.r6.u64;
+         case 4:
+-          return ctx.r7.u32;
++          return ctx.r7.u64;
+         case 5:
+-          return ctx.r8.u32;
++          return ctx.r8.u64;
+         case 6:
+-          return ctx.r9.u32;
++          return ctx.r9.u64;
+         case 7:
+-          return ctx.r10.u32;
++          return ctx.r10.u64;
+         default:
+           break;
+       }
+@@ -265,7 +267,8 @@ struct ArgTranslator {
+   template <MappedPtrType T>
+   static T GetValue(PPCContext& ctx, uint8_t* base, size_t idx) noexcept {
+     using inner_t = typename mapped_ptr_inner_type<T>::type;
+-    const auto v = GetIntegerArgumentValue(ctx, base, idx);
++    // Adresse invitée = 32 bits bas (un registre peut contenir une adresse étendue en signe).
++    const auto v = static_cast<uint32_t>(GetIntegerArgumentValue(ctx, base, idx));
+     if (!v) {
+       return T(nullptr);
+     }
+@@ -288,7 +291,8 @@ struct ArgTranslator {
+   template <typename T>
+     requires std::is_pointer_v<T>
+   static constexpr T GetValue(PPCContext& ctx, uint8_t* base, size_t idx) noexcept {
+-    const auto v = GetIntegerArgumentValue(ctx, base, idx);
++    // Adresse invitée = 32 bits bas (un registre peut contenir une adresse étendue en signe).
++    const auto v = static_cast<uint32_t>(GetIntegerArgumentValue(ctx, base, idx));
+     if (!v) {
+       return nullptr;
+     }

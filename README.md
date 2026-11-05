@@ -14,7 +14,8 @@ généré à partir de `dash.xex` : ils sont à fournir / régénérer localemen
 git clone --recursive https://github.com/rexglue/rexglue-sdk.git third_party/rexglue-sdk
 git -C third_party/rexglue-sdk checkout c94f5ebdcb3c9d1a460ca48e04f9758448f8d518
 git -C third_party/rexglue-sdk apply ../../patches/rexglue-sdk-0001-function-table-heap.patch \
-                                     ../../patches/rexglue-sdk-0002-mnk-keystrokes.patch
+                                     ../../patches/rexglue-sdk-0002-mnk-keystrokes.patch \
+                                     ../../patches/rexglue-sdk-0003-u64-arguments.patch
 git clone --recursive https://github.com/hedge-dev/XenonRecomp.git third_party/XenonRecomp
 git -C third_party/XenonRecomp checkout ddd128bcca99fe8bfbb99bea583c972351fa6ace
 
@@ -93,6 +94,17 @@ Chaque touche reste modifiable : `--keybind_a=Return,Space`, `--keybind_right_sh
 Test sans écran : `./input_test.sh essai 70 "e" "Down" "Return"` (Xvfb + XTest via
 `tools/xkeys.py`, une capture `runs/essai_<n>.png` après chaque groupe de touches).
 
+## Profil joueur
+
+Un profil local est présenté au Dashboard (`src/dash_profile.cpp`) : c'est l'utilisateur 0 du
+runtime (XUID `B13EBABEBABEBABE`), connecté localement.
+
+- Gamertag : `--dash_gamertag=MonPseudo` (15 caractères max, « Joueur » par défaut).
+- Contenu du profil (`DASHUSER:` : `DashStyle`, `ThematicSkin`, `VisionEffect`, `DashPreferences`) :
+  dossier inscriptible `dash/assets/profiles/<XUID>/`. Les fichiers n'apparaissent que quand un
+  réglage est modifié (non encore vérifié : le rendu logiciel cale avant).
+- Image du joueur (`XamReadTileEx`) : pas encore fournie → cadre vide.
+
 ## Ce qui a été corrigé
 
 ### Analyse (`dash/dash_overrides.toml`)
@@ -117,6 +129,10 @@ Test sans écran : `./input_test.sh essai 70 "e" "Down" "Return"` (Xvfb + XTest 
   que `XamInputGetKeystrokeEx`. Les événements sont maintenant synthétisés à partir des transitions
   de l'état manette (avec répétition), et les frappes brèves (appui + relâchement traités dans le
   même lot d'événements) sont mémorisées jusqu'à l'interrogation suivante.
+- `include/rex/ppc/function.h` (patch 0003) : les arguments entiers des fonctions noyau/XAM étaient
+  lus sur 32 bits, y compris les `u64` (un XUID `B13EBABEBABEBABE` arrivait en `BABEBABE`). Le
+  registre complet est maintenant lu ; les pointeurs restent pris sur les 32 bits bas (adresses
+  étendues en signe).
 
 ## État actuel
 
@@ -141,5 +157,7 @@ Sous Xvfb, RADV ne peut pas présenter (pas de DRI3) : utiliser lavapipe :
   quelques changements d'onglet ; le Dashboard attend alors le GPU indéfiniment. Non observé hors
   lavapipe pour l'instant (à vérifier sur un vrai bureau avec RADV).
 - `XboxKrnlBaseVersion` (variable noyau) non implémentée.
-- `DASHUSER:` (thèmes, styles) non monté ; profils (`XamProfileOpen`, `XamReadTileEx`…) en stub.
+- Un seul profil, toujours connecté localement (pas d'écran de connexion ni de création de profil :
+  `XamShowSigninUIp`, `XamShowCreateProfileUI`, `XamUserLogon` restent en stub). Pas de
+  Gamerscore, de réputation ni d'image (pas de fichiers GPD).
 - Stubs : `XamGetLanguage`, `XGetAudioFlags`, `HalGetCurrentAVPack`, `XamSetDashContext`, messages XMP.
