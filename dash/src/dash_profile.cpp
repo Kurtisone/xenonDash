@@ -42,7 +42,8 @@
 
 REXCVAR_DEFINE_STRING(dash_gamertag, "Joueur", "Dash",
                       "Gamertag du profil local (15 caractères au plus)");
-REXCVAR_DEFINE_INT32(dash_gamerscore, 0, "Dash", "Gamerscore affiché sur la carte du joueur");
+REXCVAR_DEFINE_INT32(dash_gamerscore, -1, "Dash",
+                     "Gamerscore de la carte ; -1 = somme des jeux du profil (GPD), 0 sans données");
 REXCVAR_DEFINE_INT32(dash_gamerpic, 1, "Dash",
                      "Image de joueur par défaut de la console (0 à 12), si profiles/<XUID>/gamerpic.png est absent");
 REXCVAR_DEFINE_DOUBLE(dash_reputation, 0.0, "Dash", "Réputation en étoiles (0 à 5)");
@@ -53,6 +54,10 @@ REXCVAR_DEFINE_INT32(dash_gamerzone, 1, "Dash",
 namespace rex::kernel::xam {
 uint32_t xeXamEnumerate(uint32_t handle, uint32_t flags, rex::MappedPtr<void> buffer,
                         uint32_t buffer_length, uint32_t* items_returned, uint32_t overlapped);
+}
+
+namespace dash::achievements {
+int32_t GpdGamerscore();
 }
 
 namespace dash::profile {
@@ -314,14 +319,14 @@ void ApplyProfileSettings() {
   for (uint32_t id : {kGamerType, kUnknown3A}) {
     if (!profile->GetSetting(id)) profile->AddSetting(std::make_unique<Profile::Int32Setting>(id, 0));
   }
-  profile->AddSetting(std::make_unique<Profile::Int32Setting>(
-      kGamercardCred, std::max(0, REXCVAR_GET(dash_gamerscore))));
+  int32_t gamerscore = REXCVAR_GET(dash_gamerscore);
+  if (gamerscore < 0) gamerscore = achievements::GpdGamerscore();
+  profile->AddSetting(std::make_unique<Profile::Int32Setting>(kGamercardCred, gamerscore));
   profile->AddSetting(std::make_unique<Profile::Int32Setting>(
       kGamercardZone, std::clamp(REXCVAR_GET(dash_gamerzone), 0, 4)));
   double stars = std::clamp(REXCVAR_GET(dash_reputation), 0.0, 5.0);
   profile->AddSetting(std::make_unique<Profile::FloatSetting>(kGamercardRep, float(stars * 20.0)));
-  REXLOG_INFO("[dash] profil : Gamerscore {}, zone {}, réputation {} étoiles",
-              REXCVAR_GET(dash_gamerscore), REXCVAR_GET(dash_gamerzone), stars);
+  REXLOG_INFO("[dash] profil : Gamerscore {}, zone {}, réputation {} étoiles", gamerscore, REXCVAR_GET(dash_gamerzone), stars);
 }
 
 }  // namespace dash::profile

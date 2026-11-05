@@ -113,7 +113,7 @@ runtime (XUID `B13EBABEBABEBABE`), connecté localement.
 - Contenu du profil (`DASHUSER:` : `DashStyle`, `ThematicSkin`, `VisionEffect`, `DashPreferences`) :
   dossier inscriptible `dash/assets/profiles/<XUID>/`. Les fichiers n'apparaissent que quand un
   réglage est modifié (non encore vérifié : le rendu logiciel cale avant).
-- Gamerscore : `--dash_gamerscore=12345` (0 par défaut).
+- Gamerscore : calculé depuis les GPD (voir « Succès et jeux joués ») ; `--dash_gamerscore=N` le fixe.
 - Réputation : `--dash_reputation=0..5` étoiles, demi-étoiles comprises (0 par défaut).
 - Zone : `--dash_gamerzone=0..4` (0 aucune, **1 Recreation** par défaut, 2 Pro, 3 Family, 4 Underground).
 - Image du joueur, par ordre de priorité :
@@ -122,6 +122,27 @@ runtime (XUID `B13EBABEBABEBABE`), connecté localement.
   2. une des **13 images par défaut de la console**, contenues dans `shrdres.xzp`
      (`64_fffe07d10002<n>0001<n>.png`) : `--dash_gamerpic=0..12` (1 par défaut) ;
   3. une image générée à partir du gamertag (`src/dash_gamerpic.h`) si `shrdres.xzp` est absent.
+
+### Succès et jeux joués
+
+Lus dans les fichiers **GPD** du profil (format XDBF, `src/dash_gpd.h`, `src/dash_achievements.cpp`),
+placés dans `dash/assets/profiles/<XUID>/` :
+
+| Fichier | Contenu utilisé |
+|---|---|
+| `FFFE07D1.gpd` | liste des jeux joués (compteurs, nom, date) ; icônes de jeux (image id = TitleID) |
+| `<TitleID>.gpd` | succès (nom, descriptions, Gamerscore, obtenu ou non, date) ; images (0x8000 = icône, autres = succès) |
+
+- Ce sont les fichiers d'un **vrai profil de console** : extraire le paquet du profil
+  (`Content/<XUID>/FFFE07D1/00010000/…`, paquet STFS `CON`) avec `tools/stfs.py` et copier ses `.gpd`.
+- Sans profil, `python3 tools/make_test_gpd.py dash/assets/profiles/B13EBABEBABEBABE` crée un
+  profil de démonstration (deux jeux fictifs, succès en partie obtenus, images générées).
+- Gamerscore de la carte : somme des jeux (`--dash_gamerscore=-1`, défaut), 0 sans GPD ; une valeur
+  ≥ 0 le fixe.
+- Écrans vérifiés : **Achievements** (tous jeux : nombre de succès, Gamerscore obtenu/total, images)
+  et **Played Games** (liste, succès, Gamerscore, icônes). Le détail d'un jeu (Entrée) ne s'ouvre pas
+  encore.
+- `XamIsSystemTitleId` est implémentée : le stub du SDK faisait passer tout jeu pour un titre système.
 
 Pour que la carte se remplisse, tous les réglages qu'elle demande doivent exister : le SDK fait
 échouer la lecture entière si un seul est inconnu. `ApplyProfileSettings()` déclare donc les
@@ -183,7 +204,12 @@ Sous Xvfb, RADV ne peut pas présenter (pas de DRI3) : utiliser lavapipe :
   lavapipe pour l'instant (à vérifier sur un vrai bureau avec RADV).
 - `XboxKrnlBaseVersion` (variable noyau) non implémentée.
 - Un seul profil, toujours connecté localement (pas d'écran de connexion ni de création de profil :
-  `XamShowSigninUIp`, `XamShowCreateProfileUI`, `XamUserLogon` restent en stub). Pas de vrais
-  succès (pas de fichiers GPD) : Gamerscore, réputation et zone sont des valeurs fixées.
-- Icônes Y et B du bas d'écran pâles : celles de la 17559 diffèrent peut-être de celles de la 6770.
+  `XamShowSigninUIp`, `XamShowCreateProfileUI`, `XamUserLogon` restent en stub). Réputation et zone
+  sont des valeurs fixées par option.
+- Icônes partagées (Ⓖ, boutons, zones) : ce sont celles du XAM **17559**, d'un style plus récent que
+  la 6770. Celles d'origine sont dans le `xam.xex` de base 2.0.1888 (+ `xam.xexp` de la 6770) ;
+  XeBuilds le fournit (`firmware/xebuild-xam/`, identique pour toutes les versions) mais il ne se
+  déchiffre ni avec la clé retail ni avec la clé devkit.
+- Une exception C++ dans le Dashboard reste fatale (`RtlUnwind` non implémenté côté SDK, retour de
+  *funclet* `catch` non géré) ; vue une fois, causée par le stub de `XamIsSystemTitleId`.
 - Stubs : `XamGetLanguage`, `XGetAudioFlags`, `HalGetCurrentAVPack`, `XamSetDashContext`, messages XMP.

@@ -1,7 +1,7 @@
 """Injecte des appuis de touches dans un serveur X (Xvfb) via l'extension XTest.
 usage: DISPLAY=:77 xkeys.py <touche> [<touche> ...]
 Touches : noms de keysym X11 (Return, Escape, Right, Left, Up, Down, e, q, Tab...).
-Préfixe "Shift+" accepté. Chaque touche est enfoncée XKEYS_HOLD s (0.4 par défaut) puis relâchée, 400 ms entre deux."""
+Préfixe "Shift+" accepté. Chaque touche est enfoncée XKEYS_HOLD s (0.15 par défaut, sous le délai de répétition de 400 ms) puis relâchée, 400 ms entre deux."""
 import ctypes
 import sys
 import time
@@ -68,7 +68,7 @@ for arg in sys.argv[1:]:
     codes = [keycode("Shift_L" if p == "Shift" else p) for p in parts]
     for c in codes:
         send(c, True)
-    time.sleep(float(__import__("os").environ.get("XKEYS_HOLD", "0.4")))
+    time.sleep(float(__import__("os").environ.get("XKEYS_HOLD", "0.15")))
     for c in reversed(codes):
         send(c, False)
     time.sleep(0.4)
