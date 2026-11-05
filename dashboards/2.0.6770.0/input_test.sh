@@ -6,7 +6,7 @@
 #   Chaque argument de touches est envoyé d'un bloc (tools/xkeys.py), puis une capture
 #   runs/<nom>_<i>.png est prise 3 s plus tard. Capture runs/<nom>_0.png avant toute touche.
 set -u
-P=$(cd "$(dirname "$0")/.." && pwd); D=$P/dash; N=$1; W=$2; shift 2
+P=$(cd "$(dirname "$0")/../.." && pwd); D=$(cd "$(dirname "$0")" && pwd); N=$1; W=$2; shift 2
 FB=$D/runs/$N.fb; mkdir -p $FB
 Xvfb :79 -screen 0 1280x720x24 -fbdir $FB >/dev/null 2>&1 & XP=$!
 sleep 1

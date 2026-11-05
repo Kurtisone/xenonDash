@@ -2,6 +2,6 @@
 
 #include "generated/dash/dash_init.h"
 
-#include "dash_app.h"
+#include "app.h"
 
 REX_DEFINE_APP(dash, DashApp::Create)

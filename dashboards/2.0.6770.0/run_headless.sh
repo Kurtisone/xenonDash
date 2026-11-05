@@ -2,7 +2,7 @@
 # Lance dash.xex recompilé dans un écran virtuel, capture l'écran au bout de N secondes, puis arrête.
 # usage: ./run_headless.sh <secondes> <nom_du_run>
 set -u
-P=$(cd "$(dirname "$0")/.." && pwd); D=$P/dash; T=${1:-40}; N=${2:-run}
+P=$(cd "$(dirname "$0")/../.." && pwd); D=$(cd "$(dirname "$0")" && pwd); T=${1:-40}; N=${2:-run}
 FB=$D/runs/$N.fb; mkdir -p $FB
 Xvfb :77 -screen 0 1280x720x24 -fbdir $FB >/dev/null 2>&1 & XP=$!
 sleep 1

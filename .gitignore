@@ -1,6 +1,6 @@
 # Fichiers Microsoft (firmware, exécutables, polices, ressources) : ne jamais versionner
 firmware/
-dash/assets/
+dashboards/*/assets/
 *.xex
 *.xexp
 *.xtt
@@ -10,12 +10,12 @@ dash/assets/
 *.pe
 
 # Code C++ généré depuis dash.xex (traduction du binaire Microsoft, ~117 Mo) : régénérer avec rexglue codegen
-dash/generated/dash/
+dashboards/*/generated/dash/
 
 # Produits de compilation, exécutions, sorties d'analyse
-dash/out/
-dash/runs/
-dash/*.log
+dashboards/*/out/
+dashboards/*/runs/
+dashboards/*/*.log
 tools/xexinfo/build/
 tools/xexinfo/build.log
 work/

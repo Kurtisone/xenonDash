@@ -33,10 +33,10 @@ Fichiers à placer (depuis sa propre console, ou les mises à jour système offi
 
 | Destination | Source |
 |---|---|
-| `dash/assets/dash.xex` | `$flash_dash.xex` de la mise à jour 2.0.6770 (`tools/stfs.py` sur `su20076000_00000000`) |
-| `dash/assets/flash/*.xex` | modules flash 6770 (mise à jour + flash console) |
-| `dash/assets/flash/XenonJKLatin.xtt`, `XenonCLatin.xtt` | polices de la flash 6770 |
-| `dash/assets/flash/shrdres.xzp` | ressource `shrdres` de `xam.xex`, **convertie** (voir ci-dessous) |
+| `dashboards/2.0.6770.0/assets/dash.xex` | `$flash_dash.xex` de la mise à jour 2.0.6770 (`tools/stfs.py` sur `su20076000_00000000`) |
+| `dashboards/2.0.6770.0/assets/flash/*.xex` | modules flash 6770 (mise à jour + flash console) |
+| `dashboards/2.0.6770.0/assets/flash/XenonJKLatin.xtt`, `XenonCLatin.xtt` | polices de la flash 6770 |
+| `dashboards/2.0.6770.0/assets/flash/shrdres.xzp` | ressource `shrdres` de `xam.xex`, **convertie** (voir ci-dessous) |
 
 `shrdres.xzp` (icônes, images de joueur par défaut, tables de chaînes partagées) est une ressource de
 `xam.xex`. Celui de la 6770 n'étant pas déchiffrable ici, on prend celui de la mise à jour officielle
@@ -45,7 +45,7 @@ Fichiers à placer (depuis sa propre console, ou les mises à jour système offi
 ```sh
 tools/xexinfo/build/xexinfo 'firmware/17559/$flash_xam.xex' work/xam17559.pe
 python3 tools/xex_resource.py 'firmware/17559/$flash_xam.xex' work/xam17559.pe shrdres work/shrdres_17559.xzp
-python3 tools/xzp_alias.py work/shrdres_17559.xzp dash/assets/flash/shrdres.xzp
+python3 tools/xzp_alias.py work/shrdres_17559.xzp dashboards/2.0.6770.0/assets/flash/shrdres.xzp
 ```
 
 ## Arborescence
@@ -53,9 +53,10 @@ python3 tools/xzp_alias.py work/shrdres_17559.xzp dash/assets/flash/shrdres.xzp
 | Chemin | Contenu |
 |---|---|
 | `firmware/<version>/` | Mise à jour système extraite (paquet STFS `su20076000_00000000`) |
-| `dash/` | Projet ReXGlue : manifeste, corrections d'analyse, code applicatif |
-| `dash/assets/dash.xex` | Exécutable d'entrée |
-| `dash/assets/flash/` | Contenu de la flash console, monté comme `\SystemRoot` (`media:`) |
+| `common/` | Bibliothèque `xenondash_common` (OBJECT CMake), partagée par toutes les versions : classe `xenondash::DashAppBase` (flash, OnPreSetup/OnPostSetup), profil, GPD/succès, entrées, audio silencieux, interfaces XAM ImGui, stubs noyau |
+| `dashboards/<version>/` | Un projet ReXGlue par version : manifeste, corrections d'analyse, `src/` propre à la version (`main.cpp`, `app.h`, `version_stubs.cpp`, `diag_hooks.cpp`), scripts de test |
+| `dashboards/2.0.6770.0/assets/dash.xex` | Exécutable d'entrée |
+| `dashboards/2.0.6770.0/assets/flash/` | Contenu de la flash console, monté comme `\SystemRoot` (`media:`) |
 | `sdk/` | SDK ReXGlue installé (compilé depuis `third_party/rexglue-sdk`, **patché**, voir plus bas) |
 | `tools/` | Outils d'analyse (Python/C++) |
 | `work/` | Sorties d'analyse (image PE décompressée, imports, candidates) |
@@ -64,21 +65,21 @@ python3 tools/xzp_alias.py work/shrdres_17559.xzp dash/assets/flash/shrdres.xzp
 
 ```sh
 # 1. Génération du C++ (≈30 s) puis compilation (≈10 min la première fois)
-cd dash
-../sdk/bin/rexglue codegen dash_manifest.toml
+cd dashboards/2.0.6770.0
+../../sdk/bin/rexglue codegen dash_manifest.toml
 cmake --preset linux-amd64-relwithdebinfo        # une seule fois
 cmake --build --preset linux-amd64-relwithdebinfo -j12
-ln -sf ../../../../sdk/lib/librexgpu-xenos.so out/build/linux-amd64-relwithdebinfo/
+ln -sf ../../../../../../sdk/lib/librexgpu-xenos.so out/build/linux-amd64-relwithdebinfo/
 
 # 2a. Sur un bureau (X11/Wayland)
-LD_LIBRARY_PATH=../sdk/lib out/build/linux-amd64-relwithdebinfo/dash --game_data_root=assets
+LD_LIBRARY_PATH=../../sdk/lib out/build/linux-amd64-relwithdebinfo/dash --game_data_root=assets
 
 # 2b. Sans écran ni carte son (SSH) : Xvfb + capture dans runs/<nom>.png
 ./run_headless.sh 40 essai
 ```
 
-Journaux : `dash/out/build/linux-amd64-relwithdebinfo/logs/`. `--log_level=trace` pour tout voir.
-`DASH_AUDIO=nop` active le backend audio silencieux (`src/null_audio.h`).
+Journaux : `dashboards/2.0.6770.0/out/build/linux-amd64-relwithdebinfo/logs/`. `--log_level=trace` pour tout voir.
+`DASH_AUDIO=nop` active le backend audio silencieux (`common/src/null_audio.h`).
 
 ## Contrôles
 
@@ -101,7 +102,7 @@ Journaux : `dash/out/build/linux-amd64-relwithdebinfo/logs/`. `--log_level=trace
 Chaque touche reste modifiable : `--keybind_a=Return,Space`, `--keybind_right_shoulder=E`, etc.
 (une valeur passée en ligne de commande n'est jamais écrasée). F3 / F4 / F7 : panneaux du runtime.
 
-Test sans écran : `./input_test.sh essai 70 "e" "Down" "Return"` (Xvfb + XTest via
+Test sans écran (depuis `dashboards/2.0.6770.0/`) : `./input_test.sh essai 70 "e" "Down" "Return"` (Xvfb + XTest via
 `tools/xkeys.py`, une capture `runs/essai_<n>.png` après chaque groupe de touches).
 Le Dashboard ignore les appuis pendant ses animations : un appui par étape. Avec lavapipe, certaines
 transitions d'écran se figent ; `DASH_GDB=1 DASH_STEP=4` (exécution sous gdb, plus lente) les évite.
@@ -113,13 +114,13 @@ runtime (XUID `B13EBABEBABEBABE`), connecté localement.
 
 - Gamertag : `--dash_gamertag=MonPseudo` (15 caractères max, « Joueur » par défaut).
 - Contenu du profil (`DASHUSER:` : `DashStyle`, `ThematicSkin`, `VisionEffect`, `DashPreferences`) :
-  dossier inscriptible `dash/assets/profiles/<XUID>/`. Les fichiers n'apparaissent que quand un
+  dossier inscriptible `dashboards/2.0.6770.0/assets/profiles/<XUID>/`. Les fichiers n'apparaissent que quand un
   réglage est modifié (non encore vérifié : le rendu logiciel cale avant).
 - Gamerscore : calculé depuis les GPD (voir « Succès et jeux joués ») ; `--dash_gamerscore=N` le fixe.
 - Réputation : `--dash_reputation=0..5` étoiles, demi-étoiles comprises (0 par défaut).
 - Zone : `--dash_gamerzone=0..4` (0 aucune, **1 Recreation** par défaut, 2 Pro, 3 Family, 4 Underground).
 - Image du joueur, par ordre de priorité :
-  1. `dash/assets/profiles/<XUID>/gamerpic.png` (PNG 64×64 de moins de 16 Ko, la taille du tampon
+  1. `dashboards/2.0.6770.0/assets/profiles/<XUID>/gamerpic.png` (PNG 64×64 de moins de 16 Ko, la taille du tampon
      du Dashboard ; `gamerpic_small.png` en 32×32) ;
   2. une des **13 images par défaut de la console**, contenues dans `shrdres.xzp`
      (`64_fffe07d10002<n>0001<n>.png`) : `--dash_gamerpic=0..12` (1 par défaut) ;
@@ -128,7 +129,7 @@ runtime (XUID `B13EBABEBABEBABE`), connecté localement.
 ### Succès et jeux joués
 
 Lus dans les fichiers **GPD** du profil (format XDBF, `src/dash_gpd.h`, `src/dash_achievements.cpp`),
-placés dans `dash/assets/profiles/<XUID>/` :
+placés dans `dashboards/2.0.6770.0/assets/profiles/<XUID>/` :
 
 | Fichier | Contenu utilisé |
 |---|---|
@@ -137,7 +138,7 @@ placés dans `dash/assets/profiles/<XUID>/` :
 
 - Ce sont les fichiers d'un **vrai profil de console** : extraire le paquet du profil
   (`Content/<XUID>/FFFE07D1/00010000/…`, paquet STFS `CON`) avec `tools/stfs.py` et copier ses `.gpd`.
-- Sans profil, `python3 tools/make_test_gpd.py dash/assets/profiles/B13EBABEBABEBABE` crée un
+- Sans profil, `python3 tools/make_test_gpd.py dashboards/2.0.6770.0/assets/profiles/B13EBABEBABEBABE` crée un
   profil de démonstration (deux jeux fictifs, succès en partie obtenus, images générées).
 - Gamerscore de la carte : somme des jeux (`--dash_gamerscore=-1`, défaut), 0 sans GPD ; une valeur
   ≥ 0 le fixe.
@@ -147,7 +148,7 @@ placés dans `dash/assets/profiles/<XUID>/` :
   ```sh
   tools/xexinfo/build/xexinfo ../Skate1Recompiled/game/default.xex work/skate.pe
   python3 tools/xex_resource.py ../Skate1Recompiled/game/default.xex work/skate.pe 45410813 work/45410813.spa
-  python3 tools/spa_to_gpd.py work/45410813.spa dash/assets/profiles/B13EBABEBABEBABE --earned 7,8,12,16,24
+  python3 tools/spa_to_gpd.py work/45410813.spa dashboards/2.0.6770.0/assets/profiles/B13EBABEBABEBABE --earned 7,8,12,16,24
   ```
 - Écrans vérifiés : **Achievements** (tous jeux), **Played Games** (liste, succès, Gamerscore,
   icônes), **Game Summary** d'un jeu (icône, derniers succès avec leurs images, totaux).
@@ -169,7 +170,7 @@ celle de l'image : sans image, pas de Gamerscore.
 
 ## Ce qui a été corrigé
 
-### Analyse (`dash/dash_overrides.toml`)
+### Analyse (`dashboards/2.0.6770.0/dash_overrides.toml`)
 - Fonctions feuilles de *dispatch* sans `.pdata`, enchaînées par des `b` de queue.
 - 329 fonctions atteintes seulement via vtables/callbacks (`tools/find_ptr_funcs.py`, en excluant
   les tables de portée SEH `0x920E74EC-0x920E7E10` qui pointent au milieu des fonctions).
@@ -179,7 +180,7 @@ celle de l'image : sans image, pas de Gamerscore.
 
 ### Runtime (code du projet)
 - `src/kernel_stubs.cpp` : `XUsbcam*` (exclus de la compilation du SDK) et l'import XAM ordinal 2790.
-- `src/null_audio.h` : pilote audio silencieux cadencé à 48 kHz. Sans pilote audio, le Dashboard
+- `common/src/null_audio.h` : pilote audio silencieux cadencé à 48 kHz. Sans pilote audio, le Dashboard
   désenregistre la classe XUI `XuiSoundXAudio` et toutes ses scènes échouent (`0x80300004`).
 - `src/dash_app.h` : charge `dash.xex` au lieu de `default.xex`, monte `assets/flash` en `\SystemRoot`.
 
@@ -200,7 +201,7 @@ celle de l'image : sans image, pas de Gamerscore.
 
 **Le Dashboard s'affiche et se pilote** (onglets Blades, menus, carte joueur complète).
 
-Contenu de `dash/assets/flash/` (monté en `\SystemRoot` / `media:`), sans dump NAND :
+Contenu de `dashboards/2.0.6770.0/assets/flash/` (monté en `\SystemRoot` / `media:`), sans dump NAND :
 - `shrdres.xzp` : ressource de `xam.xex` 2.0.17559, convertie (voir « Mise en place »).
 - `XenonJKLatin.xtt`, `XenonCLatin.xtt` et les modules `*.xex` de la flash 6770 : archive
   *XeBuilds* (dossier `6770`, sans aucune donnée propre à une console). Seul son `xam.xex` ne se

@@ -1,11 +1,9 @@
-// dash - imports noyau/XAM manquants dans le runtime ReXGlue.
+// xenondash common - imports noyau/XAM manquants dans le runtime ReXGlue.
 //
 // - XUsbcam* : xboxkrnl_usbcam.cpp est exclu de la compilation du SDK
 //   (src/kernel/CMakeLists.txt). On reprend son comportement (d'après Xenia) :
 //   Create réussit, GetState indique "pas de caméra", le reste échoue proprement.
-// - sub_92739D9C : thunk d'import de xam.xex ordinal 2790 (0xAE6), absent des
-//   tables d'exports Xenia/ReXGlue. Stub en attendant de l'identifier dans le
-//   xam.xex de la NAND.
+// (sub_92739D9C, spécifique à 6770, est dans dashboards/2.0.6770.0/src/version_stubs.cpp.)
 
 #include <rex/hook.h>
 #include <rex/types.h>
@@ -33,6 +31,3 @@ REX_EXPORT_STUB_RETURN(__imp__XUsbcamSetConfig, dash::stubs::kErrorDeviceNotConn
 REX_EXPORT_STUB_RETURN(__imp__XUsbcamSetView, dash::stubs::kErrorDeviceNotConnected)
 REX_EXPORT_STUB_RETURN(__imp__XUsbcamSetCaptureMode, dash::stubs::kErrorDeviceNotConnected)
 REX_EXPORT_STUB_RETURN(__imp__XUsbcamReadFrame, dash::stubs::kErrorDeviceNotConnected)
-
-// xam.xex ordinal 2790 — inconnu.
-REX_STUB_RETURN(sub_92739D9C, 0)

@@ -10,14 +10,14 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 include(generated/rexglue.cmake)
 
-# Sources
+# Code partagé entre versions (bibliothèque OBJECT : tous les hooks sont liés)
+add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/../../common xenondash_common)
+
+# Sources propres à la version 2.0.6770.0
 set(DASH_SOURCES
     src/main.cpp
-    src/kernel_stubs.cpp
+    src/version_stubs.cpp
     src/diag_hooks.cpp
-    src/dash_profile.cpp
-    src/dash_achievements.cpp
-    src/dash_xam_ui.cpp
 )
 
 if(WIN32)
@@ -26,4 +26,5 @@ else()
     add_executable(dash ${DASH_SOURCES})
 endif()
 
+target_link_libraries(dash PRIVATE xenondash_common)
 rexglue_setup_target(dash)

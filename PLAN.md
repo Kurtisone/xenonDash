@@ -20,13 +20,18 @@ l'utilisateur au premier lancement.
 
 ## Phases
 
-### P0 — Restructuration multi-versions
+### P0 — Restructuration multi-versions (FAIT, sauf fork du SDK)
 - `common/` : bibliothèque partagée par toutes les versions (profil, GPD/succès, entrées, audio
   silencieux, interfaces XAM de remplacement, montage flash, stubs).
 - `dashboards/<version>/` : un projet ReXGlue par version (manifeste, `overrides.toml`, `app.h`).
   `dash/` actuel → `dashboards/2.0.6770.0/`.
-- Fork du SDK sur Forgejo (correctifs 0001-0003 en commits), sous-module.
+- Fork du SDK sur Forgejo (correctifs 0001-0003 en commits), sous-module. **À faire.**
 - Critère : 6770 se compile et se lance comme avant (`input_test.sh`).
+- Fait : `common/` est une bibliothèque CMake **OBJECT** (`xenondash_common`) pour que les `REX_HOOK(__imp__...)`
+  soient liés (vérifié avec `nm`) ; `xenondash::DashAppBase` porte la logique de `dash_app.h` (paramétrée par
+  le nom du XEX) ; `sub_92739D9C` et `diag_hooks.cpp` restent dans `dashboards/2.0.6770.0/src/`.
+  `dash/` → `dashboards/2.0.6770.0/` (`git mv`), scripts et `.gitignore` adaptés ; build et `input_test.sh`
+  vérifiés (onglet Games, écran Achievements, aucun FATAL).
 
 ### P1 — Contenu : Stored Game Items et Downloads (HLE)
 - Contenu par profil/jeu dans `profiles/<XUID>/Content/<TitleID>/<type>/…` (sauvegardes 0x00000001,
