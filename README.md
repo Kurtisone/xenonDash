@@ -103,7 +103,16 @@ runtime (XUID `B13EBABEBABEBABE`), connecté localement.
 - Contenu du profil (`DASHUSER:` : `DashStyle`, `ThematicSkin`, `VisionEffect`, `DashPreferences`) :
   dossier inscriptible `dash/assets/profiles/<XUID>/`. Les fichiers n'apparaissent que quand un
   réglage est modifié (non encore vérifié : le rendu logiciel cale avant).
-- Image du joueur (`XamReadTileEx`) : pas encore fournie → cadre vide.
+- Gamerscore : `--dash_gamerscore=12345` (0 par défaut). Zone : `--dash_gamerzone=0..4`
+  (1 = Recreation par défaut ; la valeur ne s'affiche pas encore sur la carte).
+- Image du joueur : `dash/assets/profiles/<XUID>/gamerpic.png` (PNG 64×64, moins de 16 Ko : taille
+  du tampon du Dashboard). Une image par défaut, générée à partir du gamertag
+  (`src/dash_gamerpic.h`), y est écrite au premier lancement : il suffit de la remplacer.
+
+Pour que la carte se remplisse, tous les réglages qu'elle demande doivent exister : le SDK fait
+échouer la lecture entière si un seul est inconnu. `ApplyProfileSettings()` déclare donc les
+réglages manquants (`0x10040001`, `0x1004003A`). Et la lecture des réglages n'est lancée qu'après
+celle de l'image : sans image, pas de Gamerscore.
 
 ## Ce qui a été corrigé
 
@@ -159,5 +168,5 @@ Sous Xvfb, RADV ne peut pas présenter (pas de DRI3) : utiliser lavapipe :
 - `XboxKrnlBaseVersion` (variable noyau) non implémentée.
 - Un seul profil, toujours connecté localement (pas d'écran de connexion ni de création de profil :
   `XamShowSigninUIp`, `XamShowCreateProfileUI`, `XamUserLogon` restent en stub). Pas de
-  Gamerscore, de réputation ni d'image (pas de fichiers GPD).
+  vrais succès ni de réputation (pas de fichiers GPD) : le Gamerscore est une valeur fixée.
 - Stubs : `XamGetLanguage`, `XGetAudioFlags`, `HalGetCurrentAVPack`, `XamSetDashContext`, messages XMP.

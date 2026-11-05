@@ -19,9 +19,13 @@
 #include <filesystem>
 #include <mutex>
 #include <set>
+#include <cstdio>
 #include <string>
+#include <vector>
 
 #include <fmt/format.h>
+
+#include "dash_gamerpic.h"
 
 #include <rex/cvar.h>
 #include <rex/filesystem/devices/host_path_device.h>
@@ -38,6 +42,9 @@
 
 REXCVAR_DEFINE_STRING(dash_gamertag, "Joueur", "Dash",
                       "Gamertag du profil local (15 caractères au plus)");
+REXCVAR_DEFINE_INT32(dash_gamerscore, 0, "Dash", "Gamerscore affiché sur la carte du joueur");
+REXCVAR_DEFINE_INT32(dash_gamerzone, 1, "Dash",
+                     "Zone : 0 aucune, 1 Recreation, 2 Pro, 3 Family, 4 Underground");
 
 // Défini dans le SDK (xam_enum.cpp) sans en-tête public.
 namespace rex::kernel::xam {
@@ -196,13 +203,85 @@ u32 XamProfileClose_entry(mapped_string mount_name) {
 
 // --- Image du joueur ---------------------------------------------------------
 
-// Pas encore d'images : une vraie erreur fait afficher l'image par défaut (le stub du SDK
-// laissait r3 = premier argument, pris pour un code de retour).
+constexpr uint32_t kTileTypeGamerTile = 2;       // image du joueur (64x64)
+constexpr uint32_t kTileTypeGamerTileSmall = 3;  // petite image (32x32)
+constexpr uint32_t kDashTitleId = 0xFFFE07D1;
+constexpr uint32_t kErrorInsufficientBuffer = 122;
+
+// PNG de l'image du joueur : profiles/<XUID>/gamerpic[_small].png, créé avec une image générée
+// au premier appel pour pouvoir être remplacé par l'utilisateur.
+std::vector<uint8_t> LoadGamerPic(uint64_t xuid, bool small) {
+  auto path = ProfileDir(xuid) / (small ? "gamerpic_small.png" : "gamerpic.png");
+  std::vector<uint8_t> data;
+  if (FILE* f = std::fopen(path.string().c_str(), "rb")) {
+    std::fseek(f, 0, SEEK_END);
+    data.resize(size_t(std::ftell(f)));
+    std::fseek(f, 0, SEEK_SET);
+    data.resize(std::fread(data.data(), 1, data.size(), f));
+    std::fclose(f);
+    if (!data.empty()) return data;
+  }
+  data = gamerpic::MakeDefault(Gamertag(), small ? 32 : 64);
+  std::error_code ec;
+  std::filesystem::create_directories(path.parent_path(), ec);
+  if (FILE* f = std::fopen(path.string().c_str(), "wb")) {
+    std::fwrite(data.data(), 1, data.size(), f);
+    std::fclose(f);
+  }
+  return data;
+}
+
+// XamReadTileEx(type, titre, id, utilisateur, drapeau, ?, tampon, &taille, overlapped).
+// Le Dashboard passe un tampon de 16 Ko et un XOVERLAPPED : comme la vraie XAM, on termine
+// l'opération tout de suite et on renvoie ERROR_IO_PENDING.
 u32 XamReadTileEx_entry(u32 tile_type, u32 title_id, u64 tile_id, u32 user_index, u32 flag,
-                        u32 buffer, u32 buffer_size_ptr, u32 overlapped) {
-  (void)tile_type; (void)title_id; (void)tile_id; (void)user_index; (void)flag;
-  (void)buffer; (void)buffer_size_ptr; (void)overlapped;
-  return X_ERROR_FILE_NOT_FOUND;
+                        u32 unk, mapped_void buffer, mapped_u32 buffer_size, u32 overlapped) {
+  (void)tile_id; (void)flag; (void)unk;
+  X_RESULT result = X_ERROR_FILE_NOT_FOUND;
+  uint32_t length = 0;
+  bool is_gamer_tile = tile_type == kTileTypeGamerTile || tile_type == kTileTypeGamerTileSmall;
+  if (is_gamer_tile && title_id == kDashTitleId && user_index == 0 && buffer_size) {
+    auto png = LoadGamerPic(LocalXuid(), tile_type == kTileTypeGamerTileSmall);
+    length = uint32_t(png.size());
+    if (!buffer || *buffer_size < length) {
+      result = kErrorInsufficientBuffer;
+    } else {
+      std::memcpy(buffer, png.data(), length);
+      result = X_ERROR_SUCCESS;
+    }
+    *buffer_size = length;
+  }
+  REXLOG_INFO("[dash] XamReadTileEx(type={}, titre={:08X}) -> {:#x}, {} octets", uint32_t(tile_type),
+              uint32_t(title_id), result, length);
+  if (overlapped) {
+    system::kernel_state()->CompleteOverlappedImmediateEx(overlapped, result, result, length);
+    return X_ERROR_IO_PENDING;
+  }
+  return result;
+}
+
+// --- Réglages du profil (carte joueur) ---------------------------------------
+
+// Le Dashboard lit la carte en une requête (type de joueur, image, Gamerscore, zone, réputation,
+// devise, région, 0x1004003A). Le SDK fait échouer TOUTE la requête si un seul réglage lui est
+// inconnu : on déclare les manquants et on applique les valeurs de la ligne de commande.
+void ApplyProfileSettings() {
+  using Profile = system::xam::UserProfile;
+  auto* profile = system::kernel_state()->user_profile();
+  if (!profile) return;
+  constexpr uint32_t kGamerType = 0x10040001;       // XPROFILE_GAMER_TYPE
+  constexpr uint32_t kGamercardCred = 0x10040006;   // XPROFILE_GAMERCARD_CRED (Gamerscore)
+  constexpr uint32_t kGamercardZone = 0x10040004;   // XPROFILE_GAMERCARD_ZONE
+  constexpr uint32_t kUnknown3A = 0x1004003A;       // lu par la carte, rôle inconnu
+  for (uint32_t id : {kGamerType, kUnknown3A}) {
+    if (!profile->GetSetting(id)) profile->AddSetting(std::make_unique<Profile::Int32Setting>(id, 0));
+  }
+  profile->AddSetting(std::make_unique<Profile::Int32Setting>(
+      kGamercardCred, std::max(0, REXCVAR_GET(dash_gamerscore))));
+  profile->AddSetting(std::make_unique<Profile::Int32Setting>(
+      kGamercardZone, std::clamp(REXCVAR_GET(dash_gamerzone), 0, 4)));
+  REXLOG_INFO("[dash] profil : Gamerscore {}, zone {}", REXCVAR_GET(dash_gamerscore),
+              REXCVAR_GET(dash_gamerzone));
 }
 
 }  // namespace dash::profile

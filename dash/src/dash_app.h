@@ -9,6 +9,10 @@
 #include <cstring>
 
 #include "dash_input.h"
+
+namespace dash::profile {
+void ApplyProfileSettings();
+}
 #include "null_audio.h"
 #include <rex/rex_app.h>
 #include <rex/filesystem/devices/host_path_device.h>
@@ -48,6 +52,7 @@ class DashApp : public rex::ReXApp {
   // shrdres.xzp, xam.xex... Montée en lecture seule depuis <game_data_root>/flash,
   // à remplir avec le contenu extrait du dump NAND.
   void OnPostSetup() override {
+    dash::profile::ApplyProfileSettings();
     auto flash = game_data_root() / "flash";
     if (!std::filesystem::is_directory(flash)) {
       REXLOG_WARN("[dash] {} absent : la flash (\\SystemRoot) ne sera pas montée", flash.string());
