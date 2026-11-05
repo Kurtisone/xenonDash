@@ -1,0 +1,28 @@
+diff --git a/src/system/xmemory.cpp b/src/system/xmemory.cpp
+index 76cc877..106f365 100644
+--- a/src/system/xmemory.cpp
++++ b/src/system/xmemory.cpp
+@@ -795,7 +795,11 @@ bool Memory::InitializeFunctionTable(uint32_t code_base, uint32_t code_size, uin
+       "(+{:08X} thunk reserve)",
+       table_base, table_size, code_base, code_base + code_size, kThunkReserveSize);
+ 
+-  if (!heaps_.v80000000.AllocFixed(
++  // La table suit l'image : elle doit vivre dans le tas XEX qui contient l'image
++  // (0x8xxxxxxx pour un jeu, 0x9xxxxxxx pour un module système comme dash.xex).
++  auto* table_heap = LookupHeap(table_base);
++  if (!table_heap || (table_heap != &heaps_.v80000000 && table_heap != &heaps_.v90000000) ||
++      !table_heap->AllocFixed(
+           table_base, table_size, 0x10000,
+           memory::kMemoryAllocationReserve | memory::kMemoryAllocationCommit,
+           memory::kMemoryProtectRead | memory::kMemoryProtectWrite)) {
+@@ -839,7 +843,9 @@ bool Memory::DestroyFunctionTable(uint32_t code_base) {
+   REXSYS_DEBUG("Destroying function table at {:08X}, size {:08X} for code {:08X}-{:08X}",
+                table_base, table_size, logged_code_base, logged_code_base + logged_code_size);
+ 
+-  heaps_.v80000000.Release(table_base);
++  if (auto* table_heap = LookupHeap(table_base)) {
++    table_heap->Release(table_base);
++  }
+   return true;
+ }
+ 
