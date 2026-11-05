@@ -1,0 +1,167 @@
+diff --git a/include/rex/input/mnk/mnk_input_driver.h b/include/rex/input/mnk/mnk_input_driver.h
+index c8751b7..38f467e 100644
+--- a/include/rex/input/mnk/mnk_input_driver.h
++++ b/include/rex/input/mnk/mnk_input_driver.h
+@@ -10,6 +10,8 @@
+  */
+ #pragma once
+ 
++#include <chrono>
++
+ #include <rex/input/input_driver.h>
+ #include <rex/ui/window.h>
+ #include <rex/ui/window_listener.h>
+@@ -75,6 +77,8 @@ class MnkInputDriver final : public InputDriver,
+ 
+   std::mutex state_mutex_;
+   bool key_down_[256] = {};
++  // Appuis survenus depuis la dernière interrogation (frappes brèves).
++  bool key_latched_[256] = {};
+ 
+   // Mouse delta tracking. Fractional because relative motion arrives in
+   // fractions of a pixel, and truncating each event drops slow movement.
+@@ -102,6 +106,13 @@ class MnkInputDriver final : public InputDriver,
+   // Keystroke queue
+   std::queue<X_INPUT_KEYSTROKE> keystroke_queue_;
+ 
++  // Synthèse des keystrokes à partir des transitions de l'état manette émulé
++  // (les UI XUI, comme le Dashboard, ne lisent que XamInputGetKeystrokeEx).
++  uint32_t keystroke_last_buttons_ = 0;
++  int keystroke_repeat_idx_ = -1;
++  bool keystroke_repeating_ = false;
++  std::chrono::steady_clock::time_point keystroke_repeat_time_{};
++
+   // Packet number incremented on state change
+   uint32_t packet_number_ = 0;
+ };
+diff --git a/src/input/mnk/mnk_input_driver.cpp b/src/input/mnk/mnk_input_driver.cpp
+index 3f9422d..e61415a 100644
+--- a/src/input/mnk/mnk_input_driver.cpp
++++ b/src/input/mnk/mnk_input_driver.cpp
+@@ -274,6 +274,19 @@ X_RESULT MnkInputDriver::GetDeviceState(DeviceId id, X_INPUT_STATE* out_state) {
+ 
+   std::lock_guard lock(state_mutex_);
+ 
++  // Les touches mémorisées comptent comme enfoncées pour cette interrogation.
++  bool saved_down[256];
++  std::memcpy(saved_down, key_down_, sizeof(key_down_));
++  for (int k = 0; k < 256; k++) {
++    key_down_[k] = key_down_[k] || key_latched_[k];
++    key_latched_[k] = false;
++  }
++  struct RestoreKeys {
++    bool (&dst)[256];
++    const bool (&src)[256];
++    ~RestoreKeys() { std::memcpy(dst, src, sizeof(dst)); }
++  } restore_keys{key_down_, saved_down};
++
+   uint16_t buttons = 0;
+   if (IsBindPressed(key_down_, REXCVAR_GET(keybind_a)))
+     buttons |= X_INPUT_GAMEPAD_A;
+@@ -374,15 +387,81 @@ X_RESULT MnkInputDriver::GetDeviceKeystroke(DeviceId id, uint32_t flags,
+   if (!IsEnabled() || id != kMnkDevice) {
+     return X_ERROR_DEVICE_NOT_CONNECTED;
+   }
++  {
++    std::lock_guard lock(state_mutex_);
++    if (!keystroke_queue_.empty()) {
++      if (out_keystroke) {
++        *out_keystroke = keystroke_queue_.front();
++      }
++      keystroke_queue_.pop();
++      return X_ERROR_SUCCESS;
++    }
++  }
++
++  // Ordre des bits = champ buttons XInput, puis gâchettes (comme le pilote SDL).
++  static constexpr VirtualKey kVk[18] = {
++      VirtualKey::kXInputPadDpadUp,      VirtualKey::kXInputPadDpadDown,
++      VirtualKey::kXInputPadDpadLeft,    VirtualKey::kXInputPadDpadRight,
++      VirtualKey::kXInputPadStart,       VirtualKey::kXInputPadBack,
++      VirtualKey::kXInputPadLThumbPress, VirtualKey::kXInputPadRThumbPress,
++      VirtualKey::kXInputPadLShoulder,   VirtualKey::kXInputPadRShoulder,
++      VirtualKey::kNone,                 VirtualKey::kNone,
++      VirtualKey::kXInputPadA,           VirtualKey::kXInputPadB,
++      VirtualKey::kXInputPadX,           VirtualKey::kXInputPadY,
++      VirtualKey::kXInputPadLTrigger,    VirtualKey::kXInputPadRTrigger,
++  };
++  constexpr auto kRepeatDelay = std::chrono::milliseconds(400);
++  constexpr auto kRepeatRate = std::chrono::milliseconds(100);
++
++  X_INPUT_STATE state = {};
++  GetDeviceState(id, &state);  // vide si la fenêtre n'a pas le focus
++  uint32_t curr = static_cast<uint16_t>(state.gamepad.buttons);
++  curr |= uint32_t(state.gamepad.left_trigger > 30) << 16;
++  curr |= uint32_t(state.gamepad.right_trigger > 30) << 17;
++
++  auto emit = [&](int idx, uint16_t ks_flags) {
++    if (out_keystroke) {
++      *out_keystroke = {};
++      out_keystroke->virtual_key = static_cast<uint16_t>(kVk[idx]);
++      out_keystroke->flags = ks_flags;
++    }
++    return X_ERROR_SUCCESS;
++  };
++
+   std::lock_guard lock(state_mutex_);
+-  if (keystroke_queue_.empty()) {
++  auto now = std::chrono::steady_clock::now();
++  uint32_t changed = curr ^ keystroke_last_buttons_;
++  if (!changed && keystroke_repeat_idx_ >= 0) {
++    auto wait = keystroke_repeating_ ? kRepeatRate : kRepeatDelay;
++    if (now - keystroke_repeat_time_ >= wait) {
++      keystroke_repeating_ = true;
++      keystroke_repeat_time_ = now;
++      return emit(keystroke_repeat_idx_, X_INPUT_KEYSTROKE_KEYDOWN | X_INPUT_KEYSTROKE_REPEAT);
++    }
+     return X_ERROR_EMPTY;
+   }
+-  if (out_keystroke) {
+-    *out_keystroke = keystroke_queue_.front();
++  // Relâchements d'abord, puis appuis.
++  for (int pass = 0; pass < 2; pass++) {
++    for (int i = 0; i < 18; i++) {
++      uint32_t bit = 1u << i;
++      if (!(changed & bit) || kVk[i] == VirtualKey::kNone) continue;
++      bool pressed = curr & bit;
++      if (pass == 0 && !pressed) {
++        keystroke_last_buttons_ &= ~bit;
++        if (keystroke_repeat_idx_ == i) keystroke_repeat_idx_ = -1;
++        return emit(i, X_INPUT_KEYSTROKE_KEYUP);
++      }
++      if (pass == 1 && pressed) {
++        keystroke_last_buttons_ |= bit;
++        keystroke_repeat_idx_ = i;
++        keystroke_repeating_ = false;
++        keystroke_repeat_time_ = now;
++        return emit(i, X_INPUT_KEYSTROKE_KEYDOWN);
++      }
++    }
+   }
+-  keystroke_queue_.pop();
+-  return X_ERROR_SUCCESS;
++  keystroke_last_buttons_ = curr;
++  return X_ERROR_EMPTY;
+ }
+ 
+ void MnkInputDriver::EnqueueKeystroke(uint16_t vk_pad, bool down) {
+@@ -477,6 +556,11 @@ void MnkInputDriver::RecenterCursorFromUIThread(int32_t x, int32_t y) {
+ void MnkInputDriver::SetKeyState(uint16_t vk, bool down) {
+   if (vk < 256) {
+     key_down_[vk] = down;
++    // Une frappe brève (appui + relâchement entre deux interrogations, ou
++    // traités dans le même lot d'événements) doit rester visible une fois.
++    if (down) {
++      key_latched_[vk] = true;
++    }
+   }
+ }
+ 
+@@ -566,6 +650,7 @@ void MnkInputDriver::OnLostFocus(rex::ui::UISetupEvent&) {
+   {
+     std::lock_guard lock(state_mutex_);
+     std::memset(key_down_, 0, sizeof(key_down_));
++    std::memset(key_latched_, 0, sizeof(key_latched_));
+     mouse_dx_ = 0.0f;
+     mouse_dy_ = 0.0f;
+   }

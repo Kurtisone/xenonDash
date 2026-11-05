@@ -8,6 +8,7 @@
 #include <filesystem>
 #include <cstring>
 
+#include "dash_input.h"
 #include "null_audio.h"
 #include <rex/rex_app.h>
 #include <rex/filesystem/devices/host_path_device.h>
@@ -29,6 +30,10 @@ class DashApp : public rex::ReXApp {
   // DASH_AUDIO=nop : backend audio silencieux (machine sans carte son, voir null_audio.h). Sans moteur audio,
   // le Dashboard désenregistre la classe XUI XuiSoundXAudio et ses scènes ne chargent plus.
   void OnPreSetup(rex::RuntimeConfig& config) override {
+    // Sans émulation GPU, rien ne s'affiche : xenos par défaut (--gpu_plugin=... reste prioritaire).
+    if (config.gpu_plugin.empty()) config.gpu_plugin = "xenos";
+    // Clavier → manette avec une disposition adaptée au Dashboard (voir dash_input.h).
+    dash::input::ApplyDashKeyboardLayout();
     const char* audio = std::getenv("DASH_AUDIO");
     if (audio && std::strcmp(audio, "nop") == 0) {
       config.audio_factory = REX_AUDIO_BACKEND(dash::audio::NullAudioSystem);
