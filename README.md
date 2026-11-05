@@ -36,7 +36,17 @@ Fichiers à placer (depuis sa propre console, ou les mises à jour système offi
 | `dash/assets/dash.xex` | `$flash_dash.xex` de la mise à jour 2.0.6770 (`tools/stfs.py` sur `su20076000_00000000`) |
 | `dash/assets/flash/*.xex` | modules flash 6770 (mise à jour + flash console) |
 | `dash/assets/flash/XenonJKLatin.xtt`, `XenonCLatin.xtt` | polices de la flash 6770 |
-| `dash/assets/flash/shrdres.xzp` | ressource `shrdres` de `xam.xex` (ici celle de la 2.0.17559) |
+| `dash/assets/flash/shrdres.xzp` | ressource `shrdres` de `xam.xex`, **convertie** (voir ci-dessous) |
+
+`shrdres.xzp` (icônes, images de joueur par défaut, tables de chaînes partagées) est une ressource de
+`xam.xex`. Celui de la 6770 n'étant pas déchiffrable ici, on prend celui de la mise à jour officielle
+2.0.17559 et on le convertit aux formats lus par le Dashboard 6770 :
+
+```sh
+tools/xexinfo/build/xexinfo 'firmware/17559/$flash_xam.xex' work/xam17559.pe
+python3 tools/xex_resource.py 'firmware/17559/$flash_xam.xex' work/xam17559.pe shrdres work/shrdres_17559.xzp
+python3 tools/xzp_alias.py work/shrdres_17559.xzp dash/assets/flash/shrdres.xzp
+```
 
 ## Arborescence
 
@@ -103,11 +113,15 @@ runtime (XUID `B13EBABEBABEBABE`), connecté localement.
 - Contenu du profil (`DASHUSER:` : `DashStyle`, `ThematicSkin`, `VisionEffect`, `DashPreferences`) :
   dossier inscriptible `dash/assets/profiles/<XUID>/`. Les fichiers n'apparaissent que quand un
   réglage est modifié (non encore vérifié : le rendu logiciel cale avant).
-- Gamerscore : `--dash_gamerscore=12345` (0 par défaut). Zone : `--dash_gamerzone=0..4`
-  (1 = Recreation par défaut ; la valeur ne s'affiche pas encore sur la carte).
-- Image du joueur : `dash/assets/profiles/<XUID>/gamerpic.png` (PNG 64×64, moins de 16 Ko : taille
-  du tampon du Dashboard). Une image par défaut, générée à partir du gamertag
-  (`src/dash_gamerpic.h`), y est écrite au premier lancement : il suffit de la remplacer.
+- Gamerscore : `--dash_gamerscore=12345` (0 par défaut).
+- Réputation : `--dash_reputation=0..5` étoiles, demi-étoiles comprises (0 par défaut).
+- Zone : `--dash_gamerzone=0..4` (0 aucune, **1 Recreation** par défaut, 2 Pro, 3 Family, 4 Underground).
+- Image du joueur, par ordre de priorité :
+  1. `dash/assets/profiles/<XUID>/gamerpic.png` (PNG 64×64 de moins de 16 Ko, la taille du tampon
+     du Dashboard ; `gamerpic_small.png` en 32×32) ;
+  2. une des **13 images par défaut de la console**, contenues dans `shrdres.xzp`
+     (`64_fffe07d10002<n>0001<n>.png`) : `--dash_gamerpic=0..12` (1 par défaut) ;
+  3. une image générée à partir du gamertag (`src/dash_gamerpic.h`) si `shrdres.xzp` est absent.
 
 Pour que la carte se remplisse, tous les réglages qu'elle demande doivent exister : le SDK fait
 échouer la lecture entière si un seul est inconnu. `ApplyProfileSettings()` déclare donc les
@@ -145,15 +159,17 @@ celle de l'image : sans image, pas de Gamerscore.
 
 ## État actuel
 
-**Le Dashboard s'affiche** (onglets Blades, carte joueur, menus Games) : voir `dash/runs/run16.png`.
+**Le Dashboard s'affiche et se pilote** (onglets Blades, menus, carte joueur complète).
 
 Contenu de `dash/assets/flash/` (monté en `\SystemRoot` / `media:`), sans dump NAND :
-- `shrdres.xzp` : ressource `shrdres` extraite de `$flash_xam.xex` de la mise à jour officielle
-  **2.0.17559** (`firmware/17559/`, XZP v3 ; le Dashboard 6770 l'accepte).
-- `XenonJKLatin.xtt` / `XenonCLatin.xtt` : copies de `XenonSCLatin.xtt` (police complète de la 17559).
-  Substitut : il manque des glyphes (« G » de Gamerscore, icônes des boutons A/B/X/Y).
-  Les vraies polices sont la base NAND 1888 + les deltas `$flash_xenon*latin.xttp`.
-- `systemupdate.xex`, `ximecore.xex`, `xmsgr.xex`, `dash.xex` : copiés de la mise à jour 6770.
+- `shrdres.xzp` : ressource de `xam.xex` 2.0.17559, convertie (voir « Mise en place »).
+- `XenonJKLatin.xtt`, `XenonCLatin.xtt` et les modules `*.xex` de la flash 6770 : archive
+  *XeBuilds* (dossier `6770`, sans aucune donnée propre à une console). Seul son `xam.xex` ne se
+  déchiffre ni avec la clé retail ni avec la clé devkit (modifié par xeBuild ?) ; il n'est pas utilisé.
+
+Ressources partagées : le Dashboard construit `sharedres://X` via `XamBuildLegacySystemResourceLocator`.
+Le localisateur du SDK, `file://media:/shrdres.xzp#X`, est coupé à la barre oblique par ce XUI
+ancien ; le projet renvoie `file://media:\shrdres.xzp#X` (`src/dash_profile.cpp`).
 
 Sous Xvfb, RADV ne peut pas présenter (pas de DRI3) : utiliser lavapipe :
 `DASH_ENV="VK_ICD_FILENAMES=/usr/share/vulkan/icd.d/lvp_icd.json" ./run_headless.sh 90 essai`
@@ -167,6 +183,7 @@ Sous Xvfb, RADV ne peut pas présenter (pas de DRI3) : utiliser lavapipe :
   lavapipe pour l'instant (à vérifier sur un vrai bureau avec RADV).
 - `XboxKrnlBaseVersion` (variable noyau) non implémentée.
 - Un seul profil, toujours connecté localement (pas d'écran de connexion ni de création de profil :
-  `XamShowSigninUIp`, `XamShowCreateProfileUI`, `XamUserLogon` restent en stub). Pas de
-  vrais succès ni de réputation (pas de fichiers GPD) : le Gamerscore est une valeur fixée.
+  `XamShowSigninUIp`, `XamShowCreateProfileUI`, `XamUserLogon` restent en stub). Pas de vrais
+  succès (pas de fichiers GPD) : Gamerscore, réputation et zone sont des valeurs fixées.
+- Icônes Y et B du bas d'écran pâles : celles de la 17559 diffèrent peut-être de celles de la 6770.
 - Stubs : `XamGetLanguage`, `XGetAudioFlags`, `HalGetCurrentAVPack`, `XamSetDashContext`, messages XMP.

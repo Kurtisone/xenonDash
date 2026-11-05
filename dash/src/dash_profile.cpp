@@ -43,6 +43,9 @@
 REXCVAR_DEFINE_STRING(dash_gamertag, "Joueur", "Dash",
                       "Gamertag du profil local (15 caractères au plus)");
 REXCVAR_DEFINE_INT32(dash_gamerscore, 0, "Dash", "Gamerscore affiché sur la carte du joueur");
+REXCVAR_DEFINE_INT32(dash_gamerpic, 1, "Dash",
+                     "Image de joueur par défaut de la console (0 à 12), si profiles/<XUID>/gamerpic.png est absent");
+REXCVAR_DEFINE_DOUBLE(dash_reputation, 0.0, "Dash", "Réputation en étoiles (0 à 5)");
 REXCVAR_DEFINE_INT32(dash_gamerzone, 1, "Dash",
                      "Zone : 0 aucune, 1 Recreation, 2 Pro, 3 Family, 4 Underground");
 
@@ -208,27 +211,61 @@ constexpr uint32_t kTileTypeGamerTileSmall = 3;  // petite image (32x32)
 constexpr uint32_t kDashTitleId = 0xFFFE07D1;
 constexpr uint32_t kErrorInsufficientBuffer = 122;
 
-// PNG de l'image du joueur : profiles/<XUID>/gamerpic[_small].png, créé avec une image générée
-// au premier appel pour pouvoir être remplacé par l'utilisateur.
-std::vector<uint8_t> LoadGamerPic(uint64_t xuid, bool small) {
-  auto path = ProfileDir(xuid) / (small ? "gamerpic_small.png" : "gamerpic.png");
+std::vector<uint8_t> ReadFile(const std::filesystem::path& path) {
   std::vector<uint8_t> data;
   if (FILE* f = std::fopen(path.string().c_str(), "rb")) {
     std::fseek(f, 0, SEEK_END);
-    data.resize(size_t(std::ftell(f)));
+    data.resize(size_t(std::max(0L, std::ftell(f))));
     std::fseek(f, 0, SEEK_SET);
     data.resize(std::fread(data.data(), 1, data.size(), f));
     std::fclose(f);
-    if (!data.empty()) return data;
-  }
-  data = gamerpic::MakeDefault(Gamertag(), small ? 32 : 64);
-  std::error_code ec;
-  std::filesystem::create_directories(path.parent_path(), ec);
-  if (FILE* f = std::fopen(path.string().c_str(), "wb")) {
-    std::fwrite(data.data(), 1, data.size(), f);
-    std::fclose(f);
   }
   return data;
+}
+
+// Cherche un fichier dans un paquet XUI (XUIZ v1 : noms UTF-16, v3 : noms ASCII).
+std::vector<uint8_t> ReadFromXzp(const std::vector<uint8_t>& xzp, const std::string& wanted) {
+  auto be32 = [&](size_t o) {
+    return uint32_t(xzp[o]) << 24 | uint32_t(xzp[o + 1]) << 16 | uint32_t(xzp[o + 2]) << 8 | xzp[o + 3];
+  };
+  if (xzp.size() < 22 || std::memcmp(xzp.data(), "XUIZ", 4) != 0) return {};
+  uint32_t ver = be32(4), table_size = be32(16);
+  uint32_t count = uint32_t(xzp[20]) << 8 | xzp[21];
+  size_t p = 22, data_start = 22 + size_t(table_size);
+  for (uint32_t i = 0; i < count && p + 9 <= xzp.size(); i++) {
+    uint32_t size = be32(p), off = be32(p + 4);
+    size_t nlen = xzp[p + 8];
+    p += 9;
+    std::string name;
+    for (size_t k = 0; k < nlen; k++) {
+      name += ver >= 3 ? char(xzp[p + k]) : char(xzp[p + k * 2 + 1]);
+    }
+    p += ver >= 3 ? nlen : nlen * 2;
+    if (name == wanted && data_start + off + size <= xzp.size()) {
+      return {xzp.begin() + data_start + off, xzp.begin() + data_start + off + size};
+    }
+  }
+  return {};
+}
+
+// Image du joueur, par ordre de priorité :
+//   1. profiles/<XUID>/gamerpic.png (gamerpic_small.png en 32x32) fournie par l'utilisateur ;
+//   2. image par défaut de la console n° --dash_gamerpic, lue dans flash/shrdres.xzp
+//      ([64|32]_fffe07d10002<n:4><0001><n:4>.png, n = 0..12) ;
+//   3. image générée à partir du gamertag (si shrdres est absent).
+std::vector<uint8_t> LoadGamerPic(uint64_t xuid, bool small) {
+  auto custom = ReadFile(ProfileDir(xuid) / (small ? "gamerpic_small.png" : "gamerpic.png"));
+  if (!custom.empty()) return custom;
+
+  uint32_t n = uint32_t(std::clamp(REXCVAR_GET(dash_gamerpic), 0, 12));
+  auto name = fmt::format("{}_fffe07d10002{:04x}0001{:04x}.png", small ? 32 : 64, n, n);
+  static std::vector<uint8_t> shrdres =
+      ReadFile(std::filesystem::absolute(REXCVAR_GET(game_data_root)) / "flash" / "shrdres.xzp");
+  auto builtin = ReadFromXzp(shrdres, name);
+  if (!builtin.empty()) return builtin;
+
+  REXLOG_WARN("[dash] image par défaut {} introuvable dans shrdres.xzp : image générée", name);
+  return gamerpic::MakeDefault(Gamertag(), small ? 32 : 64);
 }
 
 // XamReadTileEx(type, titre, id, utilisateur, drapeau, ?, tampon, &taille, overlapped).
@@ -273,6 +310,7 @@ void ApplyProfileSettings() {
   constexpr uint32_t kGamercardCred = 0x10040006;   // XPROFILE_GAMERCARD_CRED (Gamerscore)
   constexpr uint32_t kGamercardZone = 0x10040004;   // XPROFILE_GAMERCARD_ZONE
   constexpr uint32_t kUnknown3A = 0x1004003A;       // lu par la carte, rôle inconnu
+  constexpr uint32_t kGamercardRep = 0x5004000B;    // XPROFILE_GAMERCARD_REP (0-100 = 0-5 étoiles)
   for (uint32_t id : {kGamerType, kUnknown3A}) {
     if (!profile->GetSetting(id)) profile->AddSetting(std::make_unique<Profile::Int32Setting>(id, 0));
   }
@@ -280,8 +318,10 @@ void ApplyProfileSettings() {
       kGamercardCred, std::max(0, REXCVAR_GET(dash_gamerscore))));
   profile->AddSetting(std::make_unique<Profile::Int32Setting>(
       kGamercardZone, std::clamp(REXCVAR_GET(dash_gamerzone), 0, 4)));
-  REXLOG_INFO("[dash] profil : Gamerscore {}, zone {}", REXCVAR_GET(dash_gamerscore),
-              REXCVAR_GET(dash_gamerzone));
+  double stars = std::clamp(REXCVAR_GET(dash_reputation), 0.0, 5.0);
+  profile->AddSetting(std::make_unique<Profile::FloatSetting>(kGamercardRep, float(stars * 20.0)));
+  REXLOG_INFO("[dash] profil : Gamerscore {}, zone {}, réputation {} étoiles",
+              REXCVAR_GET(dash_gamerscore), REXCVAR_GET(dash_gamerzone), stars);
 }
 
 }  // namespace dash::profile
@@ -293,3 +333,30 @@ REX_HOOK(__imp__XamProfileEnumerate, dash::profile::XamProfileEnumerate_entry)
 REX_HOOK(__imp__XamProfileOpen, dash::profile::XamProfileOpen_entry)
 REX_HOOK(__imp__XamProfileClose, dash::profile::XamProfileClose_entry)
 REX_HOOK(__imp__XamReadTileEx, dash::profile::XamReadTileEx_entry)
+
+// --- Ressources partagées (sharedres://) ---------------------------------------
+//
+// Le XUI du Dashboard 6770 coupe le chemin à la barre oblique de "file://media:/shrdres.xzp#x"
+// (format Xenia/ReXGlue) et n'ouvre que "media:\". On renvoie la forme avec antislash.
+namespace dash::resources {
+
+using namespace rex;
+
+u32 XamBuildLegacySystemResourceLocator_entry(mapped_wstring filename, mapped_void buffer,
+                                              u32 buffer_count) {
+  if (!filename || !buffer || !buffer_count) return X_ERROR_INVALID_PARAMETER;
+  std::u16string name;
+  auto* in = reinterpret_cast<const be<uint16_t>*>(static_cast<char16_t*>(filename));
+  for (size_t i = 0; in[i] && i < 260; i++) name += char16_t(uint16_t(in[i]));
+  std::u16string path = u"file://media:\\shrdres.xzp#" + name;
+  auto* out = reinterpret_cast<be<uint16_t>*>(static_cast<void*>(buffer));
+  uint32_t n = std::min<uint32_t>(uint32_t(path.size()), buffer_count - 1);
+  for (uint32_t i = 0; i < n; i++) out[i] = uint16_t(path[i]);
+  out[n] = 0;
+  return X_ERROR_SUCCESS;
+}
+
+}  // namespace dash::resources
+
+REX_HOOK(__imp__XamBuildLegacySystemResourceLocator,
+         dash::resources::XamBuildLegacySystemResourceLocator_entry)
