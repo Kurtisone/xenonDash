@@ -160,6 +160,51 @@ placés dans `dashboards/2.0.6770.0/assets/profiles/<XUID>/` :
   dans Achievements) ou pour un jeu Xbox originale (sauvegardes cherchées dans `fusion:\UDATA`).
 - Images : `XamReadTile` (listes) et `XamReadTileEx` (Game Summary) partagent la même recherche.
 
+### Contenu des jeux : sauvegardes, téléchargements (Stored Game Items, Downloads)
+
+Comme sur le disque dur de la console, le contenu est un arbre de **paquets STFS** (`CON `, `LIVE`, `PIRS`),
+lu par `common/src/dash_content.cpp` dans `dashboards/2.0.6770.0/assets/profiles/<XUID>/` :
+
+```
+profiles/<XUID>/Content/<TitleID>/<ContentType>/<paquet>            contenu du profil
+profiles/0000000000000000/Content/<TitleID>/<ContentType>/<paquet>   contenu partagé (DLC, démos...)
+```
+
+Types usuels : `00000001` sauvegarde, `00000002` contenu téléchargé, `00080000` démo, `00030000` thème,
+`00020000` image de joueur. Le nom du dossier fait foi ; l'en-tête du paquet fournit le nom affiché, la description,
+la miniature PNG, le propriétaire et la taille. Remplace les stubs/implémentations du SDK pour :
+
+| Fonction (r3, r4...) | Rôle |
+|---|---|
+| `XamContentAggregateCreateEnumerator(xuid, appareil, type, titre, &handle)` | énumère le contenu (titre 0 / type -1 = tous). Élément de 0x150 octets : `XCONTENT_AGGREGATE_DATA` + taille BE64 à `+0x148`. Sert aux compteurs « N saves - N downloads » de Played Games et aux écrans de stockage |
+| `XamContentCreateEnumeratorInternal(utilisateur, appareil, type, titre, indicateurs, nombre, &taille, &handle)`, `XamContentCreateEnumerator(...)` | même contenu, éléments `XCONTENT_DATA` (0x134) |
+| `XamContentGetMetaDataInternal(élément, tampon, 0)` | copie l'en-tête STFS `0x344..0x971A` (0x93D6 octets) : nom, description, miniature, type, TitleID |
+| `XamContentGetLocalizedString(méta, nom, n, description, n)` | nom affiché et description en UTF-16BE |
+| `XamContentDeleteInternal(élément, overlapped)` | supprime le paquet |
+
+Écrans : **Played Games** (compteurs), **Game Summary > Stored Game Items**. L'entrée **Downloads** ouvre le
+Marketplace en ligne (invite « Sign in to Xbox LIVE », non simulé) : le contenu téléchargé local est dans Stored Game Items.
+Stored Game Items ouvre
+l'explorateur de stockage du Dashboard (Storage Devices > All Devices > Games > <jeu>), qui liste le contenu
+du jeu avec nom, type (« Saved Game », « Downloaded Content »), miniature, taille et propriétaire ; Y = options de
+la liste, A sur un paquet = Copy / Move / Delete.
+
+**Import d'un vrai paquet** (sauvegarde ou DLC extrait d'une console, fichier sans extension) :
+
+```sh
+python3 tools/content_import.py info <paquet>...                           # type, TitleID, nom, description, miniature
+python3 tools/content_import.py import dashboards/2.0.6770.0/assets/profiles/<XUID> <paquet>...
+python3 tools/content_import.py import dashboards/2.0.6770.0/assets/profiles/<XUID> --common <paquet>...   # contenu partagé
+python3 tools/content_import.py list dashboards/2.0.6770.0/assets/profiles/<XUID>
+python3 tools/stfs.py <paquet> [dossier]                                   # lister / extraire les fichiers du paquet
+```
+
+**Données de test** : `python3 tools/make_test_content.py dashboards/2.0.6770.0/assets/profiles/B13EBABEBABEBABE`
+crée pour Skate (45410813) deux sauvegardes (type 1) et un téléchargement (type 2) : paquets `CON ` sans signature
+RSA, avec en-tête complet (offsets : type `0x344`, TitleID `0x360`, propriétaire `0x371`, noms `0x411` et
+descriptions `0xD11` en 18 langues de 0x80 octets UTF-16BE, éditeur `0x1611`, titre `0x1691`, taille de miniature
+`0x1712`, miniature `0x171A`) et un volume STFS minimal lisible par `tools/stfs.py`.
+
 Pour que la carte se remplisse, tous les réglages qu'elle demande doivent exister : le SDK fait
 échouer la lecture entière si un seul est inconnu. `ApplyProfileSettings()` déclare donc les
 réglages manquants (`0x10040001`, `0x1004003A`). Et la lecture des réglages n'est lancée qu'après

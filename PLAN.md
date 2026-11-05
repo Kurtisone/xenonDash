@@ -33,7 +33,7 @@ l'utilisateur au premier lancement.
   `dash/` → `dashboards/2.0.6770.0/` (`git mv`), scripts et `.gitignore` adaptés ; build et `input_test.sh`
   vérifiés (onglet Games, écran Achievements, aucun FATAL).
 
-### P1 — Contenu : Stored Game Items et Downloads (HLE)
+### P1 — Contenu : Stored Game Items et Downloads (HLE) (FAIT en grande partie)
 - Contenu par profil/jeu dans `profiles/<XUID>/Content/<TitleID>/<type>/…` (sauvegardes 0x00000001,
   contenu téléchargé 0x00000002, démos, thèmes, images de joueur…), comme sur le disque dur.
 - `XamContentCreateEnumerator` filtré par jeu, `XamContentGetDetails`/taille/miniature,
@@ -41,6 +41,17 @@ l'utilisateur au premier lancement.
 - Outil d'import d'un paquet STFS (sauvegarde/DLC réels) : `tools/stfs.py` étendu (CON/LIVE/PIRS,
   métadonnées, miniature).
 - Critère : Game Summary > Stored Game Items / Downloads listent le contenu importé.
+- Fait (`common/src/dash_content.cpp`, `tools/content_import.py`, `tools/make_test_content.py`) : énumération agrégée
+  (`XamContentAggregateCreateEnumerator(xuid, appareil, type, titre, &handle)`, élément 0x150 = données + taille BE64),
+  énumérateurs simples, `GetMetaDataInternal` (en-tête STFS 0x344..0x971A), `GetLocalizedString`, `DeleteInternal` ;
+  compteurs « 2 saves - 1 downloads » de Played Games corrects ; liste Games > Skate avec noms, types, miniatures,
+  tailles réelles ; options Copy/Move/Delete et boîte de confirmation.
+- Downloads : ouvre une invite « Sign in to Xbox LIVE to download content » (Marketplace en ligne, pas le contenu
+  local) ; le contenu téléchargé local se voit dans Stored Game Items. Nécessiterait un état de connexion Live simulé.
+- Reste : Stored Game Items / Downloads ouvrent l'explorateur de stockage **non filtré** (Storage Devices > All Devices >
+  Games > jeu) ; la liste Games affiche une ligne par paquet au lieu d'une par jeu ; propriétaire « Unknown Profile »
+  (`XamContentGetAttributesInternal` encore en stub) ; noms d'appareils « Dummy HDD » (SDK) ; Copy/Move non faits ;
+  confirmation de Delete non testée jusqu'au bout.
 
 ### P2 — Chaîne de portage automatisée
 - `tools/port_dashboard.sh <mise_à_jour>` : extraction STFS, déchiffrement, `rexglue codegen`,
