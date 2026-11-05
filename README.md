@@ -11,11 +11,8 @@ généré à partir de `dash.xex` : ils sont à fournir / régénérer localemen
 
 ```sh
 # Dépendances (versions testées)
-git clone --recursive https://github.com/rexglue/rexglue-sdk.git third_party/rexglue-sdk
-git -C third_party/rexglue-sdk checkout c94f5ebdcb3c9d1a460ca48e04f9758448f8d518
-git -C third_party/rexglue-sdk apply ../../patches/rexglue-sdk-0001-function-table-heap.patch \
-                                     ../../patches/rexglue-sdk-0002-mnk-keystrokes.patch \
-                                     ../../patches/rexglue-sdk-0003-u64-arguments.patch
+# SDK ReXGlue : sous-module git (fork Forgejo, branche xenondash = c94f5eb + 3 correctifs)
+git submodule update --init --recursive
 git clone --recursive https://github.com/hedge-dev/XenonRecomp.git third_party/XenonRecomp
 git -C third_party/XenonRecomp checkout ddd128bcca99fe8bfbb99bea583c972351fa6ace
 
@@ -184,7 +181,10 @@ celle de l'image : sans image, pas de Gamerscore.
   désenregistre la classe XUI `XuiSoundXAudio` et toutes ses scènes échouent (`0x80300004`).
 - `src/dash_app.h` : charge `dash.xex` au lieu de `default.xex`, monte `assets/flash` en `\SystemRoot`.
 
-### Patch du SDK (`third_party/rexglue-sdk`, `git diff`)
+### Patch du SDK (fork `rexglue-sdk`, branche `xenondash`)
+Ces correctifs sont 3 commits du fork (sous-module `third_party/rexglue-sdk`). Les fichiers
+`patches/rexglue-sdk-000*.patch` n'en sont que l'export, conservés comme référence (applicables
+avec `git apply` sur un clone du commit c94f5eb).
 - `src/system/xmemory.cpp` : la table des fonctions indirectes était toujours allouée dans le tas
   `0x8xxxxxxx` (jeux). `dash.xex` est chargé en `0x92000000` → on choisit le tas qui contient l'adresse.
 - `src/input/mnk/` (patch 0002) : le pilote clavier ne produisait **aucun** événement de touche
