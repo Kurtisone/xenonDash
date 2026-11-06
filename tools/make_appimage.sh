@@ -36,7 +36,7 @@ LD_LIBRARY_PATH=$A/usr/bin ldd "$A/usr/bin/dash" | awk '{print "  " $1}'
 S=$A/usr/share/xenondash
 echo "$V" > "$S/version"
 cp "$R/games.example.toml" "$S/"
-for f in port_dashboard.py stfs.py xex_resource.py xzp_alias.py; do cp "$R/tools/$f" "$S/tools/"; done
+for f in port_dashboard.py stfs.py xex_resource.py xex_rekey.py xzp_alias.py; do cp "$R/tools/$f" "$S/tools/"; done
 cp "$R/tools/appimage/xenondash_import.py" "$S/tools/"
 mkdir -p "$S/tools/xexinfo/build"; cp "$R/tools/xexinfo/build/xexinfo" "$S/tools/xexinfo/build/"
 cp "$R/tools/appimage/AppRun" "$A/AppRun"; chmod +x "$A/AppRun"

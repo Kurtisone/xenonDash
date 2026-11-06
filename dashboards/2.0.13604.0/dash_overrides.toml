@@ -1,0 +1,7 @@
+# Corrections MANUELLES de l'analyse de dash.xex (2.0.13604.0) : jamais écrasé par tools/port_dashboard.sh.
+# Les corrections automatiques (cibles non résolues, fonctions atteintes par pointeur) sont dans overrides.toml.
+
+# CRT : setjmp/longjmp (Lua : lua_pcall / luaD_throw). Adresses retrouvées par signature depuis la 17559
+# (setjmp : prologue de contrôle 5 instructions, puis mflr/mfcr/stfd ; longjmp identique octet pour octet).
+setjmp_address = 0x9288D320
+longjmp_address = 0x9288CEF0

@@ -9,7 +9,7 @@ H=$R/work/apphome-$V; rm -rf "$H"; mkdir -p "$H" "$R/dashboards/$V/runs/preuves"
 mkdir -p $H/tmp; export TMPDIR=$H/tmp HOME=$H XDG_DATA_HOME= APPIMAGE_EXTRACT_AND_RUN=1
 unset XDG_DATA_HOME
 FB=$H/fb; mkdir -p $FB
-DN=90; while [ -e /tmp/.X11-unix/X$DN ] || [ -e /tmp/.X$DN-lock ]; do DN=$((DN+1)); done
+DN=${TEST_DISPLAY:-90}; while [ -e /tmp/.X11-unix/X$DN ] || [ -e /tmp/.X$DN-lock ]; do DN=$((DN+1)); done
 Xvfb :$DN -screen 0 1280x720x24 -fbdir $FB >/dev/null 2>&1 & XP=$!
 sleep 1
 export DISPLAY=:$DN MESA_VK_WSI_PRESENT_MODE=immediate VK_ICD_FILENAMES=${VK_ICD_FILENAMES:-/usr/share/vulkan/icd.d/lvp_icd.json} DASH_AUDIO=nop

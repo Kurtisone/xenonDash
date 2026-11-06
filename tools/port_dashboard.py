@@ -181,14 +181,32 @@ def stage_assets(a, ctx):
     if not a.flash_dir:
         log("avertissement : pas de --flash-dir (archive XeBuilds) : seuls les modules complets de la mise "
             "à jour sont copiés ; les .xexp (deltas) ne sont pas appliqués")
+    # Polices absentes (la mise à jour ne fournit que des correctifs .xttp) : substitution par celles de 6770
+    for fn in FONT_NAMES.values():
+        cands = [os.path.join(ROOT, "dashboards", "2.0.6770.0", "assets", "flash", fn)]
+        if getattr(a, "fonts_dir", None):  # --fonts-dir : dossier contenant XenonCLatin.xtt / XenonJKLatin.xtt (casse libre)
+            cands = [os.path.join(a.fonts_dir, f) for f in (os.listdir(a.fonts_dir) if os.path.isdir(a.fonts_dir) else [])
+                     if f.lower() == fn.lower()] + cands
+        sub = next((c for c in cands if os.path.exists(c)), None)
+        if not os.path.exists(os.path.join(flash, fn)) and sub:
+            shutil.copy(sub, os.path.join(flash, fn))
+            log(f"police {fn} absente : substituée par {sub}")
     log(f"flash : {len(os.listdir(flash))} fichiers dans {flash}")
-    # shrdres.xzp
+    # shrdres.xzp : le xam.xex complet de la mise à jour elle-même (même version) est prioritaire
+    own_xam = [f for f in ctx["files"] if os.path.basename(f).lower() == "$flash_xam.xex"]
+    if own_xam:
+        a.shrdres_xam = own_xam[0]
+        log(f"xam.xex de la mise à jour utilisé pour shrdres/gamercrd : {own_xam[0]}")
     out = os.path.join(flash, "shrdres.xzp")
     if a.shrdres:
         shutil.copy(a.shrdres, out)
         log(f"shrdres.xzp copié depuis {a.shrdres}")
     elif a.shrdres_xam and os.path.exists(a.shrdres_xam):
         pe = os.path.join(ctx["work"], "shrdres_xam.pe")
+        # xam.xex dont la clé de session est chiffrée avec la clé XEX1 (2.0.13604, Blades) : rechiffrée avec la clé retail
+        rekey = os.path.join(ctx["work"], "shrdres_xam_rekey.xex")
+        run([sys.executable, os.path.join(TOOLS, "xex_rekey.py"), a.shrdres_xam, rekey])
+        a.shrdres_xam = rekey
         raw = os.path.join(ctx["work"], "shrdres_raw.xzp")
         run([XEXINFO, a.shrdres_xam, pe], log_path=os.path.join(ctx["work"], "shrdres_xexinfo.txt"))
         run([sys.executable, os.path.join(TOOLS, "xex_resource.py"), a.shrdres_xam, pe, "shrdres", raw])
@@ -637,6 +655,8 @@ def main():
     ap.add_argument("--dest", help="dossier du projet (défaut : dashboards/<version>)")
     ap.add_argument("--work", help="dossier de travail (défaut : work/port/<version>)")
     ap.add_argument("--flash-dir", help="modules/polices complets de la version (archive XeBuilds, ex. firmware/xebuild-6770)")
+    ap.add_argument("--fonts-dir", help="dossier de polices XenonCLatin.xtt/XenonJKLatin.xtt (substitution quand la mise à "
+                    "jour n'en fournit que des correctifs .xttp, ex. NXE 13604 : celles de 6770, firmware/xebuild-6770)")
     ap.add_argument("--shrdres", help="shrdres.xzp déjà converti pour cette version")
     ap.add_argument("--shrdres-xam", default=None,
                     help="xam.xex d'une mise à jour complète d'où tirer shrdres (défaut : firmware/17559/$flash_xam.xex)")

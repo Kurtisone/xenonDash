@@ -135,6 +135,7 @@ l'archive XeBuilds ne contient pas 5759, 4532 ni 2255, on y utilise les polices 
 | 2.0.7258.0 | **partiel** : démarre et s'affiche (interface « Xbox 360 / Xbox Live » en tuiles, type NXE avant la lettre, **pas** les Blades), profil détecté (« 1 Profile Found, Signed In Locally »), navigation vers Game Library / Recent Games | import de fonction **sans thunk** (`XamVoiceSubmitPacket`, adresse 0) : correctif du SDK (`codegen` l'ignore) sans lequel `No function registered at <entrée>` ; Achievements/Played Games non atteints (écran de profil derrière la tuile « Sign In », non géré en HLE) ; artefacts roses de lavapipe. Captures : `dashboards/2.0.7258.0/runs/preuves/` |
 | 2.0.5759.0 | **partiel** : codegen (12 cibles, 299 fonctions par pointeur) et compilation OK, **écran noir** au démarrage | déréférencement nul (invité `0x8`) pendant l'initialisation XUI, après le second `XamProfileCreateEnumerator` (`sub_9226CE00`, message XUI vers un objet dont le champ `+12` est nul) ; non résolu. Ce Dashboard ouvre `media:\gamercrd.xzp` (ressource de `xam.xex`, absente de la flash) : l'outil en extrait désormais une version convertie de XAM 17559 (format de scènes probablement incompatible) |
 | 2.0.4532.0 | **partiel** : codegen (10 cibles, 285 fonctions par pointeur) et compilation OK, écran noir | même symptôme que 5759 |
+| 2.0.13604.0 | **NXE affichée (HLE)** : codegen (32 640 fonctions) et compilation OK, interface NXE (Xbox LIVE / My Xbox / Welcome, tuiles, texte, Game Library) pilotée au clavier ; AppImage OK ; « Recent Games » reste sur son indicateur d'attente, profil non montré dans le hub | voir « Dashboard NXE 2.0.13604 ». Captures : `dashboards/2.0.13604.0/runs/preuves/nxe_*.png` |
 | 2.0.17559.0 | **P4 palier 1 OK (HLE)** : codegen (38 105 fonctions) et compilation OK, **l'interface Metro s'affiche** (onglets home/games/apps/settings, tuiles, navigation clavier) ; profil non affiché ; variante `dashboards/2.0.17559.0-xam/` avec XAM recompilé chargé dans le processus (prototype) | voir « Dashboard 2.0.17559 et XAM recompilé ». Captures : `dashboards/2.0.17559.0/runs/preuves/p4_*.png` |
 | 2.0.2255.0 | **impossible** | la mise à jour ne contient que des deltas `.xexp` (dash compris) appliqués sur la base 1888, dont les modules sont chiffrés et dont on ne dispose pas de clé ; l'outil s'arrête proprement (« dash.xex introuvable ») |
 
@@ -144,6 +145,47 @@ termine par un `b` vers sa fonction parente : le point d'arrivée est déclaré 
 `blr`/`b`, section « continuations de funclets » d'`overrides.toml`), copie du profil de test et de `input_test.sh`
 dans le projet, extraction de la ressource `gamercrd` de XAM. 6770 en avait aussi une (`0x9222D328`), ajoutée à
 son `overrides.toml` ; Achievements revérifié à l'écran après reconstruction.
+
+## Dashboard NXE 2.0.13604 (dernière NXE avant Metro)
+
+`tools/port_dashboard.sh firmware/2.0.13604.0 2.0.13604.0` (paquet officiel `su20076000_00000000`, sha256 `a2e9b70c…`, qui
+contient `$flash_dash.xex` **et** `$flash_xam.xex` complets, sans delta) : 3 itérations de codegen (**32 640 fonctions**,
+10 cibles non résolues, 407 fonctions par pointeur), compilation sans stub d'import supplémentaire, ~4 min au total.
+
+Corrections propres à cette version :
+- **`xam.xex` chiffré avec la clé XEX1** : `tools/xexinfo` (clé retail) renvoyait `BASE 0x0 SIZE 0x0`. La clé de session de
+  ce module est chiffrée avec la clé « XEX1 » (clé publique du format, comme la clé retail) ; `tools/xex_rekey.py` la
+  déchiffre (vérifiée par le SHA-1 du premier bloc), la rechiffre avec la clé retail et écrit un XEX dérivé (non
+  versionné, dans `work/`) que `xexinfo`/`xex_resource.py` lisent. L'étape `assets` l'applique d'elle-même (dépendance :
+  `python3-cryptography`). **Constaté aussi : les `xam_*.xex` de `firmware/xebuild-xam/` (6683, 6690, 6717, 7258, 7356, 7357)
+  se déchiffrent de la même façon** (la note « ni clé retail ni devkit » des Problèmes connus ne vaut donc que pour ces deux
+  clés) : piste pour recompiler XAM des versions Blades (non explorée ; le xam de 6770 reste base 1888 + delta).
+- **XAM de la même version** : `shrdres.xzp` et `gamercrd.xzp` viennent maintenant du `$flash_xam.xex` de la mise à jour
+  elle-même quand il est présent (prioritaire sur `--shrdres-xam`/17559).
+- **`setjmp`/`longjmp` du CRT** (Lua) retrouvés par signature depuis la 17559 : `setjmp_address = 0x9288D320`,
+  `longjmp_address = 0x9288CEF0` (`dash_overrides.toml`).
+- **Polices** : la mise à jour ne contient que des correctifs `.xttp` ; le Dashboard ouvre `media:\XenonJKLatin.xtt` (20 000
+  échecs `0xC000000F`, tuiles sans texte). L'outil substitue `XenonCLatin.xtt`/`XenonJKLatin.xtt` de 6770 (ou `--fonts-dir`,
+  ou `--flash-dir`/`--modules` : `firmware/xebuild-6770`) ; les correctifs `.xttp` ne sont pas appliqués.
+- Aucune correction de `common/` ni du SDK n'a été nécessaire (les stubs et le correctif DPC du palier 17559 suffisent).
+
+État à l'écran (Xvfb + lavapipe, `DASH_ENV="MESA_VK_WSI_PRESENT_MODE=immediate VK_ICD_FILENAMES=…/lvp_icd.json"`,
+`XKEYS_HOLD=0.8`, `DASH_STEP=6` pour les transitions) : blade Welcome (Getting Started, Kinect, Family First), Xbox LIVE
+(« Join Xbox LIVE for Free », Game/Video Marketplace), My Xbox (Open Tray, Latest Games, Game Library, Video/Music Library),
+Game Library (Recent Games / Collections > All Games). Captures `dashboards/2.0.13604.0/runs/preuves/nxe_00..03_*.png`
+et `p6_2.0.13604.0.png` (AppImage).
+
+**AppImage** : `tools/make_appimage.sh 2.0.13604.0` (19 Mo) ; `TEST_DISPLAY=84 tools/test_appimage.sh 2.0.13604.0 xebuild-6770`
+(l'import prend le `$flash_xam.xex` de la mise à jour, polices de `xebuild-6770`) : Dashboard affiché, aucun `FATAL`.
+
+**Reste** : (1) Game Library > Recent Games reste sur l'indicateur d'attente (aucun appel
+`XamUserCreateTitlesPlayedEnumerator`/énumérateur de contenu constaté ; 3 fils de travail attendent dans `sub_9283F658` ;
+cause non identifiée, probablement une tâche Live/profil ; Achievements et Played Games non atteints) ; (2) le profil
+local n'est pas reconnu dans le hub (tuile « Sign In / 1 Profile Found », sondage toutes les 5 s de
+`XamUserGetUserTenure`/`XamUserGetSubscriptionType` (stubs), paramètres de profil `0x63E80044/0x7008004F/0x61180050`,
+`XLIVEBASE 0x58003`, `XamProfileFindAccount`, `XamUserGetIndexFromXUID`) ; (3) glyphe manquant (carré) en haut à droite
+(icône Ⓖ des polices) ; (4) `DASHUSER:\` absent (`ThematicSkin`, `VisionEffect`) ; (5) XAM 13604 non recompilé : le
+XEX se décode maintenant, la chaîne `tools/codegen_module.py` du palier 2 17559 est à rejouer.
 
 ## Dashboard 2.0.17559 et XAM recompilé (phase P4)
 
@@ -276,7 +318,7 @@ wayland, loader Vulkan et pilote GPU restent ceux du système), `AppRun`, `.desk
 `extract`/`assets`, `stfs.py`, `xex_resource.py`, `xzp_alias.py`, l'outil `xexinfo`). **Aucun fichier Microsoft**
 (ni `dash.xex`, ni modules flash, polices, `shrdres`).
 
-**Prérequis** : Python 3 système, un GPU Vulkan, FUSE 2 (sinon `APPIMAGE_EXTRACT_AND_RUN=1`), et vos propres fichiers
+**Prérequis** : Python 3 système (+ `python3-cryptography` si le `xam.xex` de la mise à jour est chiffré avec la clé XEX1, ex. 13604), un GPU Vulkan, FUSE 2 (sinon `APPIMAGE_EXTRACT_AND_RUN=1`), et vos propres fichiers
 Microsoft : la mise à jour système officielle de la version (dossier `$SystemUpdate` ou paquet STFS), idéalement
 les modules/polices complets (archive XeBuilds) et, pour les icônes, une mise à jour récente (17559) contenant
 `$flash_xam.xex`.
@@ -597,7 +639,7 @@ Contenu de `dashboards/2.0.6770.0/assets/flash/` (monté en `\SystemRoot` / `med
 - `shrdres.xzp` : ressource de `xam.xex` 2.0.17559, convertie (voir « Mise en place »).
 - `XenonJKLatin.xtt`, `XenonCLatin.xtt` et les modules `*.xex` de la flash 6770 : archive
   *XeBuilds* (dossier `6770`, sans aucune donnée propre à une console). Seul son `xam.xex` ne se
-  déchiffre ni avec la clé retail ni avec la clé devkit (modifié par xeBuild ?) ; il n'est pas utilisé.
+  déchiffre ni avec la clé retail ni avec la clé devkit mais il se déchiffre avec la clé XEX1 (`tools/xex_rekey.py`, voir NXE 13604) ; non exploité.
 
 Ressources partagées : le Dashboard construit `sharedres://X` via `XamBuildLegacySystemResourceLocator`.
 Le localisateur du SDK, `file://media:/shrdres.xzp#X`, est coupé à la barre oblique par ce XUI
@@ -620,7 +662,7 @@ Sous Xvfb, RADV ne peut pas présenter (pas de DRI3) : utiliser lavapipe :
 - Icônes partagées (Ⓖ, boutons, zones) : ce sont celles du XAM **17559**, d'un style plus récent que
   la 6770. Celles d'origine sont dans le `xam.xex` de base 2.0.1888 (+ `xam.xexp` de la 6770) ;
   XeBuilds le fournit (`firmware/xebuild-xam/`, identique pour toutes les versions) mais il ne se
-  déchiffre ni avec la clé retail ni avec la clé devkit.
+  déchiffre ni avec la clé retail ni avec la clé devkit, mais avec la clé XEX1 (`tools/xex_rekey.py`).
 - Une exception C++ dans le Dashboard reste fatale (`RtlUnwind` non implémenté côté SDK, retour de
   *funclet* `catch` non géré) ; vue une fois, causée par le stub de `XamIsSystemTitleId`.
 - Stubs : `XamGetLanguage`, `XGetAudioFlags`, `HalGetCurrentAVPack`, `XamSetDashContext`, messages XMP.

@@ -112,6 +112,11 @@ l'utilisateur au premier lancement.
   (périphériques, stubs noyau), 2-3 j ; 3) générateur de redirections + `XamShow*UI`, 1-2 j ; 4) profil/succès via XAM,
   3-5 j ; 5) rendu XUI de XAM + manette, 2-4 j ; 6) retrait d'ImGui, captures, AppImage, 1 j. À court terme : profil et
   Games/My Games du 17559 en HLE (comme 6770), puis AppImage Metro.
+- **NXE 2.0.13604 (HLE, FAIT en partie, 2026-11-06)** : interface NXE affichée et pilotée au clavier, AppImage OK
+  (`tools/xex_rekey.py` : le `xam.xex` 13604 est chiffré avec la clé XEX1 ; polices 6770 en substitution) ; reste « Recent
+  Games »/profil (sign-in local non reconnu dans le hub), puis recompilation de XAM 13604 (XEX désormais décodable).
+  Détail : README, « Dashboard NXE 2.0.13604 ». **Découverte** : les `xam_*.xex` Blades de XeBuilds (6717, 7258...) se
+  déchiffrent aussi avec la clé XEX1 : XAM Blades recompilable (à explorer ; 6770 reste base 1888 + delta).
 - Ensuite : autres mises à jour complètes NXE/Metro.
 
 ### P5 — Lancement des jeux (FAIT)
@@ -137,12 +142,12 @@ l'utilisateur au premier lancement.
   non essayées) ; commande Xenia non testée (Xenia absent) ; autres versions (7258, 5759, 4532) non rebuildées avec le
   code P5b ; entrées du lanceur F5 en ImGui (police par défaut) et non en XUI.
 
-### P6 — AppImage (FAIT pour 6770 et 6717)
+### P6 — AppImage (FAIT pour 6770, 6717 et NXE 13604)
 - `tools/make_appimage.sh <version>` : `appimagetool` (téléchargé dans `work/appimage-tools/`), binaire + `librexruntime.so`
   + `librexgpu-xenos.so`, `AppRun`, `.desktop`, icône originale ; aucun fichier Microsoft embarqué.
 - Premier lancement : import de la mise à jour officielle (dialogue zenity/kdialog, console ou `--import`) via les
   étapes `extract`/`assets` de `port_dashboard.py` -> `~/.local/share/xenondash/<version>/`. Python 3 système requis.
-- Vérifié (`tools/test_appimage.sh`) : 6770 et 6717 sous Xvfb/lavapipe avec HOME temporaire, Dashboard affiché.
+- Vérifié (`tools/test_appimage.sh`) : 6770, 6717 et 13604 (import du `$flash_xam.xex` de la mise à jour, polices xebuild-6770) sous Xvfb/lavapipe avec HOME temporaire, Dashboard affiché.
 - Reste : AppImages 7258/5759/4532 (même outil, non testés), test sur un bureau « vide » (conteneur sans dépendances),
   embarquer libX11/xcb/wayland si une distribution cible ne les fournit pas, dialogue graphique de sélection de
   fichier (paquet STFS : zenity ne sélectionne ici que des dossiers), relance après un jeu sous AppImage (non testée).
