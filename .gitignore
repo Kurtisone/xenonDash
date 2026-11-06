@@ -23,3 +23,6 @@ sdk/
 third_party/*
 !third_party/rexglue-sdk
 __pycache__/
+
+# Régénérations de test de tools/port_dashboard.sh
+dashboards/*-regen/

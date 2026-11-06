@@ -78,6 +78,48 @@ LD_LIBRARY_PATH=../../sdk/lib out/build/linux-amd64-relwithdebinfo/dash --game_d
 Journaux : `dashboards/2.0.6770.0/out/build/linux-amd64-relwithdebinfo/logs/`. `--log_level=trace` pour tout voir.
 `DASH_AUDIO=nop` active le backend audio silencieux (`common/src/null_audio.h`).
 
+## Porter une nouvelle version
+
+`tools/port_dashboard.sh` enchaîne tout le portage d'une version (phase P2 du PLAN) :
+
+```sh
+tools/port_dashboard.sh <mise_à_jour> <version> [--flash-dir <modules XeBuilds>] [--shrdres-xam <xam.xex complet>]
+# ex. (6770, comme à la main) :
+tools/port_dashboard.sh '/chemin/$SystemUpdate' 2.0.6770.0 --flash-dir firmware/xebuild-6770
+```
+
+`<mise_à_jour>` : dossier `$SystemUpdate` (ses paquets STFS sont extraits avec `tools/stfs.py`), dossier de fichiers
+déjà extraits (`$flash_dash.xex`...), paquet STFS ou `dash.xex` seul. Les fichiers intermédiaires vont dans
+`work/port/<version>/` (journaux de codegen et de compilation compris), le projet dans `dashboards/<version>/`
+(`--dest` pour ailleurs ; `dashboards/*-regen/` est ignoré par git, pratique pour tester).
+
+| Étape (`--stages`) | Action |
+|---|---|
+| `extract` | extraction STFS, repérage de `dash.xex` (`$flash_dash.xex`) |
+| `assets` | `assets/dash.xex`, `assets/flash/` (modules complets de la mise à jour + `--flash-dir`, polices `XenonCLatin.xtt`/`XenonJKLatin.xtt`), `shrdres.xzp` converti (`--shrdres-xam`, défaut `firmware/17559/$flash_xam.xex`, ou `--shrdres` déjà converti) |
+| `pe` | `tools/xexinfo` : image PE décompressée, base, sections (`.text`, `.rdata`, `.data`) |
+| `scaffold` | gabarit `tools/templates/dashboard/` (`CMakeLists.txt` générique, `CMakePresets.json`, `dash_manifest.toml`, `src/app.h`, `src/main.cpp`, `run_headless.sh`, `dash_overrides.toml` vide). N'écrase jamais un fichier existant (`--refresh-template` pour le forcer) |
+| `codegen` | `rexglue codegen` en boucle : chaque erreur *UnresolvedCall* ajoute sa cible aux fonctions ; puis `tools/find_ptr_funcs.py` + `tools/filter_inside.py` (fonctions atteintes par pointeur ou construites par `lis/addi` ; les continuations de `catch` et cibles des tables de portée SEH, situées dans une fonction, sont écartées) jusqu'à ce qu'il n'y ait plus de nouvelle fonction. Résultat : **`overrides.toml`** (généré, versionné, ne pas éditer) |
+| `build` | `cmake --preset linux-amd64-relwithdebinfo` + compilation ; si l'édition de liens signale des `sub_XXXXXXXX` non définis (imports d'ordinal inconnu), écrit `src/auto_stubs.cpp` (`REX_STUB_RETURN(..., 0)`) et recommence |
+| `smoke` | Xvfb sur un affichage libre + lavapipe (`MESA_VK_WSI_PRESENT_MODE=immediate`), `--smoke-seconds` (40) secondes, capture `runs/<--smoke-name>.png`, échec si `dash` est mort, si une ligne `FATAL`/`[critical]` est dans le journal ou si la capture est uniforme ; `--reference-png` compare à une capture de référence (`--max-diff`) |
+| `compare` | avec `--compare-with <projet>` : tables de fonctions et adresses d'overrides |
+
+Code de retour non nul à la première étape en échec (message sur stderr, journaux dans `work/port/<version>/`).
+`--from-stage codegen` reprend à une étape, `--no-smoke` saute le test.
+
+**Corrections manuelles** (par version, versionnées à la main) : `dash_overrides.toml` (bornes de fonctions, hooks
+`[[midasm_hook]]`...) et `src/*.cpp` supplémentaires (le `CMakeLists.txt` générique compile tous les `src/*.cpp` :
+`version_stubs.cpp`, `diag_hooks.cpp`...). Le code commun à toutes les versions est dans `common/` ; les deux
+fichiers d'overrides sont listés dans `includes` du manifeste. Pour 2.0.6770.0, seuls `sub_92739D9C`
+(`version_stubs.cpp`, redondant avec les stubs automatiques) et `diag_hooks.cpp` (+ ses hooks) sont à la main.
+
+**Critère P2 vérifié sur 6770** : régénéré depuis le paquet STFS `su20076000_00000000` + `firmware/xebuild-6770` dans
+`dashboards/2.0.6770.0-regen/` : mêmes 24 669 fonctions, mêmes 342 adresses d'overrides (le projet manuel avait en plus
+les deux débuts de dispatchers `0x92249ED8` et `0x92249F38`, sans effet), code C++ généré identique fonction par
+fonction (hors les `extern` des 5 hooks de diagnostic), compilation sans erreur, capture équivalente (fond animé : on
+compare l'écart moyen, ~0,5/255 contre ~1,7 entre deux lancements du même binaire), aucun FATAL. Essai sur 2.0.6717.0 :
+codegen, compilation et smoke test passent sans intervention.
+
 ## Contrôles
 
 **Manette** : toute manette reconnue par SDL (Xbox, DualShock/DualSense, etc.) fonctionne directement.
@@ -238,7 +280,7 @@ celle de l'image : sans image, pas de Gamerscore.
 
 ## Ce qui a été corrigé
 
-### Analyse (`dashboards/2.0.6770.0/dash_overrides.toml`)
+### Analyse (`dashboards/2.0.6770.0/overrides.toml`, généré par `tools/port_dashboard.sh`)
 - Fonctions feuilles de *dispatch* sans `.pdata`, enchaînées par des `b` de queue.
 - 329 fonctions atteintes seulement via vtables/callbacks (`tools/find_ptr_funcs.py`, en excluant
   les tables de portée SEH `0x920E74EC-0x920E7E10` qui pointent au milieu des fonctions).

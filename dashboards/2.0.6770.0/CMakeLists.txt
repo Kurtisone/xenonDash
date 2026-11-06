@@ -1,6 +1,6 @@
-# dash - ReXGlue Recompiled Project
+# dash 2.0.6770.0 - projet ReXGlue (gabarit : tools/templates/dashboard, copié par tools/port_dashboard.sh).
 #
-# SDK boilerplate lives in generated/rexglue.cmake.
+# Le boilerplate du SDK est dans generated/rexglue.cmake (écrit par `rexglue codegen`).
 
 cmake_minimum_required(VERSION 3.25)
 project(dash LANGUAGES CXX)
@@ -13,12 +13,8 @@ include(generated/rexglue.cmake)
 # Code partagé entre versions (bibliothèque OBJECT : tous les hooks sont liés)
 add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/../../common xenondash_common)
 
-# Sources propres à la version 2.0.6770.0
-set(DASH_SOURCES
-    src/main.cpp
-    src/version_stubs.cpp
-    src/diag_hooks.cpp
-)
+# Sources propres à la version : main.cpp, plus tout autre src/*.cpp (stubs d'imports, hooks de diagnostic...)
+file(GLOB DASH_SOURCES CONFIGURE_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/src/*.cpp)
 
 if(WIN32)
     add_executable(dash WIN32 ${DASH_SOURCES})

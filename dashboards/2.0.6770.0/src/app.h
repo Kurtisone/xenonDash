@@ -1,4 +1,4 @@
-// dash 2.0.6770 - application de cette version : tout le comportement est dans xenondash::DashAppBase.
+// dash 2.0.6770.0 - application de cette version : tout le comportement est dans xenondash::DashAppBase.
 
 #pragma once
 

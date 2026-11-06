@@ -58,13 +58,29 @@ l'utilisateur au premier lancement.
   Dummy ODD » (SDK) ; `XamContentGetAttributesInternal`, `ResolveInternal`, `GetDefaultDevice`, `OpenFileInternal`
   encore en stub (jamais appelés par le parcours Stored Game Items) ; Copy/Move entre profils non testés à l'écran.
 
-### P2 — Chaîne de portage automatisée
-- `tools/port_dashboard.sh <mise_à_jour>` : extraction STFS, déchiffrement, `rexglue codegen`,
-  boucle de corrections automatiques (cibles non résolues, fonctions par pointeur, continuations de
-  `catch` exclues), compilation, test de fumée sans écran (capture + absence de FATAL).
-- Critère : 6770 régénéré entièrement par l'outil, résultat identique.
+### P2 — Chaîne de portage automatisée (FAIT)
+- `tools/port_dashboard.sh <mise_à_jour|STFS|dash.xex> <version> [--flash-dir ...]` (wrapper de
+  `tools/port_dashboard.py`) : extraction STFS, `assets/` (dash.xex, flash, `shrdres.xzp` converti), image PE
+  (`xexinfo`), projet depuis le gabarit `tools/templates/dashboard/`, `rexglue codegen` + boucle de corrections
+  (cibles non résolues, fonctions par pointeur / `lis`-`addi`, continuations de `catch` et tables SEH écartées par
+  `filter_inside.py`) -> `overrides.toml` **généré** (séparé de `dash_overrides.toml`, manuel), compilation (stubs
+  d'imports inconnus générés dans `src/auto_stubs.cpp`), test de fumée Xvfb + lavapipe (capture, aucun FATAL).
+- Critère rempli : 6770 régénéré par l'outil (`dashboards/2.0.6770.0-regen/`, non versionné) = mêmes 24 669 fonctions,
+  code généré identique fonction par fonction, compilation OK, capture équivalente, aucun FATAL. Le projet 6770
+  lui-même a été refactoré sur le gabarit (`CMakeLists.txt` générique : tous les `src/*.cpp`), ses overrides
+  automatiques déplacés dans `overrides.toml` ; seuls `diag_hooks.cpp` (+ hooks) et `version_stubs.cpp` restent propres
+  à 6770. Les 5 dispatchers à `end` manuel n'étaient pas nécessaires.
+- Reste : les modules flash d'une version viennent d'une archive XeBuilds (`--flash-dir`) car la mise à jour ne
+  contient souvent que des deltas `.xexp` (pas d'application de delta) ; la liste d'alias de `xzp_alias.py`
+  (`DASH_6770`) et les stubs/ordinaux XAM propres à une version restent à vérifier par version (P3) ; pas de
+  récupération automatique des fonctions dont le funclet `catch` retourne dans la fonction parente.
 
 ### P3 — Portage des versions Blades
+- Essai P2 fait sur **2.0.6717.0** (dash.xex complet du paquet, flash 6770 en attendant) : codegen (7 cibles non
+  résolues + 334 fonctions par pointeur), compilation (1 stub d'import auto) et capture Games sans FATAL, du premier
+  coup. 4532, 5759 et 7258 ont aussi un `$flash_dash.xex` complet ; 2255 n'a qu'un delta `.xexp` (base à fournir).
+- À fournir par version : le dossier `$SystemUpdate` (paquet `su20076000_00000000`) et les modules/polices de la
+  version (archive XeBuilds, `--flash-dir`) ; vérifier ensuite à l'écran les écrans propres à la version.
 - 2.0.7258, 6717, 5759, 4532, 2255 via P2 ; corrections manuelles documentées par version.
 - Flash par version : modules et polices (XeBuilds), `shrdres` converti.
 
