@@ -8,6 +8,7 @@
 // Comme XAM : notification XN_SYS_UI (1 à l'ouverture, 0 à la fermeture) et entrées du
 // Dashboard suspendues tant que l'interface est affichée. Haut/Bas : défiler, Échap/B : fermer.
 
+#include <algorithm>
 #include <atomic>
 #include <chrono>
 #include <cstdlib>
@@ -16,6 +17,7 @@
 #include <string>
 #include <vector>
 
+#include <fmt/format.h>
 #include <imgui.h>
 
 #include <rex/hook.h>
@@ -30,6 +32,7 @@
 #include <rex/ui/windowed_app_context.h>
 
 #include "dash_gpd.h"
+#include "dash_launch.h"
 
 namespace dash::achievements {
 struct TitleView {
@@ -56,10 +59,13 @@ std::atomic<bool> g_open{false};
 std::vector<std::unique_ptr<ui::ImmediateTexture>> g_retired;
 
 u32 XamShowAchievementsUI_entry(u32 user_index, u32 title_id);
+void OpenLauncherHotkey();
+void OpenLauncher();
 
 // DASH_TEST_XAMUI=<TitleID hexa> : ouvre l'écran de succès 20 s après le démarrage (test).
 void Init(ui::WindowedAppContext* app, ui::ImGuiDrawer* imgui, ui::ImmediateDrawer* immediate) {
   g_ctx = {app, imgui, immediate};
+  OpenLauncherHotkey();
   if (const char* test = std::getenv("DASH_TEST_XAMUI")) {
     uint32_t title = uint32_t(std::strtoul(test, nullptr, 16));
     std::thread([title] {
@@ -195,6 +201,88 @@ class AchievementsDialog : public ui::ImGuiDialog {
   std::vector<Row> rows_;
   int selected_ = 0, earned_ = 0, earned_gs_ = 0, total_gs_ = 0;
 };
+
+// --- Lanceur de jeux (phase P5) --------------------------------------------------------------------------
+// F5 (ou Back + Y sur manette) ouvre la liste des jeux de games.toml : Haut/Bas, Entrée / A pour lancer
+// (voir dash_launch.cpp : le Dashboard cède la place au jeu puis est relancé), Échap / B pour fermer.
+// Complète le chemin natif du Dashboard (XamLoaderLaunchTitle), que la 6770 n'emprunte que pour un disque.
+class LauncherDialog : public ui::ImGuiDialog {
+ public:
+  explicit LauncherDialog(ui::ImGuiDrawer* drawer) : ImGuiDialog(drawer), games_(launch::Games()) {}
+
+ protected:
+  void OnDraw(ImGuiIO& io) override {
+    const ImVec2 size(620.0f, 360.0f);
+    ImGui::SetNextWindowPos(ImVec2(io.DisplaySize.x * 0.5f, io.DisplaySize.y * 0.5f), ImGuiCond_Always,
+                            ImVec2(0.5f, 0.5f));
+    ImGui::SetNextWindowSize(size, ImGuiCond_Always);
+    ImGui::SetNextWindowBgAlpha(0.95f);
+    ImGui::SetNextWindowFocus();
+    if (ImGui::Begin("Jeux##dash_launcher", nullptr,
+                     ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove |
+                         ImGuiWindowFlags_NoSavedSettings)) {
+      if (ImGui::IsKeyPressed(ImGuiKey_DownArrow) || ImGui::IsKeyPressed(ImGuiKey_GamepadDpadDown)) selected_++;
+      if (ImGui::IsKeyPressed(ImGuiKey_UpArrow) || ImGui::IsKeyPressed(ImGuiKey_GamepadDpadUp)) selected_--;
+      if (!games_.empty()) selected_ = std::clamp(selected_, 0, int(games_.size()) - 1);
+      if (ImGui::IsKeyPressed(ImGuiKey_Escape) || ImGui::IsKeyPressed(ImGuiKey_Backspace) ||
+          ImGui::IsKeyPressed(ImGuiKey_GamepadFaceRight)) {
+        Close();
+      } else if (!games_.empty() && (ImGui::IsKeyPressed(ImGuiKey_Enter) || ImGui::IsKeyPressed(ImGuiKey_Space) ||
+                                     ImGui::IsKeyPressed(ImGuiKey_GamepadFaceDown))) {
+        auto g = games_[selected_];
+        std::thread([g] { launch::LaunchGame(g); }).detach();  // ne revient pas : le processus quitte
+      }
+      for (int i = 0; i < int(games_.size()); i++) {
+        const auto& g = games_[i];
+        ImGui::PushID(i);
+        ImGui::Selectable(fmt::format("{}   ({:08X}, {})", g.name, g.title_id, g.kind).c_str(), selected_ == i, 0,
+                          ImVec2(0, 40));
+        ImGui::PopID();
+      }
+      if (games_.empty()) ImGui::TextWrapped("Aucun jeu : créer %s (modèle games.example.toml).", "<game_data_root>/games.toml");
+      ImGui::Separator();
+      ImGui::TextDisabled("Haut/Bas : choisir    Entrée / A : lancer    Échap / B : fermer");
+    }
+    ImGui::End();
+  }
+  void OnClose() override {
+    std::thread([] {
+      if (auto* ks = system::kernel_state()) ks->BroadcastNotification(kXnSysUi, 0);
+      g_open = false;
+    }).detach();
+  }
+
+ private:
+  std::vector<launch::Game> games_;
+  int selected_ = 0;
+};
+
+void OpenLauncher() {
+  if (!g_ctx.app || !g_ctx.imgui || g_open.exchange(true)) return;
+  std::thread([] { system::kernel_state()->BroadcastNotification(kXnSysUi, 1); }).detach();
+  g_ctx.app->CallInUIThread([] { new LauncherDialog(g_ctx.imgui); });
+}
+
+// Boîte de dialogue invisible, toujours ouverte : surveille F5 (ou Back + Y).
+class HotkeyDialog : public ui::ImGuiDialog {
+ public:
+  explicit HotkeyDialog(ui::ImGuiDrawer* d) : ImGuiDialog(d) {}
+
+ protected:
+  void OnDraw(ImGuiIO& io) override {
+    (void)io;
+    if (g_open.load()) return;
+    if (ImGui::IsKeyPressed(ImGuiKey_F5, false) ||
+        (ImGui::IsKeyDown(ImGuiKey_GamepadBack) && ImGui::IsKeyPressed(ImGuiKey_GamepadFaceUp, false))) {
+      OpenLauncher();
+    }
+  }
+};
+
+void OpenLauncherHotkey() {
+  if (!g_ctx.app || !g_ctx.imgui) return;
+  g_ctx.app->CallInUIThread([] { new HotkeyDialog(g_ctx.imgui); });
+}
 
 u32 XamShowAchievementsUI_entry(u32 user_index, u32 title_id) {
   if (user_index >= 4) return X_ERROR_INVALID_PARAMETER;

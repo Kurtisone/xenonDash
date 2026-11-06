@@ -13,6 +13,7 @@
 #include <rex/ui/imgui_drawer.h>
 
 #include "dash_input.h"
+#include "dash_launch.h"
 #include "null_audio.h"
 
 namespace dash::profile {
@@ -47,6 +48,7 @@ void DashAppBase::OnLoadXexImage(std::string& xex_image) {
 // Montée en lecture seule depuis <game_data_root>/flash, à remplir avec le contenu extrait du dump NAND.
 void DashAppBase::OnPostSetup() {
   dash::profile::ApplyProfileSettings();
+  dash::launch::Init();
   // Interfaces XAM remplacées par ImGui (dash_xam_ui.cpp) : entrées du Dashboard suspendues
   // tant qu'elles sont affichées.
   dash::xamui::Init(&app_context(), imgui_drawer(), immediate_drawer());

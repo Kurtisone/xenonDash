@@ -54,6 +54,7 @@ python3 tools/xzp_alias.py work/shrdres_17559.xzp dashboards/2.0.6770.0/assets/f
 | `dashboards/<version>/` | Un projet ReXGlue par version : manifeste, corrections d'analyse, `src/` propre à la version (`main.cpp`, `app.h`, `version_stubs.cpp`, `diag_hooks.cpp`), scripts de test |
 | `dashboards/2.0.6770.0/assets/dash.xex` | Exécutable d'entrée |
 | `dashboards/2.0.6770.0/assets/flash/` | Contenu de la flash console, monté comme `\SystemRoot` (`media:`) |
+| `games.example.toml` | Modèle du registre de jeux `games.toml` (voir « Lancer des jeux ») |
 | `sdk/` | SDK ReXGlue installé (compilé depuis `third_party/rexglue-sdk`, **patché**, voir plus bas) |
 | `tools/` | Outils d'analyse (Python/C++) |
 | `work/` | Sorties d'analyse (image PE décompressée, imports, candidates) |
@@ -142,6 +143,68 @@ termine par un `b` vers sa fonction parente : le point d'arrivée est déclaré 
 `blr`/`b`, section « continuations de funclets » d'`overrides.toml`), copie du profil de test et de `input_test.sh`
 dans le projet, extraction de la ressource `gamercrd` de XAM. 6770 en avait aussi une (`0x9222D328`), ajoutée à
 son `overrides.toml` ; Achievements revérifié à l'écran après reconstruction.
+
+## Lancer des jeux (phase P5)
+
+Code : `common/src/dash_launch.cpp` (+ `dash_launch.h`, lanceur ImGui dans `dash_xam_ui.cpp`), donc commun à toutes
+les versions. Exemple de registre versionné : `games.example.toml`.
+
+**Registre** `<game_data_root>/games.toml` (ex. `dashboards/2.0.6770.0/assets/games.toml`, relu à chaque ouverture
+du lanceur) : une table `[game.<TitleID hexa>]` par jeu avec `name` et soit `native = "commande shell"` (+ `cwd`,
+relatif au répertoire du Dashboard ou absolu), soit `xenia = "chemin absolu du XEX/ISO"` (lancé avec la commande
+Xenia : `--dash_xenia=...`, sinon variable `DASH_XENIA`, sinon `[xenia] command`, sinon `xenia_canary`).
+Autres clés : `type` (`arcade` par défaut, `demo`, `original`, `xna` ou un nombre), `keep_ld_library_path`, et à la
+racine `disc = "<TitleID>"` (jeu « dans le lecteur ») et `library = true` (voir plus bas).
+
+**Comment lancer** :
+1. **F5** dans le Dashboard (manette : Back + Y) : liste des jeux du registre, Haut/Bas, Entrée/A lance, Échap/B ferme
+   (comme les écrans XAM remplacés : `XN_SYS_UI` et entrées du Dashboard suspendues) ;
+2. tout appel du Dashboard à `XamLoaderLaunchTitle` / `XamLoaderLaunchTitleEx` : le titre est retrouvé par un
+   TitleID présent dans le chemin, sinon c'est le jeu `disc` (ou le seul jeu déclaré) ; sans correspondance, l'appel
+   est journalisé et ignoré ;
+3. `--dash_launch=<TitleID> [--dash_launch_delay=5]` : lancement automatique au démarrage (tests).
+
+**Mécanisme retenu** : le Dashboard **ne reste pas en veille**. Il lance un superviseur détaché (`/bin/sh -c`, nouvelle
+session) et quitte (`_Exit`), ce qui libère fenêtre, GPU et audio pour le jeu (deux fenêtres Vulkan/SDL et deux
+pilotes audio simultanés sont la cause habituelle de blocages). Le superviseur exécute
+`( unset LD_LIBRARY_PATH; cd <cwd>; <commande> )` puis relance **le même exécutable avec les mêmes arguments**
+(sauf `--dash_launch*`), avec `DASH_RETURNED_FROM=<TitleID>` dans l'environnement (journalisé). Le code de retour du
+jeu est sans importance : le Dashboard revient toujours, qu'il se termine normalement ou soit tué. Conséquences :
+le PID change, le Dashboard repart sur l'onglet Games (l'état du profil est sur disque), `LD_LIBRARY_PATH` (SDK du
+Dashboard) est retiré de l'environnement du jeu, qui doit trouver seul ses bibliothèques (RPATH ou commande du type
+`LD_LIBRARY_PATH=. ./skate1`). La commande exacte est dans le journal du Dashboard (« LANCEMENT de ... »,
+« superviseur : sh -c ... »).
+
+**Ce que le Dashboard 6770 appelle** (imports relevés dans `work/dash_imports.tsv` et le code recompilé) :
+`XamLoaderLaunchTitle(chemin, indicateurs)` (0x9273988C), `XamLoaderLaunchTitleEx` (0x92739FCC),
+`XamLoaderSetLaunchData` / `GetLaunchData`, `XamLoaderGetMediaInfo` (0x9273A05C), `XamLoaderGetDvdTrayState`,
+`XamLoaderGetPriorTitleId`, `XamLoaderTerminateTitle`. `sub_921152A8` est l'enveloppe de `XamLoaderLaunchTitle` :
+chemin NULL = « lancer le disque » (avec des données de lancement de type 16), les chaînes `XLNI_DET_MEDIA` et
+`XLNI_DASH_ARCADE` sont des jetons internes. `sub_92274218` / `sub_9229E428` appellent `LaunchTitleEx` avec des
+données de lancement (type 38 : relance d'un titre système). Les hooks de `dash_launch.cpp` remplacent
+`LaunchTitle`/`LaunchTitleEx` du SDK, qui terminait le titre (donc le Dashboard) sans rien lancer.
+
+**Games Library / disque : état et limites.** Le 6770 n'a **pas** de liste de jeux installés : la Games Library
+(« My Games », grisé et « You don't have any games » tant qu'aucun contenu de jeu n'est vu) classe démos, Xbox
+Originals, XNA et Arcade (types de contenu `0x80000`, `0x5000`, `0xE0000`, `0xD0000`) ; les jeux sur disque se
+lancent par le bouton de disque (« Unplayable Disc » sans lecteur). Essais faits :
+- `library = true` : les jeux du registre sont ajoutés (éléments virtuels, type `type`) aux énumérations de
+  contenu (`XamContentAggregateCreateEnumerator`...), le Dashboard les voit (5 éléments, il appelle même
+  `XamContentGetAttributesInternal` sur l'élément, dont la sémantique reste inconnue : stub) mais **« My Games »
+  reste grisé** : non résolu. Désactivé par défaut (les jeux apparaîtraient sinon dans Stored Game Items) ;
+- bouton de disque : l'état « Unplayable Disc » ne dépend pas de `XamLoaderGetDvdTrayState` (essais 0/1/2/3) ni
+  d'un accès à `\Device\Cdrom0\default.xex` (aucune ouverture n'est tentée) ; il est probablement piloté par une
+  notification de média absente de la HLE. Un disque simulé (notification + `GetMediaInfo` + `Cdrom0`) reste à
+  faire : le chemin `LaunchTitle(NULL)` -> jeu `disc` est prêt côté lancement, mais le bouton n'est pas actif.
+  Le lanceur F5 sert de point d'entrée en attendant.
+
+**Test** (`dashboards/2.0.6770.0/launch_test.sh <nom> <attente> "F5" "Return" "sleep:45" "kill:^./skate1" ...`, Xvfb
+sur un affichage libre, lavapipe, tout est tué à la fin) :
+- commande factice (`sleep 8`, TitleID `DEAD0001`) : lancée depuis F5, le Dashboard quitte, le jeu s'exécute, le
+  Dashboard est relancé (`DASH_RETURNED_FROM=DEAD0001`), vérifié aussi avec `--dash_launch` (pas de boucle) ;
+- **Skate** (port natif `../Skate1Recompiled/out/pc-profile/skate1`, TitleID 45410813) : lancé depuis le Dashboard,
+  il tourne sous Xvfb + lavapipe (écran-titre « Appuie sur START pour continuer », ~26 FPS), puis, le jeu tué, le
+  Dashboard revient. Captures : `dashboards/2.0.6770.0/runs/preuves/p5_*.png` (dossier ignoré par git).
 
 ## Contrôles
 

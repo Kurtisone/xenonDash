@@ -24,6 +24,8 @@
 
 #include <fmt/format.h>
 
+#include "dash_launch.h"
+
 #include <rex/hook.h>
 #include <rex/logging.h>
 #include <rex/runtime.h>
@@ -146,6 +148,19 @@ std::vector<Item> List(uint32_t title_id, uint32_t type) {
     auto g = profile::Gamertag();
     p.name = std::u16string(g.begin(), g.end());
     all.push_back(std::move(p));
+  }
+  // Jeux du registre games.toml (Games Library : démos, Arcade, Xbox Originals...) : éléments virtuels, seulement
+  // dans les énumérations, seulement avec `library = true` (expérimental : n'active pas « My Games », voir README).
+  if (launch::LibraryEnabled()) {
+    for (auto& g : launch::Games()) {
+      Item v;
+      v.xuid = local;
+      v.title_id = g.title_id;
+      v.type = g.content_type;
+      v.file_name = fmt::format("{:08X}", g.title_id);
+      v.name = std::u16string(g.name.begin(), g.name.end());
+      all.push_back(std::move(v));
+    }
   }
   for (auto& it : all) {
     if (title_id && it.title_id != title_id) continue;

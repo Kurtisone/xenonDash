@@ -95,12 +95,21 @@ l'utilisateur au premier lancement.
 - Les remplaçants ImGui (`dash_xam_ui.cpp`) ne servent plus pour ces versions.
 - Ensuite : autres mises à jour complètes NXE/Metro.
 
-### P5 — Lancement des jeux
-- `XamLoaderLaunchTitle` / `XamLoaderLaunchTitleEx` : registre `games.toml` (TitleID → commande du
-  port natif, ou chemin XEX/ISO pour Xenia) ; Games Library alimentée par ce registre.
-- Retour au Dashboard (relance) à la fin du jeu ; mise à jour des jeux joués/succès si le port les
-  écrit (format GPD).
-- Critère : Skate (port natif Skate1Recompiled) lancé depuis le Dashboard puis retour.
+### P5 — Lancement des jeux (FAIT en grande partie)
+- Registre `games.toml` (`<game_data_root>/games.toml`, modèle `games.example.toml`) : TitleID -> nom + `native`
+  (commande + `cwd`) ou `xenia` (commande Xenia : `--dash_xenia`, `DASH_XENIA`, `[xenia] command`).
+- Hooks `XamLoaderLaunchTitle` / `XamLoaderLaunchTitleEx` (`common/src/dash_launch.cpp`) ; lanceur ImGui F5 dans le
+  Dashboard ; `--dash_launch=<TitleID>` pour les tests.
+- Mécanisme : le Dashboard lance un superviseur détaché (`sh`) et quitte ; le superviseur exécute le jeu puis relance
+  le Dashboard avec les mêmes arguments (`DASH_RETURNED_FROM`). Pas de partage de fenêtre/GPU/audio.
+- Critère rempli : Skate (Skate1Recompiled) lancé depuis le Dashboard 6770 (sous Xvfb + lavapipe : écran-titre
+  rendu), puis retour au Dashboard ; idem avec une commande factice. 6717 recompilé, smoke OK.
+- Reste : bouton de disque / « My Games » de la Games Library inactifs (le Dashboard 6770 n'y voit aucun jeu : état
+  « Unplayable Disc » piloté par une notification de média absente ; `library = true` ajoute des éléments de contenu
+  virtuels sans activer « My Games », `XamContentGetAttributesInternal` à comprendre) ; lancement depuis Played Games
+  inexistant dans le 6770 ; retour sur l'onglet d'origine (le Dashboard repart sur Games) ; mise à jour des jeux
+  joués/succès écrits par le port (format GPD) non faite ; commande Xenia non testée (Xenia absent) ; autres versions
+  (7258, 5759, 4532) non rebuildées ; entrées du lanceur F5 en ImGui (police par défaut) et non en XUI.
 
 ### P6 — AppImage
 - Un AppImage par version (`appimagetool`/`linuxdeploy`) : binaire, `librexruntime.so`,
