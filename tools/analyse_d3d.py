@@ -5,6 +5,7 @@ usage: analyse_d3d.py <dash.pe> <generated_dir> <cmd> [args]
   shaders [liste]        : conteneurs de shaders Xenos (0x102A1100/1101) : nombre, VS/PS, tailles
   shadernames            : noms de constantes/échantillonneurs des tables de constantes
   familles               : classement vidéo (décodeur WMV) / UI et liste des shaders UI
+  extract <dir>          : écrit chaque conteneur dans <dir>/{ui,video}/<addr>_<VS|PS>.bin (voir « familles »)
   cf                     : flot de contrôle (opcodes CF), VS à export mémoire probable
   pm4 | funcs lo hi | who a.. | api : fonctions D3D, appelants, points d'entrée de la bibliothèque D3D
 """
@@ -224,3 +225,18 @@ if cmd == 'api':
     print('dont appelés par XUI/dash (hors décodeur WMV):', sum(1 for r in rows if r[2] - r[4] > 0))
     for r in sorted(rows, key=lambda r: -r[2]):
         print(f'{r[0]:08X} size={r[1]:5d} sites_ext={r[2]:3d} fonctions_ext={r[3]:3d} dont_WMV={r[4]:3d}')
+
+
+WMV_RX = re.compile(rb'updb|cDim|cYUV|outTiles|inResiduals|inTiles|inImage|outImage|cRndCtrl|cPad|cBicubic|cPQuant|cShiftTable|cRounding|g_Image|g_Field|g_Overlay|g_Luma|g_Chroma|g_Sharpen|g_Threshold|g_Sample|YSampler|g_YUV|g_RGB|_yuv|cInterlaced|cPhase|cOffset128|inFlags|outBuffer|img_info|InputFormatData|g_NoiseFilter')
+
+if cmd == 'extract':
+    import os
+    out = sys.argv[4]
+    n = collections.Counter()
+    for c in containers(D, BASE):
+        t = c['data']
+        fam = 'video' if WMV_RX.search(t[:c['vsz']] + t[c['vsz']+c['ucode_off']+c['ucode_size']:]) else 'ui'
+        os.makedirs(f'{out}/{fam}', exist_ok=True)
+        open(f"{out}/{fam}/{c['off']:08X}_{c['kind']}.bin", 'wb').write(t)
+        n[(fam, c['kind'])] += 1
+    print(dict(n), 'total', sum(n.values()))

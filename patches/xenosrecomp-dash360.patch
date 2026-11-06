@@ -1,0 +1,65 @@
+diff --git a/XenosRecomp/shader_recompiler.cpp b/XenosRecomp/shader_recompiler.cpp
+index 698a418..a59cf2f 100644
+--- a/XenosRecomp/shader_recompiler.cpp
++++ b/XenosRecomp/shader_recompiler.cpp
+@@ -1,3 +1,4 @@
++#include <set>
+ #include "shader_recompiler.h"
+ #include "shader_common.h"
+ 
+@@ -1103,14 +1104,16 @@ void ShaderRecompiler::recompile(const uint8_t* shaderData, const std::string_vi
+     const auto shaderContainer = reinterpret_cast<const ShaderContainer*>(shaderData);
+ 
+     assert((shaderContainer->flags & 0xFFFFFF00) == 0x102A1100);
+-    assert(shaderContainer->constantTableOffset != NULL);
+ 
+     out += include;
+     out += '\n';
+ 
+     isPixelShader = (shaderContainer->flags & 0x1) == 0;
+ 
+-    const auto constantTableContainer = reinterpret_cast<const ConstantTableContainer*>(shaderData + shaderContainer->constantTableOffset);
++    // Dash 360 : les shaders sans constante n'ont pas de table (constantTableOffset == 0) -> table vide
++    static const uint8_t s_emptyConstantTable[sizeof(ConstantTableContainer)] = {};
++    const auto constantTableContainer = reinterpret_cast<const ConstantTableContainer*>(
++        shaderContainer->constantTableOffset != 0 ? shaderData + shaderContainer->constantTableOffset : s_emptyConstantTable);
+     constantTableData = reinterpret_cast<const uint8_t*>(&constantTableContainer->constantTable);
+ 
+     out += "#ifdef __spirv__\n\n";
+@@ -1187,6 +1190,36 @@ void ShaderRecompiler::recompile(const uint8_t* shaderData, const std::string_vi
+         }
+     }
+ 
++    // Dash 360 : tables de constantes absentes/incomplètes -> déclare les registres et échantillonneurs non nommés
++    {
++        std::set<uint32_t> definedRegs;
++        if (shaderContainer->definitionTableOffset != NULL)
++        {
++            auto definitionTable = reinterpret_cast<const DefinitionTable*>(shaderData + shaderContainer->definitionTableOffset);
++            auto definitions = definitionTable->definitions;
++            while (*definitions != 0)
++            {
++                auto definition = reinterpret_cast<const Float4Definition*>(definitions);
++                for (uint16_t i = 0; i < (definition->count + 3) / 4; i++)
++                    definedRegs.insert(definition->registerIndex + i - (isPixelShader ? 256 : 0));
++                definitions += 2;
++            }
++        }
++        for (uint32_t r = 0; r < 256; r++)
++        {
++            if (float4Constants.find(r) == float4Constants.end() && definedRegs.find(r) == definedRegs.end())
++                println("#define c{} vk::RawBufferLoad<float4>(g_PushConstants.{}ShaderConstants + {}, 0x10)", r, isPixelShader ? "Pixel" : "Vertex", r * 16);
++        }
++        for (uint32_t r = 0; r < 16; r++)
++        {
++            if (samplers.find(r) != samplers.end())
++                continue;
++            for (size_t j = 0; j < std::size(TEXTURE_DIMENSIONS); j++)
++                println("#define s{}_Texture{}DescriptorIndex vk::RawBufferLoad<uint>(g_PushConstants.SharedConstants + {})", r, TEXTURE_DIMENSIONS[j], j * 64 + r * 4);
++            println("#define s{}_SamplerDescriptorIndex vk::RawBufferLoad<uint>(g_PushConstants.SharedConstants + {})", r, std::size(TEXTURE_DIMENSIONS) * 64 + r * 4);
++        }
++    }
++
+     out += "\n#else\n\n";
+ 
+     println("cbuffer {}ShaderConstants : register(b{}, space4)", isPixelShader ? "Pixel" : "Vertex", isPixelShader ? 1 : 0);

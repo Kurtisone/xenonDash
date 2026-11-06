@@ -284,27 +284,27 @@ Principes :
 | A2 | Cadre : `REX_HOOK` des ≈ 35 entrées, état hôte, table de ressources, file de commandes, fil de rendu, `Swap` -> présentation, neutralisation des `Vd*` | 7 |
 | A3 | Backend Vulkan : rendertargets/backbuffer, états (blend/depth/stencil/cull), flux de vertex et déclarations, tampons d'index, viewport/scissor, `Clear`, dessin, pipelines hachés + cache | 10 |
 | A4 | Textures : lecture des *fetch constants*, formats, détuilage + endian-swap à l'upload, mips, cubes/3D, `Lock`/`Unlock` | 8 |
-| A5 | Shaders : extracteur de conteneurs, traducteur hors ligne (adaptation XenosRecomp ou traducteur maison) pour les 70 shaders UI/effets, cache par hachage, constantes | 10 |
+| A5 | Shaders : extracteur de conteneurs (fait), traduction hors ligne par XenosRecomp patché (fait, voir §10), cache par hachage, liaison des constantes/échantillonneurs, spécialisation | 6 *(10 avant l'essai §10)* |
 | A6 | `Resolve` / EDRAM virtuel + copies de surface | 4 |
 | A7 | Décodage vidéo : remplacement du décodeur WMV (hook + ffmpeg) | 5 |
 | A8 | Mise au point visuelle contre l'oracle (plugin `xenos` actuel), correctifs, retrait de l'émulation | 6 |
-| **Total 6770** | | **55** |
+| **Total 6770** | | **51** *(55 avant l'essai)* |
 
 ### 2.0.13604.0 (NXE)
 
 Réutilise A2-A6 ; coût : nouvelle dérivation de D3D (signatures, offsets), nouveaux effets NXE (flou, avatars non
 supportés d'emblée, tuiles), ≈ 230-260 shaders (extrapolation à partir de la 7258 : 246 conteneurs).
-Estimation : **+14 jours** (cartographie 3, shaders 5, effets/textures 4, mise au point 2). Le dash 13604 n'est pas
+Estimation : **+12 jours** *(14 avant l'essai §10)* (cartographie 3, shaders 3, effets/textures 4, mise au point 2). Le dash 13604 n'est pas
 disponible dans `work/` : estimation non mesurée.
 
 ### 2.0.17559.0 (Metro)
 
 Mesuré sur `work/port/2.0.17559.0/dash.pe` : **220 conteneurs (33 VS / 187 PS)** ; `xam17559.pe` : **34 (5 VS / 29 PS)**.
 Beaucoup plus de PS et peu de VS : l'interface Metro utilise des effets de pixel en nombre ; plus de code
-D3D à repérer, deux bibliothèques D3D. Estimation : **+17 jours** (cartographie 4, shaders 6, deux
-bibliothèques 3, mise au point 4).
+D3D à repérer, deux bibliothèques D3D. Estimation : **+15 jours** (cartographie 4, shaders 4, deux
+bibliothèques 3, mise au point 4) ; shaders ramenés de 6 à 4 jours, soit **+15 jours** au lieu de +17.
 
-**Total : ≈ 86 jours-personne** (55 + 14 + 17). Chemin critique : A1 -> A2 -> A3 -> A5. Premier jalon visible
+**Total : ≈ 78 jours-personne** (51 + 12 + 15 ; 86 avant l'essai du §10). Chemin critique : A1 -> A2 -> A3 -> A5. Premier jalon visible
 utile : **A1-A3 + noyau XUI de A5 (≈ 12 shaders)** = écran de fond et boutons, ≈ 20 jours ; l'émulation actuelle
 peut servir en parallèle d'oracle.
 
@@ -321,3 +321,87 @@ python3 -I tools/analyse_d3d.py work/dash.pe x who 921350A0
 Limites : l'outil ne lit que l'image PE décompressée (jamais versionnée) ; il suppose le format de conteneur décrit
 au §4 (non vérifié contre le code de la XDK, seulement recoupé avec la description publique de XenosRecomp et la
 cohérence interne : sur le premier conteneur, `virtualSize + physicalSize` tombe exactement sur le suivant, et 221 conteneurs passent le filtre de plausibilité).
+
+## 10. Essai XenosRecomp (2026-11-06)
+
+XenosRecomp (hedge-dev, MIT) a été cloné avec ses sous-modules dans `work/XenosRecomp` (non versionné), compilé et
+appliqué aux 221 conteneurs du `dash.pe` 6770.
+
+**Build : OK**, sans dépendance système manquante (CMake 4, Ninja, clang++ 20+ ; GCC non essayé). Particularités :
+(1) `/usr/local/bin/cc` de cette machine est un wrapper qui casse le test du compilateur C de CMake : forcer
+`CC=clang CXX=clang++` ; (2) le DXC Linux est fourni **déjà compilé** dans le sous-module (`thirdparty/dxc-bin`,
+`libdxcompiler.so` + `dxc-linux`), rien à construire ; (3) le mode DXIL est réservé à Windows, seul SPIR-V est produit ici ;
+(4) `-DCMAKE_BUILD_TYPE=Release` définit `NDEBUG` et neutralise les `assert` de l'outil, qui sont sa seule détection
+d'entrée inattendue : j'ai compilé avec `-O1` sans `NDEBUG` (`-DCMAKE_CXX_FLAGS_RELEASE="-O1 -g0"`).
+`UNLEASHED_RECOMP` n'est **pas** défini : les hacks Sonic (reverse-Z, instanciation « méta », matrices
+`g_MtxProjection`...) sont absents de la traduction, rien à neutraliser.
+
+**Entrée : aucun adaptateur de format.** XenosRecomp lit les conteneurs bruts (fanion `0x102A11xx`, champs big-endian) :
+`tools/analyse_d3d.py extract <dir>` écrit les 221 conteneurs tels quels (70 `ui/` = 18 VS + 52 PS ; 151 `video/` = 64 VS + 87 PS,
+mêmes familles que la commande `familles`). Le mode « fichier unique » de XenosRecomp sort le HLSL ; le pilote
+`tools/xenos_batch.py` lance un processus par shader (l'outil s'arrête sur `assert`), puis `dxc-linux -spirv` avec les
+options de l'outil (`-fvk-use-dx-layout`, `-fvk-invert-y` pour les VS) et écrit un tableau de résultats.
+
+**Deux adaptations de XenosRecomp** (`patches/xenosrecomp-dash360.patch`, 65 lignes, à appliquer sur le dépôt cloné) :
+1. 30 shaders de l'interface (28 PS + 2 VS) **n'ont pas de table de constantes** (`constantTableOffset == 0` : aucune
+   constante nommée) ; l'outil les refusait par `assert`. Correctif : table vide.
+2. Les registres de constantes et échantillonneurs **non nommés** (`c0`, `s1`...) n'étaient pas déclarés (l'outil suppose
+   que le compilateur du jeu a toujours fourni les noms) : DXC échouait (« use of undeclared identifier »). Correctif :
+   macros par défaut `cN` -> `PixelShaderConstants/VertexShaderConstants + N*16` et `sN_Texture*/Sampler DescriptorIndex`
+   pour tout registre ni nommé ni défini dans la table de définitions (littéraux du compilateur, ex. `c252-c255`).
+
+**Résultats (après les deux correctifs)**
+
+| Famille | Conteneurs | HLSL sans erreur | SPIR-V compilé |
+|---|---|---|---|
+| Interface, VS | 18 | 18 | 18 |
+| Interface, PS | 52 | 52 | 52 |
+| **Interface, total** | **70** | **70** | **70 (100 %)** |
+| Décodeur WMV, PS | 87 | 87 | 87 |
+| Décodeur WMV, VS | 64 | 0 | 0 |
+| **WMV, total** | **151** | **87** | **87 (58 %)** |
+
+Sans correctifs : interface 40/70 en HLSL ; avec le seul correctif 1 : 70/70 en HLSL mais 40/70 en SPIR-V (30 échecs DXC, noms non déclarés).
+
+**Échecs : 64 vertex shaders WMV, tous à export mémoire** (les 64 portent des constantes `outTiles/outBuffer/outImage`,
+confirmé par `analyse_d3d.py cf`) : 51 échouent au `assert` de `vfetch` (lecture d'un flux de sommets non déclaré : le
+VS lit des tampons bruts, pas des éléments de sommet) et 13 à l'`assert` d'interpolateur (sorties d'export mémoire prises
+pour des interpolateurs). C'est la limite connue de l'outil (pas de `memexport`) ; elle ne touche aucun shader de l'interface.
+Aucune instruction ALU/fetch non gérée n'a été rencontrée sur les 70 + 87 shaders traduits.
+
+**Relecture manuelle** (4 shaders, tous cohérents avec le rôle attendu) :
+- `9200C460` (PS) : `oC0 = SolidColor * ColorFactor` : remplissage uni, exact.
+- `920CA550` (PS, texte/ icône avec fondu) : `t = tex(s0, uv) ; oC0 = (t - c31) * color0.w + c31` : mélange vers une
+  couleur de base selon l'alpha du sommet ; les `r0 = iTexCoord0`, `r1 = iColor0` sont bien initialisés depuis les
+  interpolateurs, `cndge` rendu en `select(x >= 0.0, ...)` (sémantique Xenos correcte).
+- `920CC898` (PS, flou en 6 prises) : chaîne de pas `uv += pas`, 6 `tfetch2D` sur `s0`, pondération géométrique
+  `c1.w * c2.z^k`, bornage par `cndge` : plausible comme flou radial/lueur.
+- `9200C038` (VS XUI) : `WorldViewProj` puis `InvViewport`, `LocalToTexTransform`, `UVTrans`, et `c255.x = -0.5`
+  (littéral de la table de définitions, la correction de demi-pixel) ; l'outil ajoute `oPos.xy += g_HalfPixelOffset * oPos.w`.
+  Cohérent. Le PS `9200C818` (conversion de couleur avec `ColorConvertMatrix`) utilise de même le littéral `c255 = (0,1,0,0)`.
+
+**Réserves**
+- Justesse **jugée sur lecture**, non vérifiée à l'image (aucune comparaison pixel avec l'émulation actuelle).
+- Quirk bénin : pour le dernier tableau nommé, l'outil déclare `registerCount` jusqu'à 256 (`select(INDEX < 256, ...)`) ;
+  sans conséquence tant que le moteur ne lit pas hors tableau.
+- Liaison à faire côté exécution : le modèle de l'outil (constantes lues par `RawBufferLoad` dans une zone de pointeurs
+  poussés, descripteurs de textures indexés par registre, constantes d'état dans `SharedConstants`) est celui d'UnleashedRecomp ;
+  notre backend (A3-A5) doit reproduire cette disposition (`g_Booleans`, `g_HalfPixelOffset`, `g_AlphaThreshold`, spécialisation
+  alpha-test) ou la remplacer.
+- Les 87 PS vidéo compilent mais ne servent à rien sans les VS : la vidéo reste à traiter par remplacement du décodeur (A7).
+
+**Impact sur l'estimation** : la traduction des 70 shaders d'interface est **acquise** (aucun traducteur maison). A5
+passe de 10 à 6 jours (reste : cache par hachage, liaison des constantes et échantillonneurs, tests visuels), et les lignes
+« shaders » de 13604 et 17559 baissent de 2 jours chacune. Total **≈ 78 jours-personne** (contre 86). Le risque
+« memexport WMV » est inchangé (remplacement du décodeur conservé en A7).
+
+**Reproduire**
+```
+git clone --recursive https://github.com/hedge-dev/XenosRecomp work/XenosRecomp
+git -C work/XenosRecomp apply "$PWD/patches/xenosrecomp-dash360.patch"
+(cd work/XenosRecomp && CC=clang CXX=clang++ cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release \
+   -DCMAKE_CXX_FLAGS_RELEASE="-O1 -g0" && cmake --build build)
+python3 -I tools/analyse_d3d.py work/dash.pe work/port extract work/shaders6770
+python3 -I tools/xenos_batch.py work/shaders6770 work/shaders_out
+```
+Les dossiers `work/shaders6770` (microcode Microsoft) et `work/shaders_out` (HLSL/SPIR-V dérivés) ne sont jamais versionnés.
