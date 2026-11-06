@@ -48,10 +48,15 @@ l'utilisateur au premier lancement.
   tailles réelles ; options Copy/Move/Delete et boîte de confirmation.
 - Downloads : ouvre une invite « Sign in to Xbox LIVE to download content » (Marketplace en ligne, pas le contenu
   local) ; le contenu téléchargé local se voit dans Stored Game Items. Nécessiterait un état de connexion Live simulé.
-- Reste : Stored Game Items / Downloads ouvrent l'explorateur de stockage **non filtré** (Storage Devices > All Devices >
-  Games > jeu) ; la liste Games affiche une ligne par paquet au lieu d'une par jeu ; propriétaire « Unknown Profile »
-  (`XamContentGetAttributesInternal` encore en stub) ; noms d'appareils « Dummy HDD » (SDK) ; Copy/Move non faits ;
-  confirmation de Delete non testée jusqu'au bout.
+- Fait ensuite : propriétaire correct (paquet de profil virtuel + `XamProfileLoadAccountInfo`, le Dashboard bâtit sa
+  liste de profils avec les contenus de type 0x10000) ; liste Games regroupée par jeu (`XamUniSortCmpString` réel
+  au lieu du stub) ; suppression vérifiée de bout en bout ; Copy/Move (`XamContentCopyInternal`/`MoveInternal`) :
+  changement de propriétaire sur le disque, erreur propre vers un appareil non inscriptible.
+- Stored Game Items non filtré : c'est le comportement du Dashboard 6770 (scène `DeviceSelector.xur` sans paramètre,
+  voir README), pas un défaut de XAM.
+- Reste : Downloads (Marketplace en ligne, demande une connexion Xbox LIVE simulée) ; noms d'appareils « Dummy HDD /
+  Dummy ODD » (SDK) ; `XamContentGetAttributesInternal`, `ResolveInternal`, `GetDefaultDevice`, `OpenFileInternal`
+  encore en stub (jamais appelés par le parcours Stored Game Items) ; Copy/Move entre profils non testés à l'écran.
 
 ### P2 — Chaîne de portage automatisée
 - `tools/port_dashboard.sh <mise_à_jour>` : extraction STFS, déchiffrement, `rexglue codegen`,

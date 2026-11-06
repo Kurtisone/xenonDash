@@ -1,5 +1,6 @@
 """Injecte des appuis de touches dans un serveur X (Xvfb) via l'extension XTest.
 usage: DISPLAY=:77 xkeys.py <touche> [<touche> ...]
+Clic de souris : "click:X,Y" (pixels de l'écran ; pour les boîtes de dialogue ImGui, que le clavier ne pilote pas).
 Touches : noms de keysym X11 (Return, Escape, Right, Left, Up, Down, e, q, Tab...).
 Préfixe "Shift+" accepté. Chaque touche est enfoncée XKEYS_HOLD s (0.15 par défaut, sous le délai de répétition de 400 ms) puis relâchée, 400 ms entre deux."""
 import ctypes
@@ -63,7 +64,26 @@ def send(kc, down):
     x11.XFlush(dpy)
 
 
+xtst.XTestFakeMotionEvent.argtypes = [ctypes.c_void_p, ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_ulong]
+xtst.XTestFakeButtonEvent.argtypes = [ctypes.c_void_p, ctypes.c_uint, ctypes.c_int, ctypes.c_ulong]
+
+
+def click(x, y):
+    xtst.XTestFakeMotionEvent(dpy, -1, x, y, 0)
+    x11.XFlush(dpy)
+    time.sleep(1.0)  # laisse ImGui survoler le bouton (rendu logiciel lent : une image par seconde ou moins)
+    xtst.XTestFakeButtonEvent(dpy, 1, 1, 0)
+    x11.XFlush(dpy)
+    time.sleep(1.5)  # un appui plus court qu'une image est perdu
+    xtst.XTestFakeButtonEvent(dpy, 1, 0, 0)
+    x11.XFlush(dpy)
+    time.sleep(0.4)
+
+
 for arg in sys.argv[1:]:
+    if arg.startswith("click:"):
+        click(*[int(v) for v in arg[6:].split(",")])
+        continue
     parts = arg.split("+")
     codes = [keycode("Shift_L" if p == "Shift" else p) for p in parts]
     for c in codes:

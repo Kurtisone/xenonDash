@@ -14,6 +14,7 @@
 //   XamContentCreateEnumerator(utilisateur, appareil, type, indicateurs, nombre, &taille, &handle)
 
 #include <algorithm>
+#include <cctype>
 #include <cstring>
 #include <filesystem>
 #include <fstream>
@@ -35,6 +36,7 @@
 namespace dash::profile {
 std::filesystem::path ProfileDir(uint64_t xuid);
 uint64_t LocalXuid();
+std::string Gamertag();
 }  // namespace dash::profile
 
 namespace dash::content {
@@ -53,8 +55,11 @@ struct Item {
   std::u16string desc;
   std::vector<uint8_t> thumb;  // PNG
   uint64_t file_size = 0;
-  std::filesystem::path path;
+  std::filesystem::path path;  // vide pour le paquet de profil virtuel
 };
+
+constexpr uint32_t kTypeGamerProfile = 0x10000;
+constexpr uint32_t kTitleDash = 0xFFFE07D1;
 
 namespace {
 
@@ -129,6 +134,19 @@ std::vector<Item> List(uint32_t title_id, uint32_t type) {
   uint64_t local = profile::LocalXuid();
   ScanDir(local, all);
   if (local != 0) ScanDir(0, all);
+  if (local != 0) {
+    // Paquet du profil (Content/<XUID>/FFFE07D1/00010000/<XUID> sur la console). Le Dashboard bâtit sa
+    // liste de profils (nom du propriétaire d'un contenu) à partir de ces éléments, via
+    // XamProfileLoadAccountInfo : sans lui, tout contenu a pour propriétaire « Unknown Profile ».
+    Item p;
+    p.xuid = local;
+    p.title_id = kTitleDash;
+    p.type = kTypeGamerProfile;
+    p.file_name = fmt::format("{:016X}", local);
+    auto g = profile::Gamertag();
+    p.name = std::u16string(g.begin(), g.end());
+    all.push_back(std::move(p));
+  }
   for (auto& it : all) {
     if (title_id && it.title_id != title_id) continue;
     if (type != kAnyType && it.type != type) continue;
@@ -251,10 +269,21 @@ u32 XamContentGetMetaDataInternal_entry(mapped_void item_ptr, mapped_void out, u
   uint32_t title = uint32_t(d->title_id);
   for (auto& it : List(title, type)) {
     if (it.file_name != file) continue;
+    auto* m = static_cast<uint8_t*>(static_cast<void*>(out));
+    std::memset(m, 0, kMetaSize);
+    if (it.path.empty()) {  // paquet de profil virtuel : en-tête minimal
+      auto put32 = [&](size_t o, uint32_t v) { for (int i = 0; i < 4; i++) m[o + i] = uint8_t(v >> (24 - 8 * i)); };
+      put32(0, it.type);
+      put32(0x360 - kMetaStart, it.title_id);
+      for (size_t i = 0; i < it.name.size() && i < 0x3F; i++) {
+        m[0x411 - kMetaStart + i * 2] = uint8_t(it.name[i] >> 8);
+        m[0x411 - kMetaStart + i * 2 + 1] = uint8_t(it.name[i]);
+      }
+      return X_ERROR_SUCCESS;
+    }
     std::ifstream f(it.path, std::ios::binary);
-    std::memset(out, 0, kMetaSize);
     f.seekg(kMetaStart);
-    f.read(static_cast<char*>(static_cast<void*>(out)), kMetaSize);
+    f.read(reinterpret_cast<char*>(m), kMetaSize);
     return X_ERROR_SUCCESS;
   }
   REXLOG_WARN("[dash] XamContentGetMetaDataInternal : '{}' (titre {:08X}, type {:#x}) introuvable", file, title, type);
@@ -290,6 +319,7 @@ u32 XamContentDeleteInternal_entry(mapped_void item_ptr, u32 overlapped) {
     uint32_t title = uint32_t(d->title_id);
     for (auto& it : List(title, type)) {
       if (it.file_name != file) continue;
+      if (it.path.empty()) { result = X_ERROR_ACCESS_DENIED; break; }  // profil virtuel
       std::error_code ec;
       std::filesystem::remove(it.path, ec);
       result = ec ? X_ERROR_ACCESS_DENIED : X_ERROR_SUCCESS;
@@ -304,6 +334,91 @@ u32 XamContentDeleteInternal_entry(mapped_void item_ptr, u32 overlapped) {
   return result;
 }
 
+// --- Copie et déplacement -----------------------------------------------------------
+// XamContentCopyInternal / XamContentMoveInternal(&nouveau_propriétaire ou 0, &appareil_destination ou 0,
+//   élément, routine, contexte, 0, overlapped) : relevé dans l'explorateur de stockage. Le premier pointeur
+//   n'est donné que si l'utilisateur n'est pas déjà propriétaire (« vous deviendrez le nouveau propriétaire »),
+//   le second que si l'appareil change. Un seul disque est inscriptible : les autres appareils (lecteur
+//   optique factice) refusent l'écriture ; sur le disque, seul un changement de propriétaire est possible
+//   (le paquet passe d'un profil à l'autre ; DLC partagés = XUID 0).
+u32 CopyOrMove(mapped_void owner_ptr, mapped_void device_ptr, mapped_void item_ptr, u32 overlapped, bool move) {
+  X_RESULT result = X_ERROR_FUNCTION_FAILED;
+  const char* what = move ? "Move" : "Copy";
+  if (item_ptr) {
+    auto* d = static_cast<system::xam::XCONTENT_AGGREGATE_DATA*>(static_cast<void*>(item_ptr));
+    std::string file = d->file_name();
+    uint32_t type = uint32_t(system::XContentType(d->content_type));
+    uint32_t title = uint32_t(d->title_id);
+    uint32_t dest_device = device_ptr ? uint32_t(*static_cast<be<uint32_t>*>(static_cast<void*>(device_ptr))) : 0;
+    bool has_owner = bool(owner_ptr);
+    uint64_t new_owner = has_owner ? uint64_t(*static_cast<be<uint64_t>*>(static_cast<void*>(owner_ptr))) : 0;
+    for (auto& it : List(title, type)) {
+      if (it.file_name != file || it.path.empty()) continue;
+      if (device_ptr && dest_device != kDeviceHdd) {
+        result = X_ERROR_ACCESS_DENIED;  // appareil en lecture seule
+      } else if (!has_owner || new_owner == it.xuid) {
+        result = X_ERROR_ALREADY_EXISTS;  // même appareil, même propriétaire : rien à faire
+      } else {
+        namespace fs = std::filesystem;
+        fs::path dest_dir = profile::ProfileDir(new_owner) / "Content" / fmt::format("{:08X}", it.title_id) /
+                            fmt::format("{:08X}", it.type);
+        std::error_code ec;
+        fs::create_directories(dest_dir, ec);
+        fs::path dest = dest_dir / it.file_name;
+        if (fs::exists(dest, ec)) {
+          result = X_ERROR_ALREADY_EXISTS;
+        } else {
+          if (move) fs::rename(it.path, dest, ec);
+          else fs::copy_file(it.path, dest, ec);
+          result = ec ? X_ERROR_ACCESS_DENIED : X_ERROR_SUCCESS;
+        }
+      }
+      REXLOG_INFO("[dash] XamContent{}Internal : {} (propriétaire {:#x} -> {}, appareil -> {}) -> {:#x}", what,
+                  it.path.string(), it.xuid, has_owner ? fmt::format("{:#x}", new_owner) : "inchangé",
+                  device_ptr ? std::to_string(dest_device) : "inchangé", uint32_t(result));
+      break;
+    }
+  }
+  if (overlapped) {
+    system::kernel_state()->CompleteOverlappedImmediate(overlapped, result);
+    return X_ERROR_IO_PENDING;
+  }
+  return result;
+}
+
+u32 XamContentCopyInternal_entry(mapped_void owner, mapped_void device, mapped_void item, u32 routine, u32 context,
+                                 u32 unused, u32 overlapped) {
+  (void)routine; (void)context; (void)unused;
+  return CopyOrMove(owner, device, item, overlapped, false);
+}
+
+u32 XamContentMoveInternal_entry(mapped_void owner, mapped_void device, mapped_void item, u32 routine, u32 context,
+                                 u32 unused, u32 overlapped) {
+  (void)routine; (void)context; (void)unused;
+  return CopyOrMove(owner, device, item, overlapped, true);
+}
+
+// --- Comparaison de chaînes ---------------------------------------------------------
+// XamUniSortCmpString(a, b, nb_car_max, indicateurs) : compare deux chaînes UTF-16BE (au plus nb_car_max
+// caractères) ; < 0, 0 ou > 0. Le Dashboard s'en sert pour trier et regrouper la liste Games de
+// l'explorateur de stockage : il y cherche le jeu par son nom avec une recherche dichotomique. Le stub du
+// SDK renvoyait r3 (jamais 0), donc aucun regroupement : une ligne par paquet. Indicateur 1 = sans casse.
+int32_t XamUniSortCmpString_entry(mapped_void a, mapped_void b, u32 max_chars, u32 flags) {
+  auto* pa = static_cast<const be<uint16_t>*>(static_cast<void*>(a));
+  auto* pb = static_cast<const be<uint16_t>*>(static_cast<void*>(b));
+  if (!pa || !pb) return pa == pb ? 0 : (pa ? 1 : -1);
+  for (uint32_t i = 0; i < max_chars; i++) {
+    uint32_t ca = pa[i], cb = pb[i];
+    if (flags & 1) {
+      if (ca < 0x80) ca = uint32_t(std::tolower(int(ca)));
+      if (cb < 0x80) cb = uint32_t(std::tolower(int(cb)));
+    }
+    if (ca != cb) return ca < cb ? -1 : 1;
+    if (!ca) return 0;
+  }
+  return 0;
+}
+
 }  // namespace
 }  // namespace dash::content
 
@@ -312,6 +427,9 @@ REX_HOOK(__imp__XamContentCreateEnumeratorInternal, dash::content::XamContentCre
 REX_HOOK(__imp__XamContentGetMetaDataInternal, dash::content::XamContentGetMetaDataInternal_entry)
 REX_HOOK(__imp__XamContentDeleteInternal, dash::content::XamContentDeleteInternal_entry)
 REX_HOOK(__imp__XamContentGetLocalizedString, dash::content::XamContentGetLocalizedString_entry)
+REX_HOOK(__imp__XamContentCopyInternal, dash::content::XamContentCopyInternal_entry)
+REX_HOOK(__imp__XamContentMoveInternal, dash::content::XamContentMoveInternal_entry)
+REX_HOOK(__imp__XamUniSortCmpString, dash::content::XamUniSortCmpString_entry)
 REX_HOOK(__imp__XamContentCreateEnumerator, dash::content::XamContentCreateEnumerator_entry)
 
 // Fonctions encore en stub : journalisées (r3 conservé, comme REX_EXPORT_STUB).

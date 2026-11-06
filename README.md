@@ -181,13 +181,39 @@ la miniature PNG, le propriétaire et la taille. Remplace les stubs/implémentat
 | `XamContentGetMetaDataInternal(élément, tampon, 0)` | copie l'en-tête STFS `0x344..0x971A` (0x93D6 octets) : nom, description, miniature, type, TitleID |
 | `XamContentGetLocalizedString(méta, nom, n, description, n)` | nom affiché et description en UTF-16BE |
 | `XamContentDeleteInternal(élément, overlapped)` | supprime le paquet |
+| `XamContentCopyInternal` / `XamContentMoveInternal(&nouveau_propriétaire ou 0, &appareil ou 0, élément, routine, contexte, 0, overlapped)` | copie / déplace un paquet vers un autre propriétaire (même disque) ; appareil non inscriptible (lecteur optique factice) : `ERROR_ACCESS_DENIED` ; même propriétaire et même appareil : `ERROR_ALREADY_EXISTS` |
+| `XamProfileLoadAccountInfo(appareil, xuid, &compte)` | compte (gamertag) d'un profil : le Dashboard bâtit sa liste de profils avec les contenus de type « profil » (0x10000, un paquet virtuel du profil local est donc ajouté à l'énumération) et en tire le nom du propriétaire d'un contenu |
+| `XamUniSortCmpString(a, b, nb_car, indicateurs)` | comparaison UTF-16BE (1 = sans casse) : l'explorateur regroupe les paquets par jeu avec une recherche dichotomique par nom |
 
 Écrans : **Played Games** (compteurs), **Game Summary > Stored Game Items**. L'entrée **Downloads** ouvre le
 Marketplace en ligne (invite « Sign in to Xbox LIVE », non simulé) : le contenu téléchargé local est dans Stored Game Items.
-Stored Game Items ouvre
-l'explorateur de stockage du Dashboard (Storage Devices > All Devices > Games > <jeu>), qui liste le contenu
-du jeu avec nom, type (« Saved Game », « Downloaded Content »), miniature, taille et propriétaire ; Y = options de
-la liste, A sur un paquet = Copy / Move / Delete.
+Stored Game Items ouvre l'explorateur de stockage du Dashboard (Storage Devices > All Devices > Games > <jeu>) ;
+il liste le contenu du jeu avec nom, type (« Saved Game », « Downloaded Content »), miniature, taille et propriétaire
+(le gamertag) ; Y = options de la liste, A sur un paquet = Copy / Move / Delete.
+
+**Stored Game Items n'est pas filtré par jeu, et c'est le comportement du Dashboard 6770** (vérifié dans le code
+recompilé) : le bouton de `CGameDetailsScene` navigue vers la scène `DeviceSelector.xur` sans aucun paramètre (le
+TitleID courant n'est lu que par les boutons Achievements et Downloads), et `DeviceSelectorScene` ignore ses
+données d'initialisation. Rien à corriger côté XAM.
+
+Points appris en lisant le Dashboard (les trois piliers de l'explorateur, module `0x92257B50..0x92264948`) :
+- le propriétaire d'un paquet vient d'une liste de profils bâtie à partir des éléments de type `0x10000`
+  (`XamProfileLoadAccountInfo(appareil, xuid, &compte)` pour chacun) ; sans paquet de profil dans l'énumération,
+  « Unknown Profile ». Un élément virtuel (titre `FFFE07D1`, type `0x10000`, nom = gamertag) est donc ajouté ;
+- la liste **Games** regroupe les paquets en cherchant le nom du jeu (recherche dichotomique triée) avec
+  `XamUniSortCmpString` ; le stub du SDK, qui renvoie r3 (jamais 0), donnait une ligne par paquet ;
+- les boîtes de confirmation sont des boîtes ImGui du SDK que le clavier ne pilote pas : en test, cliquer
+  (`click:X,Y` accepté par `tools/xkeys.py` et donc par `input_test.sh`, p. ex. `"click:396,372"` pour
+  « Yes, delete content » à 1280x720 ; le clic dure 2,5 s car le rendu logiciel peut mettre une seconde par image).
+- **Suppression vérifiée** : Stored Game Items > All Devices > Games > Skate > A sur « Skate - Carrière » > Delete >
+  « Yes, delete content » : le Dashboard appelle `XamContentDeleteInternal(élément, overlapped)`, le paquet disparaît
+  du profil (`profiles/<XUID>/Content/45410813/00000001/`), la liste se rafraîchit avec 2 éléments, journal
+  `XamContentDeleteInternal : ... -> 0x0`. Copy/Move vers « Dummy HDD » (même appareil) : le Dashboard refuse
+  lui-même (« The destination device was the same as the current device »), sans appel XAM.
+- Sous lavapipe + gdb, les touches se perdent si elles se suivent de trop près ou arrivent pendant un changement
+  d'écran : une touche par commande, au moins 7 s entre deux, et vérifier l'écran avant de continuer
+  (`input_test.sh` accepte aussi `sleep:<s>` et `wait:<motif du journal>`, ce dernier avec
+  `DASH_ARGS="--log_flush_interval=1"` pour que le journal soit écrit au fil de l'eau).
 
 **Import d'un vrai paquet** (sauvegarde ou DLC extrait d'une console, fichier sans extension) :
 

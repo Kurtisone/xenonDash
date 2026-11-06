@@ -169,6 +169,22 @@ u32 XamProfileEnumerate_entry(u32 handle, u32 flags, mapped_void buffer, u32 ove
                                      overlapped ? nullptr : &returned, overlapped);
 }
 
+// XamProfileLoadAccountInfo(appareil, xuid, &compte) : lit le compte d'un profil dont le paquet
+// (contenu de type « profil », 0x10000) est sur l'appareil. Le Dashboard construit sa liste de
+// profils avec ce compte (nom du propriétaire d'un contenu, sinon « Unknown Profile »). Valeur
+// négative = échec. Seul le profil local existe ; le stub du SDK renvoyait r3 sans rien écrire.
+u32 XamProfileLoadAccountInfo_entry(u32 device_id, u64 xuid, mapped_void account) {
+  bool found = xuid != 0 && xuid == LocalXuid();
+  REXLOG_INFO("[dash] XamProfileLoadAccountInfo(appareil={}, {:016X}) -> {}", device_id, uint64_t(xuid),
+              found ? "trouvé" : "absent");
+  if (!found || !account) return X_ERROR_NOT_FOUND;
+  auto* a = static_cast<XamAccountInfo*>(static_cast<void*>(account));
+  std::memset(a, 0, sizeof(*a));
+  auto name = Gamertag();
+  for (size_t i = 0; i < name.size(); i++) a->gamertag[i] = uint8_t(name[i]);
+  return X_ERROR_SUCCESS;
+}
+
 // --- Montage du contenu du profil --------------------------------------------
 
 u32 XamProfileOpen_entry(u64 xuid, mapped_string mount_name, u32 flags, u32 content_data) {
@@ -339,6 +355,7 @@ REX_HOOK(__imp__XamUserGetName, dash::profile::XamUserGetName_entry)
 REX_HOOK(__imp__XamUserGetGamerTag, dash::profile::XamUserGetGamerTag_entry)
 REX_HOOK(__imp__XamProfileCreateEnumerator, dash::profile::XamProfileCreateEnumerator_entry)
 REX_HOOK(__imp__XamProfileEnumerate, dash::profile::XamProfileEnumerate_entry)
+REX_HOOK(__imp__XamProfileLoadAccountInfo, dash::profile::XamProfileLoadAccountInfo_entry)
 REX_HOOK(__imp__XamProfileOpen, dash::profile::XamProfileOpen_entry)
 REX_HOOK(__imp__XamProfileClose, dash::profile::XamProfileClose_entry)
 REX_HOOK(__imp__XamReadTileEx, dash::profile::XamReadTileEx_entry)
