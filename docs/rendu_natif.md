@@ -405,3 +405,77 @@ python3 -I tools/analyse_d3d.py work/dash.pe work/port extract work/shaders6770
 python3 -I tools/xenos_batch.py work/shaders6770 work/shaders_out
 ```
 Les dossiers `work/shaders6770` (microcode Microsoft) et `work/shaders_out` (HLSL/SPIR-V dérivés) ne sont jamais versionnés.
+
+## 11. Avancement : premier jalon du rendu natif sur 6770 (2026-11-06, `native_gpu/`)
+
+Le plugin `xenos` (PM4 → Vulkan) est **retiré de la boucle** : avec `-DDASH_NATIVE_GPU=ON` (option CMake de
+`dashboards/2.0.6770.0`, désactivée par défaut), le Dashboard 6770 démarre **sans plugin GPU** (`app.h` vide
+`config.gpu_plugin` : le SDK passe en mode « détaché », fenêtre SDL3 seule, aucune modification du SDK nécessaire) et
+affiche l'écran Games **par du code natif** : les fonctions D3D de la XDK sont remplacées par des fonctions hôte, les
+shaders sont les SPIR-V de XenosRecomp. Aucun paquet PM4 n'est lu.
+
+### 11.1 Architecture (pas de code d'UnleashedRecomp ; MIT/BSD seulement)
+
+| Fichier (`native_gpu/src/`) | Rôle |
+|---|---|
+| `d3d_trace.cpp` + `d3d6770_entries.inc` | Un enveloppeur par fonction listée (3 281 adresses : bibliothèque D3D `0x92120000-0x92140000`, moteur d'effets/XUI, `0x925CA000-0x925D0000`) : **remplace l'alias faible `sub_XXXXXXXX`** du code généré (symbole fort, `__imp__sub_XXXXXXXX` = original), compte/journalise (traçage), puis appelle le crochet `ngpu_hook_XXXXXXXX` s'il existe. C'est le mécanisme « REX_HOOK » adapté aux fonctions du jeu (`common/` ne remplace que des imports `__imp__*`). |
+| `hooks_frame.cpp`, `null_gpu.cpp` | Cycle de vie : **GPU nul** (le D3D invité scrute un bloc de retour écrit par le GPU : un fil écrit « tout consommé » dans `*(dev+10896)` ; attentes `92129788`/`921296F0` satisfaites ; **fil vblank** 60 Hz qui appelle le gestionnaire invité `92121210(dev)`), `Clear`, `Swap` → présentation. |
+| `hooks_draw.cpp` | État D3D suivi côté hôte (shaders, textures, constantes VS/PS, déclaration de sommets) et dessin (`DrawVerticesUP`, `BeginVertices`+`EndVertices`). Conversion des sommets BE → float4, expansion `RECTLIST`/`QUADLIST`, blend/masque lus dans les registres cachés du périphérique. |
+| `guest_tex.cpp` | Textures Xenos → RGBA8 : lecture de la *fetch constant*, endian, **détuilage 2D**, DXT1/3/5, 8888, 8, 8_8, 565, 1555, swizzle ; copie protégée (`process_vm_readv`). |
+| `vk_backend.cpp` | Vulkan 1.3 direct (libvulkan, **SDL + Vulkan sans plugin** : surface X11/Wayland créée depuis l'`SDL_Window` du SDK) : tampon d'image 1280x720, rendu dynamique, cache de pipelines (hachage vs/ps/topologie/attributs/blend), anneau de constantes (adresse de tampon, modèle `PushConstants` de XenosRecomp : 3 adresses 64 bits), descripteurs « bindless » (tableaux 2D/échantillonneurs, ensembles 0 et 3), présentation par blit. |
+
+Les SPIR-V sont lus à l'exécution dans `DASH_NGPU_SHADERS` (défaut `work/shaders_out`), nom `ui_<adresse du conteneur>_VS|PS.spv`
+(adresse du conteneur dans `.rdata`, obtenue en interceptant `CreateVertexShader/PixelShader`). Rien de Microsoft n'est versionné.
+
+### 11.2 Cartographie D3D 6770 confirmée à l'exécution (et écarts avec l'étude §2.2)
+
+Méthode : enveloppeurs de comptage (`DASH_D3D_TRACE`, `DASH_D3D_SEQ=<image>`, recherches de pointeurs `DASH_D3D_FINDSHADER/FINDDECL`),
+arguments relevés, puis vérification par le rendu. Instantané en idle sur l'écran Games : ~60-160 dessins/image.
+
+| Fonction | Étude (§2.2) | **Constaté** |
+|---|---|---|
+| `0x921350A0` | « dessin commun » (31 sites) | **faux** : appelée **1 fois par image**, par `Swap` (`92121EE8` → `921350A0` → `92121950`/`VdSwap`) ; ce n'est pas le dessin. |
+| **dessin** | — | `0x925CCB68` = `DrawVerticesUP(dev, prim, n, données, stride)` (26 sites : famille XUI `921EA2A0…921EB820`, effets `92188590`…), `0x925CC6B8` = `BeginVertices(dev, prim, n, stride)` → pointeur d'écriture, `0x925CCB58` = `EndVertices`, `0x925CCBB0` = `DrawIndexedVerticesUP` (via `925CD0E0`). **La bibliothèque D3D déborde donc de `0x92120000-0x92140000`** (jusqu'à `~0x925D0000`, code de la XDK compilé avec le décodeur WMV). Primitives vues : 5 (fan), 8 (rect list), 13 (quad list). |
+| `0x9212E4E8` / `0x9212E7E8` | SetVertexShader / SetPixelShader | **inversés** : `9212E7E8` = `SetVertexShader(dev, obj)`, `9212E4E8` = `SetPixelShader(dev, obj)`. |
+| `0x9212EE10` / `0x9212ED00` | « verrous ou Begin/End » (F) | `CreateVertexShader(pFunction)` / `CreatePixelShader(pFunction)` (argument = conteneur `102A110x` de `.rdata`, retour = objet ; l'objet pixel contient une copie du conteneur à +40). |
+| `0x9212E2D8` / `0x9212E3C0` | Set*ShaderConstantF (M) | confirmé : `(dev, registre, pDonnées BE, nb float4)`, VS puis PS (ex. `WorldViewProj` c0-c3, `InvViewport` c4-c7 ; `ColorFactor` c1 PS). |
+| `0x92123F20` | SetTexture | confirmé `(dev, étage, D3DBaseTexture*)`. En-tête de texture : `D3DResource` (24 o) + `MipFlush` + **fetch constant de 6 mots à +28** (= `xe_gpu_texture_fetch_t` du SDK) ; les ressources de dégradé de l'interface sont des textures **128x1** (gradients XUI), les polices des 256x256 `k_8`. |
+| `0x92128AF0` | (non nommée) | `D3DDevice_Clear(dev, nbRects, rects, flags, couleur ARGB, z, stencil)` → `921289C8` → quad plein cadre `92127880`. Ordre par image : **Clear → dessins → Swap**. `Resolve` (`92128D20`) **non appelée** dans l'écran Games au repos. |
+| `0x9212EB48` (`9212EA58`) / `0x9212EA00` | — | `CreateVertexDeclaration(pÉléments)` / `SetVertexDeclaration(dev, decl)`. Élément de 12 octets : `{u16 flux, u16 décalage, u32 type (format GPU = 6 bits bas : 0x25 = 32_32_FLOAT, 0x26 = 32x4, 0x39 = 32x3, 0x06 = 8888), u8 méthode, u8 usage, u8 indice}`. **Le format n'est pas dans le microcode du VS** (instruction `vfetch` à format 0) : D3D le patche d'après la déclaration, on le lit donc dans la déclaration. |
+| `0x92138C50`, `92138FF0`, `92139D88`… | — | émetteurs PM4 de groupes de registres depuis le **cache de registres du périphérique** (`dev+10368` = base 0x2000, `+10444` = 0x2100, `+10528` = 0x2180, `+10548` = 0x2200 [RB_BLENDCONTROL0 = `+10552`], `+10460` = RB_COLOR_MASK) ; on lit blend/masque directement dans ce cache (code natif lu, jamais émis). |
+| Fences/GPU | `9212A4E0` etc. | `*(dev+10896)` : bloc de retour GPU (+0 identifiant = `dev+10908`, +4 second mot, +60 pointeur de lecture d'anneau) ; attentes `9212A418`, `92129788`, `921296F0` ; `92120C98` = scrutation à délai (1,6 M appels/image sous le plugin). Gestionnaire d'interruption enregistré : `921299F0` (lit un registre MMIO) → appelle `92121210(dev)` (vblank : compteur `dev+16532`, file de Swap). |
+| Périphérique | — | une seule instance, `0x40001780` (tas), ~21 Ko ; `Direct3D_CreateDevice` non remplacée (l'original tourne, grâce au GPU nul). |
+
+Inchangé/non revérifié : `Release/AddRef` (`9212B950/B8D8`), `SetSamplerState` (`92125D18/92125EA8`, arguments relevés, sémantique non décodée),
+`SetRenderTarget` (`92126708`, `921240F0`), `Resolve`, `SetStreamSource` (`92126858`) : **non utilisés** par les dessins `UP` de l'écran Games.
+
+### 11.3 Résultat
+
+- Paliers livrés (commits `native_gpu`) : (1) traçage et cartographie ; (2) runtime sans plugin, GPU nul + vblank, `Clear` + `Swap` Vulkan directs ;
+  (3) dessin : pipelines hachés, constantes, sommets, textures détuilées, blend.
+- **Écran Games rendu nativement** (fond, lames, dégradés, textes, icônes, avatar, logo) : captures locales
+  `dashboards/2.0.6770.0/runs/preuves/natif_natif.png` (natif) et `natif_emulation.png` (plugin `xenos`, même scène) — `runs/` n'est plus versionné.
+  Le rendu est **reconnaissable mais incorrect** : couches mal placées/dupliquées, texte rogné, bandes de dégradé.
+- Cadence (lavapipe, 1280x720, Xvfb, présentation immédiate) : **natif ≈ 50 images/s** (swaps 300→1700 en 28,2 s) contre **≈ 12 images/s** avec le
+  plugin `xenos` (swaps 300→400 en 8,1 s). Ce n'est pas une mesure de GPU réel (le rendu natif omet une partie du travail).
+- Reproduire : `cmake -S dashboards/2.0.6770.0 -B dashboards/2.0.6770.0/out/build/linux-amd64-relwithdebinfo -DDASH_NATIVE_GPU=ON && cmake --build … -j12`, puis
+  `native_gpu/tools/run_headless_native.sh 92 35 natif_natif` (et `DASH_NGPU_DISABLE=1 … --gpu_plugin=xenos` pour la référence).
+  Remettre `-DDASH_NATIVE_GPU=OFF` pour retrouver le binaire d'origine (identique : aucun fichier compilé ne change quand l'option est OFF).
+
+### 11.4 Écarts connus / reste à faire pour la parité (par ordre d'importance)
+
+1. **Cibles de rendu hors écran, `SetRenderTarget`/`Resolve`/EDRAM** : tous les dessins vont dans un seul tampon d'image ; or l'interface compose des passes
+   (flou/lueur, vignettes) dans des textures. C'est la cause principale des artefacts (étape A6, non commencée).
+2. Viewport/scissor (XUI rogne les listes), profondeur/stencil, cull, états d'échantillonnage (`SetSamplerState` : filtre linéaire/bord par défaut), mips, cubes/3D.
+3. Autres chemins de dessin : `DrawIndexedVerticesUP`, `DrawVertices*`/`SetStreamSource` + `SetIndices`, vidéo (A7, memexport).
+4. Formats de sommet rares (10_11_11, 2_10_10_10, 16 bits normalisés), `Lock/Unlock` des textures (détection de modification par hachage une fois par image).
+5. Pas de recouvrement ImGui en mode détaché (écrans XAM de remplacement `dash_xam_ui.cpp`, lanceur F5 : invisibles tant qu'il n'y a pas de `ImmediateDrawer` hôte) ;
+   le curseur/les entrées clavier passent par la fenêtre du SDK (inchangé).
+6. Le modèle par adresse fixe vaut pour 6770 seulement ; la dérivation par motif de code (13604/17559, XAM) reste à faire (étape A1 bis).
+
+### 11.5 Estimation révisée
+
+Le jalon « A1-A3 + noyau XUI » (≈ 20 j dans l'étude) est atteint en une session grâce à trois découvertes : le chemin de dessin passe par `DrawVerticesUP`
+(sommets en argument, pas de flux/indices à reconstruire), XenosRecomp fournit directement des SPIR-V utilisables, et le SDK sait fonctionner sans plugin.
+Reste pour 6770 : RT/Resolve 5 j, états (viewport/scissor/profondeur/échantillonneurs/mips) 4 j, autres chemins de dessin et formats 4 j, vidéo (A7) 5 j,
+mise au point contre l'oracle 6 j, soit **≈ 24 j** (contre 51 j au §8) ; 13604 (+10 j) et 17559 (+13 j) inchangés en ordre de grandeur. **Total ≈ 65 j-personne** (± 30 %).

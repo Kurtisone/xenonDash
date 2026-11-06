@@ -17,7 +17,7 @@ l'utilisateur au premier lancement.
 | Versions Blades (≤ 7258) | HLE pour l'instant (XAM 6770 = base 1888 indéchiffrable + delta) ; recompilation de XAM si une base déchiffrable est obtenue | — |
 | Versions NXE/Metro avec XAM complet (17559, autres mises à jour complètes) | Dashboard **et** XAM recompilés | Écrans XAM d'origine (succès, Guide…) au lieu des remplaçants ImGui. |
 | Versions à porter | **Une par interface** (Blades 6770, NXE la plus récente, Metro 17559) ; les autres versions (6717, 7258, 5759, 4532, 2255) restent en l'état, sans effort supplémentaire | Les versions d'une même interface diffèrent peu ; l'effort va aux trois interfaces. |
-| Natif maximal, zéro émulation | Décision du 2026-11-06 : (1) **GPU** : remplacer l'émulation Xenos (processeur de commandes → Vulkan) par un **rendu natif au niveau D3D** : les fonctions D3D de la XDK liées statiquement dans dash.xex/xam.xex sont remplacées (REX_HOOK) par une implémentation Vulkan, shaders traduits hors ligne (XenosRecomp), comme UnleashedRecomp ; (2) **XAM** : recompilé partout où un xam.xex complet existe (NXE 13604, Metro 17559 ; Blades si NAND) ; (3) **noyau** : réimplémentation native (déjà le cas, ce n'est pas de l'émulation) ; (4) **jeux** : uniquement des ports natifs, Xenia retiré du plan (option désactivée par défaut). | Demande de l'utilisateur. L'espace d'adressage invité big-endian reste : il fait partie du code recompilé, pas d'une émulation. Étude de faisabilité du rendu D3D natif : [docs/rendu_natif.md](docs/rendu_natif.md). |
+| Natif maximal, zéro émulation | Décision du 2026-11-06 : (1) **GPU** : remplacer l'émulation Xenos (processeur de commandes → Vulkan) par un **rendu natif au niveau D3D** : les fonctions D3D de la XDK liées statiquement dans dash.xex/xam.xex sont remplacées (REX_HOOK) par une implémentation Vulkan, shaders traduits hors ligne (XenosRecomp), comme UnleashedRecomp ; (2) **XAM** : recompilé partout où un xam.xex complet existe (NXE 13604, Metro 17559 ; Blades si NAND) ; (3) **noyau** : réimplémentation native (déjà le cas, ce n'est pas de l'émulation) ; (4) **jeux** : uniquement des ports natifs, Xenia retiré du plan (option désactivée par défaut). | Demande de l'utilisateur. L'espace d'adressage invité big-endian reste : il fait partie du code recompilé, pas d'une émulation. Étude de faisabilité du rendu D3D natif : [docs/rendu_natif.md](docs/rendu_natif.md) ; **premier jalon atteint sur 6770 (§11 du document : écran Games rendu nativement par `native_gpu/`, option `DASH_NATIVE_GPU`, ≈ 50 images/s contre ≈ 12 avec l'émulation sous lavapipe)**. |
 | Lancement des jeux | `XamLoaderLaunchTitle` → lanceur : **port natif enregistré** (ex. Skate1Recompiled) pour ce TitleID, sinon **Xenia** (Linux) avec le XEX/ISO ; retour au Dashboard à la fin du jeu | Un jeu ne s'exécute nativement que s'il est lui-même recompilé. |
 | Modèle d'exécution | Les tâches sont confiées à des agents **Sonnet** ; revue et intégration par la session principale | Demande de l'utilisateur (coût). |
 
@@ -151,6 +151,15 @@ l'utilisateur au premier lancement.
 - Reste : AppImages 7258/5759/4532 (même outil, non testés), test sur un bureau « vide » (conteneur sans dépendances),
   embarquer libX11/xcb/wayland si une distribution cible ne les fournit pas, dialogue graphique de sélection de
   fichier (paquet STFS : zenity ne sélectionne ici que des dossiers), relance après un jeu sous AppImage (non testée).
+
+### P7 — Rendu natif D3D (EN COURS : jalon 1 FAIT sur 6770)
+- `native_gpu/` (bibliothèque OBJECT, liée seulement avec `-DDASH_NATIVE_GPU=ON`) : enveloppeurs de fonctions D3D invitées (symbole fort sur l'alias faible
+  `sub_XXXXXXXX`), GPU nul + vblank, Vulkan direct (SDL, sans plugin), shaders SPIR-V de XenosRecomp, textures détuilées. Détail, cartographie confirmée et écarts :
+  [docs/rendu_natif.md](docs/rendu_natif.md) §11.
+- **Fait (6770)** : runtime sans plugin GPU, `Clear`/`Swap` natifs, dessins `DrawVerticesUP`/`BeginVertices`+`EndVertices`, constantes, textures 2D, blend ; écran Games
+  reconnaissable (rendu encore partiel : cibles hors écran, scissor, profondeur, échantillonneurs).
+- **Suite** : cibles de rendu/`Resolve` (artefacts principaux), états, chemins de dessin restants, vidéo (A7), parité contre l'oracle `xenos`, retrait de l'émulation ;
+  puis dérivation par motif de code pour 13604/17559 (+XAM). Estimation restante ≈ 24 j pour 6770, ≈ 65 j au total.
 
 ## Risques connus
 - Rendu logiciel (lavapipe/Xvfb) qui se fige sur certaines transitions : tests sur vrai GPU requis.
