@@ -19,6 +19,9 @@
 namespace dash::profile {
 void ApplyProfileSettings();
 }
+namespace dash::disc {
+void Init();
+}
 namespace dash::xamui {
 void Init(rex::ui::WindowedAppContext* app, rex::ui::ImGuiDrawer* imgui, rex::ui::ImmediateDrawer* immediate);
 bool IsOpen();
@@ -49,6 +52,7 @@ void DashAppBase::OnLoadXexImage(std::string& xex_image) {
 void DashAppBase::OnPostSetup() {
   dash::profile::ApplyProfileSettings();
   dash::launch::Init();
+  dash::disc::Init();
   // Interfaces XAM remplacées par ImGui (dash_xam_ui.cpp) : entrées du Dashboard suspendues
   // tant qu'elles sont affichées.
   dash::xamui::Init(&app_context(), imgui_drawer(), immediate_drawer());

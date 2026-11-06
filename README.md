@@ -153,8 +153,11 @@ les versions. Exemple de registre versionné : `games.example.toml`.
 du lanceur) : une table `[game.<TitleID hexa>]` par jeu avec `name` et soit `native = "commande shell"` (+ `cwd`,
 relatif au répertoire du Dashboard ou absolu), soit `xenia = "chemin absolu du XEX/ISO"` (lancé avec la commande
 Xenia : `--dash_xenia=...`, sinon variable `DASH_XENIA`, sinon `[xenia] command`, sinon `xenia_canary`).
-Autres clés : `type` (`arcade` par défaut, `demo`, `original`, `xna` ou un nombre), `keep_ld_library_path`, et à la
-racine `disc = "<TitleID>"` (jeu « dans le lecteur ») et `library = true` (voir plus bas).
+Autres clés : `type` (`arcade` par défaut, `demo`, `original`, `xna` ou un nombre), `keep_ld_library_path`, `disc = true`
+(ce jeu est « inséré dans le lecteur » : bouton de disque du Dashboard ; `--dash_disc=<TitleID>` ou `disc = "<TitleID>"`
+à la racine équivalent), `icon = "fichier.png"` (PNG de 16 Ko au plus) ou `spa = "fichier.spa|.gpd"` (XDBF d'où tirer
+l'icône du jeu, sinon `<TitleID>.gpd` du profil) pour l'icône du disque et de « My Games », et à la racine
+`library = true` (jeux listés dans « My Games », voir plus bas).
 
 **Comment lancer** :
 1. **F5** dans le Dashboard (manette : Back + Y) : liste des jeux du registre, Haut/Bas, Entrée/A lance, Échap/B ferme
@@ -184,21 +187,53 @@ chemin NULL = « lancer le disque » (avec des données de lancement de type 16)
 données de lancement (type 38 : relance d'un titre système). Les hooks de `dash_launch.cpp` remplacent
 `LaunchTitle`/`LaunchTitleEx` du SDK, qui terminait le titre (donc le Dashboard) sans rien lancer.
 
-**Games Library / disque : état et limites.** Le 6770 n'a **pas** de liste de jeux installés : la Games Library
-(« My Games », grisé et « You don't have any games » tant qu'aucun contenu de jeu n'est vu) classe démos, Xbox
-Originals, XNA et Arcade (types de contenu `0x80000`, `0x5000`, `0xE0000`, `0xD0000`) ; les jeux sur disque se
-lancent par le bouton de disque (« Unplayable Disc » sans lecteur). Essais faits :
-- `library = true` : les jeux du registre sont ajoutés (éléments virtuels, type `type`) aux énumérations de
-  contenu (`XamContentAggregateCreateEnumerator`...), le Dashboard les voit (5 éléments, il appelle même
-  `XamContentGetAttributesInternal` sur l'élément, dont la sémantique reste inconnue : stub) mais **« My Games »
-  reste grisé** : non résolu. Désactivé par défaut (les jeux apparaîtraient sinon dans Stored Game Items) ;
-- bouton de disque : l'état « Unplayable Disc » ne dépend pas de `XamLoaderGetDvdTrayState` (essais 0/1/2/3) ni
-  d'un accès à `\Device\Cdrom0\default.xex` (aucune ouverture n'est tentée) ; il est probablement piloté par une
-  notification de média absente de la HLE. Un disque simulé (notification + `GetMediaInfo` + `Cdrom0`) reste à
-  faire : le chemin `LaunchTitle(NULL)` -> jeu `disc` est prêt côté lancement, mais le bouton n'est pas actif.
-  Le lanceur F5 sert de point d'entrée en attendant.
+**Bouton de disque et « My Games » (phase P5b, fonctionnels dans le 6770).** Analyse du code recompilé :
 
-**Test** (`dashboards/2.0.6770.0/launch_test.sh <nom> <attente> "F5" "Return" "sleep:45" "kill:^./skate1" ...`, Xvfb
+*Disque* (`common/src/dash_disc.cpp`, avec `XamLoaderGetMediaInfo` dans `dash_launch.cpp`). Le bouton « Unplayable
+Disc » vient d'un état global (0x92803A8C) tenu par `sub_9210EB88` / `sub_9210E478` : le Dashboard dépile une
+notification système **`0x8000000D`** dont le paramètre est le type de média (**1 = disque de jeu Xbox 360**, 2 = Xbox
+d'origine), l'enregistre avec `XamLoaderGetDvdTrayState`, puis `sub_921B2340` lance, pour le type 1, un thread
+(`sub_921B0DC8`) qui :
+1. ouvre `\Device\Cdrom0\default.xex`, vérifie un en-tête XEX2 (SHA-1 de l'en-tête, résumé SHA-1 de l'image par pages de
+   64 Ko, compression « basic », clés d'en-tête `0x40006` informations d'exécution, `0x2FF` ressources, `0x3FF` format de
+   fichier ; `XexTransformImageKey` au passage), retrouve la ressource nommée `%08X` du TitleID ;
+2. envoie `XMsgStartIORequest(0xFB, 0xB003C, {XDBF, taille, 40, tampon du nom, &taille de l'icône, tampon de l'icône})` :
+   XAM renvoie le **nom du titre** (UTF-16, 40 caractères) et l'**icône PNG** (16 384 octets au plus).
+Implémentation : un XEX synthétique (non chiffré, sans code, 64 Ko, aucun octet de Microsoft) est généré en temps réel
+dans `$TMPDIR/xenondash-cdrom0-<uid>/` et monté comme `\Device\Cdrom0` ; `XexTransformImageKey` renvoie 0 ;
+`XMsgStartIORequest(Ex)` est interposé pour le seul message `0xFB/0xB003C` (l'application 0xFB appartient déjà à XGI dans
+le SDK, qui journalise « Unimplemented XGI message ») et répond avec le nom et l'icône du registre ;
+`XamLoaderGetMediaInfo(&type, &TitleID)` renvoie 1 et le TitleID du disque ; la notification est diffusée **une seule
+fois** (1,5 s après la création de l'écouteur de masque `0x23`) : la rediffuser (écouteur créé plus tard par la Games
+Library) serait prise pour une nouvelle insertion et le Dashboard lancerait le jeu tout seul (lancement automatique).
+Le bouton affiche alors le nom du jeu ; A appelle `XamLoaderLaunchTitleEx(NULL, 0x12)` -> jeu `disc` -> chemin P5.
+
+*My Games* (`common/src/dash_library.cpp`, `dash_content.cpp`). La Games Library est une scène « Arcade:: »
+(`2500_LiveArcadeHome.xur`) : pour chaque contenu énuméré de type Arcade (`0xD0000`), une tâche `CLoaderTask`
+(vtable 0x9201F8B8, thread de travail ; la méthode par type est `sub_9222C608` pour Arcade, `sub_9222B550` fait la
+vérification commune) :
+1. `XamContentGetAttributesInternal(contenu, attributs, 0)` doit **réussir** (36 octets d'attributs, mis à zéro ici ;
+   le stub qui renvoyait son argument faisait échouer la tâche, d'où « My Games » grisé) ;
+2. `XamContentCreateInternal(« Content<n> », contenu, 3 = ouvrir l'existant, ...)` monte le paquet ;
+3. lecture de `Content<n>:\ArcadeInfo.xml`, en **UTF-16 big-endian avec BOM** (`sub_92224fe0` saute le BOM puis lit des
+   caractères larges : un fichier UTF-8 est lu comme du bruit) : `<ArcadeInfo><TitleInfo Id Name Path ImagePath MaxCred
+   ScoreName CameraEnabled ContentNotDownloadable><Description>` (+ `Locale`/`GameInfo` optionnels) ;
+4. `XamContentClose`.
+Les jeux marqués dans le registre (avec `library = true`) deviennent des éléments virtuels de type `type` dans les
+énumérations de contenu ; `XamContentCreateInternal` est interposé pour ces éléments (un répertoire temporaire
+`xenondash-content-<uid>/<TitleID>/` avec l'`ArcadeInfo.xml` généré et l'icône est monté sous le nom de racine demandé,
+démonté par `XamContentClose`) ; les autres contenus passent au SDK. Résultat : « My Games : You have 2 games on your
+console », « Last Played Game » avec le nom et l'icône, liste « All Games » (icône, nom), page « My Games - <jeu> »
+avec **Play Game** ; ce bouton appelle `XamContentLaunchImageInternal(contenu, indicateurs)` (`sub_921A6128`), qui
+lance le jeu du registre (même chemin que P5 : superviseur et retour au Dashboard). Si le jeu n'est pas dans le
+registre, l'appel échoue et le Dashboard affiche « Game Not Found ».
+Stored Game Items : les jeux virtuels sont des contenus Arcade installés comme les autres : ils apparaissent dans les
+énumérations agrégées (type `-1`) que le Dashboard utilise aussi pour la gestion de la mémoire, comme les jeux Arcade
+installés d'une console. `library = false` (défaut) les masque partout.
+*Dernier joué* : au lancement, la date « dernier joué » du jeu est mise à jour sur place dans `FFFE07D1.gpd` des profils
+(entrée « titres » existante : on ne crée pas d'entrée, le fichier garde sa taille).
+
+**Test** (`dashboards/2.0.6770.0/launch_test.sh <nom> <attente> "F5" "Return" "sleep:45" "kill:^./skate1" ...`, `DASH_GDB=1 [DASH_GDB_SCRIPT=...]` pour gdb, Xvfb
 sur un affichage libre, lavapipe, tout est tué à la fin) :
 - commande factice (`sleep 8`, TitleID `DEAD0001`) : lancée depuis F5, le Dashboard quitte, le jeu s'exécute, le
   Dashboard est relancé (`DASH_RETURNED_FROM=DEAD0001`), vérifié aussi avec `--dash_launch` (pas de boucle) ;

@@ -70,6 +70,14 @@ class File {
     return true;
   }
 
+  // Position (décalage, taille) d'une entrée dans le fichier chargé (pour une modification sur place).
+  std::optional<std::pair<size_t, size_t>> Locate(uint16_t ns, uint64_t id) const {
+    auto it = entries_.find({ns, id});
+    if (it == entries_.end()) return std::nullopt;
+    return it->second;
+  }
+  std::vector<uint8_t>& Bytes() { return data_; }
+
   std::optional<std::vector<uint8_t>> Get(uint16_t ns, uint64_t id) const {
     auto it = entries_.find({ns, id});
     if (it == entries_.end()) return std::nullopt;

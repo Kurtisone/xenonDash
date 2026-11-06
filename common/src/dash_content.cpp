@@ -150,7 +150,7 @@ std::vector<Item> List(uint32_t title_id, uint32_t type) {
     all.push_back(std::move(p));
   }
   // Jeux du registre games.toml (Games Library : démos, Arcade, Xbox Originals...) : éléments virtuels, seulement
-  // dans les énumérations, seulement avec `library = true` (expérimental : n'active pas « My Games », voir README).
+  // dans les énumérations, seulement avec `library = true` (« My Games » : voir dash_library.cpp et README).
   if (launch::LibraryEnabled()) {
     for (auto& g : launch::Games()) {
       Item v;
@@ -454,7 +454,16 @@ REX_HOOK(__imp__XamContentCreateEnumerator, dash::content::XamContentCreateEnume
     REXLOG_INFO("[dash] " #name "(r3={:#x} r4={:#x} r5={:#x} r6={:#x} r7={:#x} r8={:#x}) STUB", ctx.r3.u64, \
                 ctx.r4.u64, ctx.r5.u64, ctx.r6.u64, ctx.r7.u64, ctx.r8.u64);                             \
   }
-DASH_LOG_STUB(XamContentGetAttributesInternal)
+// XamContentGetAttributesInternal(contenu XCONTENT_DATA*, attributs*, 0) : le Dashboard réserve 36 octets
+// (sub_922293F0 : memset(+38364, 0, 36) dans l'enregistrement d'une tâche de chargement CLoaderTask) ; sans
+// réussite de l'appel (sub_9222B550), la tâche échoue et « My Games » reste grisé. Contenu : zéros (voir README).
+REX_HOOK_RAW(__imp__XamContentGetAttributesInternal) {
+  uint32_t out = ctx.r4.u32;
+  if (out) std::memset(base + out, 0, 36);
+  REXLOG_INFO("[dash] XamContentGetAttributesInternal(contenu={:#x}, attributs={:#x}, {:#x}) -> 0", ctx.r3.u32, out,
+              ctx.r5.u32);
+  ctx.r3.u64 = 0;
+}
 DASH_LOG_STUB(XamContentResolveInternal)
 DASH_LOG_STUB(XamContentGetDefaultDevice)
 DASH_LOG_STUB(XamContentOpenFileInternal)

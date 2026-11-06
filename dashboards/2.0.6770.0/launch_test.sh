@@ -2,6 +2,7 @@
 # Test P5 sous Xvfb + lavapipe : lance le Dashboard, envoie des touches, capture, et suit le relancement
 # après un jeu (le Dashboard quitte, un superviseur lance le jeu puis relance le Dashboard).
 # usage: ./launch_test.sh <nom> <attente_initiale_s> "<touches|sleep:s|wait:motif>" ...
+#   DASH_GDB=1 [DASH_GDB_SCRIPT=fichier] : exécution sous gdb (point d'arrêt/traces, plus lent)
 #   DASH_ARGS="--dash_launch=45410813 ..." : options supplémentaires du Dashboard
 # Tous les processus du test (Xvfb, Dashboard, superviseur, jeu) sont tués à la fin : on les retrouve par leur
 # variable DISPLAY (affichage Xvfb propre au test).
@@ -25,6 +26,7 @@ BIN=$D/out/build/linux-amd64-relwithdebinfo/dash
 LOGDIR=$D/out/build/linux-amd64-relwithdebinfo/logs
 env VK_ICD_FILENAMES=${VK_ICD_FILENAMES:-/usr/share/vulkan/icd.d/lvp_icd.json} MESA_VK_WSI_PRESENT_MODE=immediate \
     ${DASH_ENV:-} DISPLAY=$DISP DASH_AUDIO=${DASH_AUDIO:-nop} LD_LIBRARY_PATH=$P/sdk/lib \
+    ${DASH_GDB:+gdb -q -batch -ex "set debuginfod enabled off" -ex "handle SIGSEGV SIG32 SIG33 SIG34 SIG35 SIGUSR1 SIGUSR2 SIGPIPE nostop noprint pass" ${DASH_GDB_SCRIPT:+-x $DASH_GDB_SCRIPT} -ex run --args} \
     $BIN --game_data_root=$D/assets --log_flush_interval=1 ${DASH_ARGS:-} > $D/runs/$N.out 2>&1 &
 sleep $W
 python3 -I $P/tools/xwd2png.py $FB/Xvfb_screen0 $D/runs/${N}_0.png

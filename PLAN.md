@@ -95,7 +95,7 @@ l'utilisateur au premier lancement.
 - Les remplaçants ImGui (`dash_xam_ui.cpp`) ne servent plus pour ces versions.
 - Ensuite : autres mises à jour complètes NXE/Metro.
 
-### P5 — Lancement des jeux (FAIT en grande partie)
+### P5 — Lancement des jeux (FAIT)
 - Registre `games.toml` (`<game_data_root>/games.toml`, modèle `games.example.toml`) : TitleID -> nom + `native`
   (commande + `cwd`) ou `xenia` (commande Xenia : `--dash_xenia`, `DASH_XENIA`, `[xenia] command`).
 - Hooks `XamLoaderLaunchTitle` / `XamLoaderLaunchTitleEx` (`common/src/dash_launch.cpp`) ; lanceur ImGui F5 dans le
@@ -104,12 +104,19 @@ l'utilisateur au premier lancement.
   le Dashboard avec les mêmes arguments (`DASH_RETURNED_FROM`). Pas de partage de fenêtre/GPU/audio.
 - Critère rempli : Skate (Skate1Recompiled) lancé depuis le Dashboard 6770 (sous Xvfb + lavapipe : écran-titre
   rendu), puis retour au Dashboard ; idem avec une commande factice. 6717 recompilé, smoke OK.
-- Reste : bouton de disque / « My Games » de la Games Library inactifs (le Dashboard 6770 n'y voit aucun jeu : état
-  « Unplayable Disc » piloté par une notification de média absente ; `library = true` ajoute des éléments de contenu
-  virtuels sans activer « My Games », `XamContentGetAttributesInternal` à comprendre) ; lancement depuis Played Games
-  inexistant dans le 6770 ; retour sur l'onglet d'origine (le Dashboard repart sur Games) ; mise à jour des jeux
-  joués/succès écrits par le port (format GPD) non faite ; commande Xenia non testée (Xenia absent) ; autres versions
-  (7258, 5759, 4532) non rebuildées ; entrées du lanceur F5 en ImGui (police par défaut) et non en XUI.
+- **P5b (FAIT)** : lancement natif depuis les boutons du Dashboard 6770 : le bouton de disque (jeu `disc = true`) affiche le
+  nom et l'icône du jeu et A le lance ; Games Library > « My Games » liste les jeux du registre (`library = true`), « Last
+  Played Game » et la page « My Games - <jeu> » avec « Play Game » les lancent (voir README, « Bouton de disque et My
+  Games »). Disque : notification `0x8000000D` (type de média 1), XEX synthétique monté en `\Device\Cdrom0`, message
+  XAM `0xFB/0xB003C` (nom + icône), `XamLoaderGetMediaInfo`. My Games : `XamContentGetAttributesInternal` réussi,
+  `XamContentCreateInternal`/`Close` interposés pour monter un `ArcadeInfo.xml` (UTF-16 BE avec BOM) généré,
+  `XamContentLaunchImageInternal`. La date « dernier joué » du jeu est mise à jour dans `FFFE07D1.gpd`. Captures :
+  `dashboards/2.0.6770.0/runs/preuves/p5b_*.png`.
+- Reste : retour sur l'onglet d'origine (le Dashboard repart sur Games) ; lancement depuis Played Games inexistant dans le
+  6770 ; jeu absent de `FFFE07D1.gpd` : pas d'entrée créée (date non mise à jour) ; icône sans GPD/SPA ni `icon` : pas
+  d'icône ; seul Arcade (`0xD0000`) est géré par « My Games » (démos, Xbox Originals, XNA : autres tâches par type,
+  non essayées) ; commande Xenia non testée (Xenia absent) ; autres versions (7258, 5759, 4532) non rebuildées avec le
+  code P5b ; entrées du lanceur F5 en ImGui (police par défaut) et non en XUI.
 
 ### P6 — AppImage
 - Un AppImage par version (`appimagetool`/`linuxdeploy`) : binaire, `librexruntime.so`,

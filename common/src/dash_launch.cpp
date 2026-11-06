@@ -24,6 +24,7 @@
 #include <chrono>
 #include <cstdlib>
 #include <cstring>
+#include <ctime>
 #include <filesystem>
 #include <fstream>
 #include <string>
@@ -45,6 +46,7 @@
 #include <rex/kernel/xam/module.h>
 #include <rex/types.h>
 
+#include "dash_gpd.h"
 #include "dash_launch.h"
 
 REXCVAR_DEFINE_STRING(dash_xenia, "", "Dash",
@@ -52,6 +54,8 @@ REXCVAR_DEFINE_STRING(dash_xenia, "", "Dash",
                       "variable DASH_XENIA, sinon xenia_canary)");
 REXCVAR_DEFINE_STRING(dash_launch, "", "Dash",
                       "TitleID (hexadécimal) d'un jeu de games.toml à lancer tout de suite au démarrage (test)");
+REXCVAR_DEFINE_STRING(dash_disc, "", "Dash",
+                      "TitleID (hexadécimal) d'un jeu de games.toml présenté comme disque inséré (équivaut à `disc = true`)");
 REXCVAR_DEFINE_INT32(dash_launch_delay, 5, "Dash", "Délai (s) avant le lancement demandé par --dash_launch");
 
 REXCVAR_DECLARE(std::string, game_data_root);
@@ -129,6 +133,9 @@ std::vector<Game> Games() {
       REXLOG_WARN("[dash] games.toml : {} n'a ni `native` ni `xenia`", k);
       continue;
     }
+    g.disc = (*t)["disc"].value_or(false);
+    g.icon = (*t)["icon"].value_or(std::string());
+    g.spa = (*t)["spa"].value_or(std::string());
     if (auto ty = (*t)["type"].value<std::string>()) g.content_type = TypeFromName(*ty);
     else if (auto ti = (*t)["type"].value<int64_t>()) g.content_type = uint32_t(*ti);
     out.push_back(std::move(g));
@@ -153,13 +160,22 @@ bool LibraryEnabled() {
 
 // Titre « dans le lecteur » : `disc = "45410813"` à la racine de games.toml (sinon le seul jeu déclaré).
 std::optional<Game> DiscGame() {
+  if (auto d = InsertedDisc()) return d;
+  auto g = Games();
+  if (g.size() == 1) return g[0];
+  return std::nullopt;
+}
+
+// Disque simulé : --dash_disc=<TitleID>, sinon le premier jeu avec `disc = true`, sinon `disc = "<TitleID>"` à la racine.
+std::optional<Game> InsertedDisc() {
+  if (!REXCVAR_GET(dash_disc).empty()) return Find(ParseHex(REXCVAR_GET(dash_disc)));
+  for (auto& g : Games())
+    if (g.disc) return g;
   try {
     auto root = toml::parse_file(RegistryPath().string());
     if (auto d = root["disc"].value<std::string>()) return Find(ParseHex(*d));
   } catch (...) {
   }
-  auto g = Games();
-  if (g.size() == 1) return g[0];
   return std::nullopt;
 }
 
@@ -189,8 +205,33 @@ std::vector<std::string> SelfArgs() {
 
 }  // namespace
 
+// Met à jour la date « dernier joué » du jeu dans FFFE07D1.gpd des profils (entrée espace 4 « titres » : FILETIME
+// au décalage 0x20) ; le jeu doit déjà y figurer (les entrées ne sont pas créées : taille fixe du fichier).
+void TouchLastPlayed(uint32_t title_id) {
+  std::error_code ec;
+  auto profiles = fs::absolute(REXCVAR_GET(game_data_root)) / "profiles";
+  if (!fs::is_directory(profiles, ec)) return;
+  uint64_t ft = (uint64_t(std::time(nullptr)) + 11644473600ull) * 10000000ull;
+  for (auto& d : fs::directory_iterator(profiles, ec)) {
+    auto path = d.path() / "FFFE07D1.gpd";
+    gpd::File f;
+    if (!d.is_directory() || !fs::exists(path, ec) || !f.Load(path)) continue;
+    auto loc = f.Locate(gpd::kTitle, title_id);
+    if (!loc || loc->second < 0x28) {
+      REXLOG_INFO("[dash] {:08X} absent de {} : date de dernier lancement non mise à jour", title_id, path.string());
+      continue;
+    }
+    auto& b = f.Bytes();
+    for (int i = 0; i < 8; i++) b[loc->first + 32 + i] = uint8_t(ft >> (56 - 8 * i));
+    std::ofstream o(path, std::ios::binary | std::ios::trunc);
+    o.write(reinterpret_cast<const char*>(b.data()), std::streamsize(b.size()));
+    REXLOG_INFO("[dash] {:08X} : dernier lancement mis à jour dans {}", title_id, path.string());
+  }
+}
+
 bool LaunchGame(const Game& g) {
   if (g_launching.exchange(true)) return true;  // déjà en cours
+  TouchLastPlayed(g.title_id);
   std::string exe = SelfExe();
   auto args = SelfArgs();
   if (exe.empty() || args.empty()) {
@@ -319,7 +360,16 @@ REX_HOOK_RAW(__imp__XamLoaderLaunchTitleEx) {
   dash::launch::OnLaunchRequest("XamLoaderLaunchTitleEx", dash::launch::GuestStr(base, ctx.r3.u32), ctx.r6.u32);
 }
 
+// XamLoaderGetMediaInfo(&type, &titre) : type de média (0 aucun, 1 disque de jeu Xbox 360, 2 Xbox d'origine...) et
+// TitleID du disque (le Dashboard l'appelle en démarrant et pour remplir le bouton de disque).
 REX_HOOK_RAW(__imp__XamLoaderGetMediaInfo) {
-  (void)base;
-  REXLOG_INFO("[dash] XamLoaderGetMediaInfo(r3={:#x} r4={:#x}) STUB", ctx.r3.u64, ctx.r4.u64);
+  auto d = dash::launch::InsertedDisc();
+  uint32_t type = d ? 1 : 0, title = d ? d->title_id : 0;
+  auto put = [&](uint32_t addr, uint32_t v) {
+    if (addr) *reinterpret_cast<uint32_t*>(base + addr) = __builtin_bswap32(v);
+  };
+  put(ctx.r3.u32, type);
+  put(ctx.r4.u32, title);
+  REXLOG_INFO("[dash] XamLoaderGetMediaInfo -> type={} titre={:08X}", type, title);
+  ctx.r3.u64 = 0;
 }

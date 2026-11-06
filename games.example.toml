@@ -4,11 +4,12 @@
 # ou tout appel du Dashboard à XamLoaderLaunchTitle(Ex) (disque) pour le jeu `disc`.
 # Le Dashboard quitte, le jeu s'exécute, puis le Dashboard est relancé (voir README, « Lancer des jeux »).
 
-# Titre « dans le lecteur de disque » (appels XamLoaderLaunchTitle sans chemin) ; à défaut, le seul jeu déclaré.
-disc = "45410813"
+# Disque simulé : le jeu marqué `disc = true` (plus bas) apparaît comme disque inséré (bouton de disque de l'onglet
+# Games : nom et icône du jeu, A le lance). Équivalents : --dash_disc=<TitleID>, ou `disc = "<TitleID>"` ici.
+# Les appels XamLoaderLaunchTitle sans chemin lancent ce jeu (à défaut, le seul jeu déclaré).
 
-# Expérimental : déclarer aussi les jeux comme contenu installé (type `type` ci-dessous) pour la Games Library.
-# library = false
+# Jeux listés dans Games Library > My Games (contenu Arcade virtuel ; Play Game les lance).
+library = true
 
 [xenia]
 # Commande Xenia pour les jeux `xenia = "..."` (--dash_xenia=... ou variable DASH_XENIA la remplacent).
@@ -22,6 +23,8 @@ name = "Skate"
 native = "./skate1"
 cwd = "../Skate1Recompiled/out/pc-profile"
 type = "arcade"        # arcade (défaut), demo, original, xna ou un nombre
+disc = true            # « inséré dans le lecteur »
+# icon = "icones/skate.png"   # PNG <= 16 Ko ; sinon l'icône du <TitleID>.gpd du profil (ou `spa = "..."`)
 
 [game.4D5307E6]
 name = "Halo 3 (Xenia)"
