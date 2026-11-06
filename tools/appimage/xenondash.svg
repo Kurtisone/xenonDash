@@ -1,0 +1,22 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="256" height="256" viewBox="0 0 256 256">
+  <defs>
+    <linearGradient id="fond" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#1b2a2f"/><stop offset="1" stop-color="#0a1013"/>
+    </linearGradient>
+    <linearGradient id="trait" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#9be564"/><stop offset="1" stop-color="#2fae6b"/>
+    </linearGradient>
+  </defs>
+  <rect x="8" y="8" width="240" height="240" rx="48" fill="url(#fond)"/>
+  <!-- grille de tuiles façon tableau de bord -->
+  <g fill="#ffffff" fill-opacity="0.07">
+    <rect x="32" y="32" width="88" height="56" rx="8"/><rect x="132" y="32" width="92" height="56" rx="8"/>
+    <rect x="32" y="168" width="92" height="56" rx="8"/><rect x="136" y="168" width="88" height="56" rx="8"/>
+  </g>
+  <!-- X stylisé en deux chevrons -->
+  <g fill="none" stroke="url(#trait)" stroke-width="22" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M78 76 L128 128 L78 180"/>
+    <path d="M178 76 L128 128 L178 180" stroke-opacity="0.55"/>
+  </g>
+  <circle cx="128" cy="128" r="11" fill="#e8fff0"/>
+</svg>

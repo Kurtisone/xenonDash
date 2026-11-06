@@ -144,6 +144,48 @@ termine par un `b` vers sa fonction parente : le point d'arrivée est déclaré 
 dans le projet, extraction de la ressource `gamercrd` de XAM. 6770 en avait aussi une (`0x9222D328`), ajoutée à
 son `overrides.toml` ; Achievements revérifié à l'écran après reconstruction.
 
+## AppImage (phase P6)
+
+Un AppImage par version, construit à partir du binaire déjà compilé (preset `linux-amd64-relwithdebinfo`) :
+
+```sh
+tools/make_appimage.sh 2.0.6770.0      # -> out/appimage/XenonDash-2.0.6770.0-x86_64.AppImage (out/ non versionné)
+tools/test_appimage.sh 2.0.6770.0 xebuild-6770   # test : HOME temporaire, import depuis firmware/, Xvfb + lavapipe
+```
+
+`appimagetool` est téléchargé dans `work/appimage-tools/` s'il manque. Contenu (≈ 17 Mo) : `usr/bin/dash` (strippé),
+`librexruntime.so`, `librexgpu-xenos.so` (SDL3, spdlog, ffmpeg, etc. sont liés statiquement ; libc, libstdc++, X11/xcb/
+wayland, loader Vulkan et pilote GPU restent ceux du système), `AppRun`, `.desktop`, icône originale
+(`tools/appimage/xenondash.svg`), `games.example.toml`, et les scripts d'import (`port_dashboard.py` pour les étapes
+`extract`/`assets`, `stfs.py`, `xex_resource.py`, `xzp_alias.py`, l'outil `xexinfo`). **Aucun fichier Microsoft**
+(ni `dash.xex`, ni modules flash, polices, `shrdres`).
+
+**Prérequis** : Python 3 système, un GPU Vulkan, FUSE 2 (sinon `APPIMAGE_EXTRACT_AND_RUN=1`), et vos propres fichiers
+Microsoft : la mise à jour système officielle de la version (dossier `$SystemUpdate` ou paquet STFS), idéalement
+les modules/polices complets (archive XeBuilds) et, pour les icônes, une mise à jour récente (17559) contenant
+`$flash_xam.xex`.
+
+**Premier lancement** : si `~/.local/share/xenondash/<version>/` n'est pas prêt (`dash.xex` + `.ready`), `AppRun`
+demande ces chemins par fenêtre (`zenity` ou `kdialog`) ou, à défaut, sur la console ; sans terminal ni
+fenêtre, il affiche la commande à utiliser. Il lance ensuite `xenondash_import.py` (étapes `extract` + `assets` de
+`tools/port_dashboard.py`), qui remplit ce dossier (`dash.xex`, `flash/` avec `shrdres.xzp`/`gamercrd.xzp` convertis,
+`profiles/` vide : le profil est créé vierge par le Dashboard, `games.toml` minimal + `games.example.toml`),
+puis démarre le Dashboard avec `--game_data_root=<ce dossier>` ; journal dans `<dossier>/dash.log`. Les lancements
+suivants démarrent directement.
+
+```sh
+./XenonDash-2.0.6770.0-x86_64.AppImage --import '/chemin/$SystemUpdate' \
+    --modules /chemin/xebuild-6770 --shrdres-xam '/chemin/17559/$flash_xam.xex'
+./XenonDash-2.0.6770.0-x86_64.AppImage --help      # --reimport, --data-dir, options transmises à dash
+```
+
+`XENONDASH_DATA` change la racine des données. Vérifié sous Xvfb + lavapipe, HOME temporaire, import depuis
+`firmware/2.0.6770.0` + `xebuild-6770` (+ 17559) : Dashboard affiché, aucun `FATAL` (captures
+`dashboards/<version>/runs/preuves/p6_<version>.png`), idem 2.0.6717.0.
+
+**Usage personnel uniquement** : le binaire recompilé contient une traduction du code Microsoft ; ces AppImages ne
+sont **pas redistribuables** (ne jamais les versionner ni les publier).
+
 ## Lancer des jeux (phase P5)
 
 Code : `common/src/dash_launch.cpp` (+ `dash_launch.h`, lanceur ImGui dans `dash_xam_ui.cpp`), donc commun à toutes

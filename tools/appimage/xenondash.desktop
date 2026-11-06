@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=XenonDash @VERSION@
+Comment=Dashboard Xbox 360 @VERSION@ recompilé en natif (usage personnel)
+Exec=AppRun
+Icon=xenondash
+Categories=Game;Emulator;
+Terminal=false

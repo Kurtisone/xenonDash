@@ -26,3 +26,4 @@ __pycache__/
 
 # Régénérations de test de tools/port_dashboard.sh
 dashboards/*-regen/
+out/

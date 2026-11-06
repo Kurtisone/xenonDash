@@ -118,12 +118,15 @@ l'utilisateur au premier lancement.
   non essayées) ; commande Xenia non testée (Xenia absent) ; autres versions (7258, 5759, 4532) non rebuildées avec le
   code P5b ; entrées du lanceur F5 en ImGui (police par défaut) et non en XUI.
 
-### P6 — AppImage
-- Un AppImage par version (`appimagetool`/`linuxdeploy`) : binaire, `librexruntime.so`,
-  `librexgpu-xenos.so`, dépendances SDL/Vulkan ; premier lancement : import de la mise à jour
-  officielle (`$SystemUpdate` ou archive) et conversion des ressources dans
-  `~/.local/share/xenondash/<version>/`.
-- Critère : AppImage 6770 lancé sur un bureau sans rien d'autre installé.
+### P6 — AppImage (FAIT pour 6770 et 6717)
+- `tools/make_appimage.sh <version>` : `appimagetool` (téléchargé dans `work/appimage-tools/`), binaire + `librexruntime.so`
+  + `librexgpu-xenos.so`, `AppRun`, `.desktop`, icône originale ; aucun fichier Microsoft embarqué.
+- Premier lancement : import de la mise à jour officielle (dialogue zenity/kdialog, console ou `--import`) via les
+  étapes `extract`/`assets` de `port_dashboard.py` -> `~/.local/share/xenondash/<version>/`. Python 3 système requis.
+- Vérifié (`tools/test_appimage.sh`) : 6770 et 6717 sous Xvfb/lavapipe avec HOME temporaire, Dashboard affiché.
+- Reste : AppImages 7258/5759/4532 (même outil, non testés), test sur un bureau « vide » (conteneur sans dépendances),
+  embarquer libX11/xcb/wayland si une distribution cible ne les fournit pas, dialogue graphique de sélection de
+  fichier (paquet STFS : zenity ne sélectionne ici que des dossiers), relance après un jeu sous AppImage (non testée).
 
 ## Risques connus
 - Rendu logiciel (lavapipe/Xvfb) qui se fige sur certaines transitions : tests sur vrai GPU requis.

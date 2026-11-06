@@ -1,0 +1,81 @@
+#!/bin/sh
+# AppRun de l'AppImage XenonDash : import au premier lancement, puis démarrage du Dashboard.
+# Usage : voir --help. Aucun fichier Microsoft n'est dans l'AppImage ; ils sont importés dans
+# ~/.local/share/xenondash/<version>/ depuis une mise à jour système officielle fournie par l'utilisateur.
+HERE=$(dirname "$(readlink -f "$0")")
+VERSION=$(cat "$HERE/usr/share/xenondash/version")
+DATA=${XENONDASH_DATA:-${XDG_DATA_HOME:-$HOME/.local/share}/xenondash}/$VERSION
+SHARE=$HERE/usr/share/xenondash
+
+usage() {
+  cat <<USG
+XenonDash $VERSION (usage personnel, non redistribuable)
+Données : $DATA
+
+  --import <mise_à_jour>       importe la mise à jour système officielle (dossier \$SystemUpdate, paquet STFS
+                               su20076000_00000000 ou dash.xex) puis lance le Dashboard
+  --modules <dossier>          modules/polices complets de la version (archive XeBuilds), avec --import
+  --shrdres-xam <xam.xex>      xam.xex complet d'une mise à jour récente (ex. 17559) pour shrdres.xzp, avec --import
+  --reimport                   refait l'import (profils et games.toml conservés)
+  --data-dir                   affiche le dossier de données et quitte
+  --help                       cette aide
+Les autres options sont transmises au Dashboard (ex. --log_level=trace). Python 3 système requis pour l'import.
+Sans option et sans données, une fenêtre (zenity/kdialog) ou la console demande les chemins.
+USG
+}
+
+UPDATE= MODULES= XAM= REIMPORT=0
+while [ $# -gt 0 ]; do
+  case $1 in
+    --help|-h) usage; exit 0;;
+    --data-dir) echo "$DATA"; exit 0;;
+    --import) UPDATE=$2; shift 2;;
+    --import=*) UPDATE=${1#*=}; shift;;
+    --modules) MODULES=$2; shift 2;;
+    --modules=*) MODULES=${1#*=}; shift;;
+    --shrdres-xam) XAM=$2; shift 2;;
+    --shrdres-xam=*) XAM=${1#*=}; shift;;
+    --reimport) REIMPORT=1; shift;;
+    *) break;;
+  esac
+done
+
+# Demande d'un chemin : $1 = texte, $2 = 1 si obligatoire. Écrit le chemin (ou rien) sur stdout.
+ask() {
+  if [ -n "${DISPLAY:-}${WAYLAND_DISPLAY:-}" ] && command -v zenity >/dev/null 2>&1; then
+    zenity --file-selection --directory --title="$1" 2>/dev/null
+  elif [ -n "${DISPLAY:-}${WAYLAND_DISPLAY:-}" ] && command -v kdialog >/dev/null 2>&1; then
+    kdialog --getexistingdirectory "$HOME" --title "$1" 2>/dev/null
+  elif [ -t 0 ]; then
+    printf '%s\n> ' "$1" >&2; read -r r; echo "$r"
+  fi
+}
+
+do_import() {
+  d=$1; u=$2; m=$3; x=$4
+  set -- "$d" "$u"
+  [ -n "$m" ] && set -- "$@" --modules "$m"
+  [ -n "$x" ] && set -- "$@" --shrdres-xam "$x"
+  python3 -I "$SHARE/tools/xenondash_import.py" "$@" --games-example "$SHARE/games.example.toml"
+}
+
+ready() { [ -f "$DATA/.ready" ] && [ -f "$DATA/dash.xex" ]; }
+
+if [ "$REIMPORT" = 1 ] || [ -n "$UPDATE" ] || ! ready; then
+  if [ -z "$UPDATE" ]; then
+    echo "XenonDash $VERSION : premier lancement, import de la mise à jour système officielle." >&2
+    UPDATE=$(ask "Mise à jour système $VERSION (dossier \$SystemUpdate, paquet STFS su20076000_00000000 ou dossier de fichiers extraits)" 1)
+    if [ -z "$UPDATE" ]; then
+      echo "Aucune mise à jour indiquée. Relancer avec : $0 --import <chemin>  (voir --help)" >&2
+      exit 1
+    fi
+    [ -z "$MODULES" ] && MODULES=$(ask "Optionnel : modules/polices complets $VERSION (archive XeBuilds). Annuler / laisser vide pour passer" 0)
+    [ -z "$XAM" ] && XAM=$(ask "Optionnel : dossier d'une mise à jour récente (17559) contenant \$flash_xam.xex (pour les icônes). Vide pour passer" 0)
+  fi
+  [ -d "$XAM" ] && for c in "$XAM/\$flash_xam.xex" "$XAM/xam.xex"; do [ -f "$c" ] && XAM=$c && break; done
+  do_import "$DATA" "$UPDATE" "$MODULES" "$XAM" || { echo "Import en échec (voir ci-dessus)." >&2; exit 1; }
+fi
+
+if ! ready; then echo "Données absentes : $DATA (utiliser --import)" >&2; exit 1; fi
+cd "$DATA" || exit 1
+exec "$HERE/usr/bin/dash" --game_data_root="$DATA" --gpu_plugin=xenos --log_file="$DATA/dash.log" "$@"
