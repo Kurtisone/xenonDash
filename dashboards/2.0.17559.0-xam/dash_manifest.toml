@@ -1,0 +1,17 @@
+[project]
+name = "dash"
+sdk_version = "0.10.0"
+game_root = "assets"
+
+[entrypoint]
+file_path = "assets/dash.xex"
+out_directory_path = "generated/dash"
+# Mêmes corrections que le Dashboard seul (projet 2.0.17559.0, non dupliquées)
+includes = ["../2.0.17559.0/dash_overrides.toml", "../2.0.17559.0/overrides.toml"]
+
+# XAM 17559 recompilé comme module (DLL ReXGlue), chargé par le Dashboard en remplacement du XAM HLE (P4)
+[[modules]]
+file_path = "assets/flash/xam.xex"
+guest_path = "game:\\xam.xex"
+out_directory_path = "generated/xam"
+includes = ["xam_overrides.toml", "xam_auto_overrides.toml"]

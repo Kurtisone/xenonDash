@@ -89,10 +89,20 @@ l'utilisateur au premier lancement.
 - Reste : débloquer 5759/4532 ; atteindre le profil/succès sous 7258 ; modules flash XeBuilds manquants pour 5759/4532
   (on emprunte ceux de 6717) ; regénérer 6770 avec l'outil pour y ajouter d'éventuelles continuations de funclets.
 
-### P4 — Versions avec XAM recompilé (17559 d'abord)
+### P4 — Versions avec XAM recompilé (17559 d'abord) (EN COURS : palier 1 partiel, palier 2 prototype)
 - Dashboard 17559 + XAM 17559 recompilés ; XAM comme module ReXGlue (`[[modules]]`), ses exports
   remplaçant ceux du HLE ; démarrage de XAM (threads système, notifications, Guide).
 - Les remplaçants ImGui (`dash_xam_ui.cpp`) ne servent plus pour ces versions.
+- **Fait** : Dashboard 17559 porté par l'outil (`dashboards/2.0.17559.0/`, 38 105 fonctions, compile, démarre ; 3 correctifs
+  `common/` : image en lecture/écriture, `KeGetImagePageTableEntry`, `KeQueryInterruptTime`) ; XAM 17559 recompilé
+  (`tools/codegen_module.py`, 19 972 fonctions, `libdash_xam.so`) et **chargé avec son point d'entrée dans le même processus
+  que le Dashboard** (`dashboards/2.0.17559.0-xam/`, `DASH_XAM_MODULE=1|2`) ; correctif SDK (`libXXX.so` sous Linux).
+- **Bloqué** : le Dashboard 17559 n'affiche pas (attente d'un fence GPU : extension d'un tampon indirect que le CP du SDK
+  ne voit pas) ; le premier thread système de XAM lit un singleton nul (périphériques `Harddisk0\Partition1`... absents) ;
+  la redirection des imports du Dashboard vers les exports de XAM n'est pas écrite.
+- **Suite chiffrée** (détail et risques dans le README, « Dashboard 2.0.17559 et XAM recompilé ») : 1) affichage du
+  Dashboard 17559, 1-2 j ; 2) XAM vivant (périphériques, stubs noyau), 2-3 j ; 3) générateur de redirections + `XamShow*UI`,
+  1-2 j ; 4) profil/succès via XAM, 3-5 j ; 5) rendu XUI de XAM + manette, 2-4 j ; 6) retrait d'ImGui, captures, AppImage, 1 j.
 - Ensuite : autres mises à jour complètes NXE/Metro.
 
 ### P5 — Lancement des jeux (FAIT)

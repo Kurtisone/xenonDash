@@ -11,6 +11,7 @@ dashboards/*/assets/
 
 # Code C++ généré depuis dash.xex (traduction du binaire Microsoft, ~117 Mo) : régénérer avec rexglue codegen
 dashboards/*/generated/dash/
+dashboards/*/generated/xam/
 
 # Produits de compilation, exécutions, sorties d'analyse
 dashboards/*/out/

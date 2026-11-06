@@ -135,6 +135,7 @@ l'archive XeBuilds ne contient pas 5759, 4532 ni 2255, on y utilise les polices 
 | 2.0.7258.0 | **partiel** : démarre et s'affiche (interface « Xbox 360 / Xbox Live » en tuiles, type NXE avant la lettre, **pas** les Blades), profil détecté (« 1 Profile Found, Signed In Locally »), navigation vers Game Library / Recent Games | import de fonction **sans thunk** (`XamVoiceSubmitPacket`, adresse 0) : correctif du SDK (`codegen` l'ignore) sans lequel `No function registered at <entrée>` ; Achievements/Played Games non atteints (écran de profil derrière la tuile « Sign In », non géré en HLE) ; artefacts roses de lavapipe. Captures : `dashboards/2.0.7258.0/runs/preuves/` |
 | 2.0.5759.0 | **partiel** : codegen (12 cibles, 299 fonctions par pointeur) et compilation OK, **écran noir** au démarrage | déréférencement nul (invité `0x8`) pendant l'initialisation XUI, après le second `XamProfileCreateEnumerator` (`sub_9226CE00`, message XUI vers un objet dont le champ `+12` est nul) ; non résolu. Ce Dashboard ouvre `media:\gamercrd.xzp` (ressource de `xam.xex`, absente de la flash) : l'outil en extrait désormais une version convertie de XAM 17559 (format de scènes probablement incompatible) |
 | 2.0.4532.0 | **partiel** : codegen (10 cibles, 285 fonctions par pointeur) et compilation OK, écran noir | même symptôme que 5759 |
+| 2.0.17559.0 | **partiel (P4)** : codegen (38 105 fonctions) et compilation OK, démarre, **écran noir** (attente d'un fence GPU) ; variante `dashboards/2.0.17559.0-xam/` avec XAM recompilé chargé dans le processus | voir « Dashboard 2.0.17559 et XAM recompilé » |
 | 2.0.2255.0 | **impossible** | la mise à jour ne contient que des deltas `.xexp` (dash compris) appliqués sur la base 1888, dont les modules sont chiffrés et dont on ne dispose pas de clé ; l'outil s'arrête proprement (« dash.xex introuvable ») |
 
 Les modules `xam.xex` de XeBuilds (6717, 7258) portent la version 1888 : XAM reste émulé (HLE) pour toutes les versions
@@ -143,6 +144,101 @@ termine par un `b` vers sa fonction parente : le point d'arrivée est déclaré 
 `blr`/`b`, section « continuations de funclets » d'`overrides.toml`), copie du profil de test et de `input_test.sh`
 dans le projet, extraction de la ressource `gamercrd` de XAM. 6770 en avait aussi une (`0x9222D328`), ajoutée à
 son `overrides.toml` ; Achievements revérifié à l'écran après reconstruction.
+
+## Dashboard 2.0.17559 et XAM recompilé (phase P4)
+
+État : **palier 1 partiel** (Dashboard 17559 porté, compilé, qui démarre mais n'affiche pas encore), **palier 2 : prototype
+fonctionnel du chargement de XAM recompilé dans le même processus** (analyse et plan chiffré ci-dessous).
+
+### Palier 1 : Dashboard 17559 seul, XAM HLE (`dashboards/2.0.17559.0/`)
+
+`tools/port_dashboard.sh firmware/17559 2.0.17559.0` : extraction, codegen (**38 105 fonctions**, 28 cibles non résolues,
+516 fonctions par pointeur, ~80 s par itération, 5 itérations), compilation (11 stubs d'imports inconnus). Le Dashboard
+17559 est un Dashboard NXE/Metro (image de 16,9 Mo avec 38 ressources XEX embarquées : `dashlua`, `hubui`, `contui`...).
+Il importe **516 fonctions XAM** et **284 fonctions noyau** (`dash_init.cpp`).
+
+Blocages levés (tous dans `common/`, donc valables pour les autres versions) :
+- **Écriture dans l'image** : le Dashboard écrit dans ses ressources XEX (`dashlua`, pages « lecture seule » du XEX) :
+  violation d'accès invitée en boucle. `DashAppBase::OnPostSetup` remet toute l'image de l'exécutable en lecture/écriture.
+- **`KeGetImagePageTableEntry`** : le Dashboard valide ses pointeurs de code (`sub_928EF408`) avec le bit 0 (« page
+  valide ») de l'entrée ; l'implémentation du SDK y met l'indice de page -> `KeBugCheck(0xF7)` une page sur deux.
+  `common/src/kernel_stubs.cpp` renvoie une entrée valide pour 0x80000000-0x9FFFFFFF.
+- **`KeQueryInterruptTime`** : stub du SDK (renvoie 0) ; remplacé par l'horloge monotone en unités de 100 ns.
+
+**Blocage restant (écran noir)** : le fil principal tourne indéfiniment dans `sub_921AFF68` (D3D du Dashboard,
+« attendre le fence GPU N »). Diagnostic : l'anneau de commandes du GPU est lu jusqu'à son pointeur d'écriture
+(`0x31`), le CP est au repos, le « GPU identifier » (`EVENT_WRITE_SHD` à `0x1FCA4000`) vaut `0x0B` alors que le
+Dashboard attend `0x0D`. Les paquets `EVENT_WRITE_SHD 0x0D` sont bien dans le tampon indirect `0x1FA93120`, mais **au-delà
+de la taille (0x18 mots) du paquet `INDIRECT_BUFFER` publié dans l'anneau** : le D3D de la 17559 prolonge un tampon
+indirect déjà publié (ou publie son extension par un chemin que le SDK ne voit pas) ; le CP du SDK ne relit jamais la
+taille. Pistes : (a) relire la taille du paquet IB dans l'anneau à chaque réveil, (b) exécuter le tampon indirect jusqu'au
+prochain `EVENT_WRITE_SHD`/NOP, (c) comparer avec Xenia (`CommandProcessor::ExecuteIndirectBuffer`, `PM4_INDIRECT_BUFFER`).
+Même comportement avec RADV : ce n'est pas le blocage lavapipe de 6770. Aucune capture valide n'a donc été obtenue.
+Autres stubs vus au démarrage (à implémenter après l'affichage) : `XamGetLanguage`, `XamGetLanguageTypeface`,
+`XamUserGetUserTenure`, `XamUserGetSubscriptionType`, `XamGetStagingMode`, `EtxProducerRegister`, messages
+`XLIVEBASE 0xFC/0x58003`, paramètres de profil `0x63E80044/0x7008004F/0x61180050`, `DASHUSER:\ThematicSkin`.
+
+### Palier 2 : XAM 17559 recompilé comme module ReXGlue (`dashboards/2.0.17559.0-xam/`)
+
+**Ce qui marche (prototype vérifié)** :
+1. `xam.xex` 17559 (`$flash_xam.xex`, complet et déchiffrable) se recompile : `tools/codegen_module.py` (boucle de
+   cibles non résolues et de fonctions par pointeur, ~42 s/itération) -> **19 972 fonctions** (11 cibles non résolues, 98
+   fonctions par pointeur, 70 Mo de C++, `xam_auto_overrides.toml` versionné). Les 906 imports noyau de XAM (443 noms)
+   sont **tous** déjà fournis par `librexruntime.so` (aucun symbole `__imp__` indéfini).
+2. SDK : `[[modules]]` du manifeste (`dash_manifest.toml`) : `rexglue codegen` produit `generated/xam/` (cible CMake
+   `dash_xam` -> `libdash_xam.so`, 39 Mo, ~7 min de compilation), `module_registry.cpp` et `dll_targets.cmake` ; le
+   Dashboard est regénéré avec les appels indirects « multi-modules ». Les `includes` du manifeste peuvent pointer sur
+   les overrides du projet 17559 seul (`../2.0.17559.0/...`, pas de duplication).
+3. Correctif du SDK (fork, `724a728`) : `LoadUserModule` faisait `dlopen("dash_xam")` ; sous Linux il charge maintenant
+   `libdash_xam.so` à côté de l'exécutable.
+4. `DASH_XAM_MODULE=1` (`common/src/dash_app_base.cpp`) charge `game:\xam.xex` (copie/lien dans `assets/`) : « Function
+   table initialized for module: code=81670000-81A76A88 », « Module 'xam.xex' registered 19972 functions » : **XAM
+   recompilé et Dashboard coexistent dans le même processus** (deux tables de fonctions, deux images).
+5. `DASH_XAM_MODULE=2` exécute en plus le point d'entrée de XAM (`0x81696AF0`, `DLL_PROCESS_ATTACH`) sur un thread
+   invité : il **s'exécute entièrement** (initialisation des apps XAM, `EtxProducerRegister`, sept `ExCreateThread` de
+   threads système, lecture de `\Device\Harddisk0\Partition1\{name.txt,Cache}`, `XConfig 0x0007`...) puis rend la main.
+
+**Ce qui bloque (mesuré)** :
+- Le premier thread système de XAM (`sub_816B9668 -> 816B92C8 -> 816B8B08 -> 81696558 -> 8169D060`) lit
+  `0x00000274` : un singleton non initialisé. Cause probable : périphériques absents (`\Device\Harddisk0\Partition1`,
+  `\Device\Flash\sutrace.debug`, `\Device\MU0`, `\Device\Mu*`) et stubs noyau (`XeKeysGetStatus`, `XexShimLock`,
+  `HalGetPowerUpCause`, `KeSetPriorityClassThread`, `Drv*Callback`).
+- **Le Dashboard 17559 n'affiche pas encore** (palier 1) : impossible de valider visuellement les écrans XAM.
+- **Redirection des imports** (non faite) : le code recompilé du Dashboard appelle les exports XAM par des symboles
+  `__imp__<Nom>` liés à l'HLE à la compilation (« l'import est résolu à la compilation », `xex_module.cpp`) : pour servir
+  un import par le XAM recompilé il faut le surcharger par un `REX_HOOK_RAW` qui appelle la fonction invitée de
+  l'export (`PPC_LOOKUP_FUNC(base, XexModule::GetProcAddress(ordinal))(ctx, base)`, même contexte, mêmes registres).
+  XAM exporte 2 890 ordinaux ; le Dashboard en importe 516.
+- **Le XAM recompilé ne remplace pas le HLE tant que son état n'existe pas** : profil (paquet de compte STFS chiffré
+  avec la clé de la console : on n'extrait pas de clés), contenu/`Partition1`, connexion locale, entrées (XInput/`Drv`),
+  Guide (`XamShowGuideUI` ouvre une scène XUI de XAM dans le processus du Dashboard, `shrdres`/`gamercrd`).
+
+**Reproduire** : `cp 'firmware/17559/$flash_xam.xex' dashboards/2.0.17559.0/assets/flash/xam.xex && ln -s flash/xam.xex
+dashboards/2.0.17559.0/assets/xam.xex` ; dans `dashboards/2.0.17559.0-xam/` : `../../sdk/bin/rexglue codegen dash_manifest.toml`,
+`cmake --preset linux-amd64-relwithdebinfo && cmake --build out/build/linux-amd64-relwithdebinfo -j12`, puis lancer avec
+`DASH_XAM_MODULE=2` (Xvfb + lavapipe comme ci-dessus). Les fichiers de module du projet : `xam_overrides.toml` (manuel,
+vide), `xam_auto_overrides.toml` (généré par `tools/codegen_module.py`, voir son en-tête pour les arguments).
+
+### Architecture retenue et plan chiffré
+
+- Projet `dashboards/2.0.17559.0/` = référence **HLE** (aucun module) ; `dashboards/2.0.17559.0-xam/` = même Dashboard
+  + module XAM (`libdash_xam.so` chargé à l'exécution, `DASH_XAM_MODULE`). Les deux partagent `common/`.
+- Redirection **sélective, par ordinal** : un générateur (`tools/gen_xam_redirects.py`, à écrire) produit, depuis la liste
+  des imports du Dashboard et la table d'exports de XAM, un `REX_HOOK_RAW(__imp__X)` par fonction à servir par XAM
+  (liste dans un fichier de configuration) ; tout le reste reste en HLE (xboxkrnl, `common/`).
+
+| # | Étape | Estimation |
+|---|---|---|
+| 1 | Dashboard 17559 affiché (fence/IB : relire la taille de l'IB, comparer à Xenia ; stubs XAM de la liste ci-dessus) | 1-2 j |
+| 2 | XAM chargé + entrée : périphériques `Harddisk0\Partition1`, `Flash`, `Mu`, stubs noyau, jusqu'à ce que ses 7 threads système vivent | 2-3 j |
+| 3 | Générateur de redirections + `DASH_XAM_IMPORTS=<liste>` ; premier sous-ensemble : `XamShowAchievementsUI`, `XamShowMessageBoxUI`, `XamShowGuideUI`... | 1-2 j |
+| 4 | Profil/succès servis par XAM (STFS de profil non chiffré fictif, `XamUserReadProfileSettings`, GPD) | 3-5 j |
+| 5 | Rendu XUI de XAM (scènes `gamercrd.xzp`/`shrdres.xzp`, polices `XenonSCLatin`), manette (`Drv*`/`XInputd*`) | 2-4 j |
+| 6 | Retirer `dash_xam_ui.cpp` (ImGui) pour 17559, smoke + captures `p4_*.png`, AppImage | 1 j |
+
+Total : **10-17 jours-développeur** ; l'étape 1 conditionne tout (sans affichage du Dashboard, les écrans XAM ne peuvent
+être ni validés ni capturés). Le risque principal est l'étape 4 (XAM réel contre profil HLE), qu'on peut contourner en
+gardant le profil/GPD du projet et en ne redirigeant vers XAM que l'interface.
 
 ## AppImage (phase P6)
 
