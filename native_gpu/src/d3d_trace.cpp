@@ -58,6 +58,7 @@ int Register(uint32_t a) {
 }  // namespace
 
 namespace ngpu {
+void SwapTick();
 bool Enabled() {
   static const bool v = std::getenv("DASH_NGPU_DISABLE") == nullptr;
   return v;
@@ -114,6 +115,15 @@ void TraceHit(int slot, uint32_t a, PPCContext& ctx) {
     std::fflush(g_out);
   }
 }
+// Compteur d'images léger (DASH_NGPU_FPSLOG=1) : fonctionne aussi avec l'émulation « xenos » (mesures de référence).
+void SwapTick() {
+  static const bool on = std::getenv("DASH_NGPU_FPSLOG") != nullptr;
+  if (!on) return;
+  static const auto t0 = std::chrono::steady_clock::now();
+  static std::atomic<uint64_t> n{0};
+  uint64_t k = ++n;
+  if (k % 100 == 0) std::fprintf(stderr, "[fps] swap %llu t=%.3f\n", (unsigned long long)k, std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count());
+}
 // Fin d'image (appelée sur Swap) : résumé des appels par image.
 void TraceFrame(uint32_t a) {
   if (!g_out) return;
@@ -137,7 +147,7 @@ void TraceFrame(uint32_t a) {
   extern "C" void sub_##A(PPCContext& __restrict ctx, uint8_t* base) {                \
     static int slot = Register(0x##A);                                                \
     ngpu::TraceHit(slot, 0x##A, ctx);                                                 \
-    if (0x##A == 0x92121EE8) ngpu::TraceFrame(0x##A);                                 \
+    if (0x##A == 0x92121EE8) { ngpu::TraceFrame(0x##A); ngpu::SwapTick(); }                                 \
     if (ngpu::Enabled() && ngpu_hook_##A) {                                           \
       try { if (ngpu_hook_##A(ctx, base)) return; }                                   \
       catch (const std::exception& e) { std::fprintf(stderr, "[ngpu] EXCEPTION dans le crochet %08X : %s\n", 0x##A, e.what()); }   \
