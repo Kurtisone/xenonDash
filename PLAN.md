@@ -2,8 +2,9 @@
 
 ## Objectif
 
-Chaque version du Dashboard (2.0.2255 → 2.0.17559) recompilée en natif, livrée sous forme d'**un
-AppImage par version**, capable de **lancer les jeux**. Les fichiers Microsoft (firmware, XEX, polices)
+**Une version par interface** (décision du 2026-11-06) : la plus récente de chaque génération —
+**Blades** (2.0.6770, fait), **NXE** (dernière version NXE avant Metro, à identifier) et **Metro** (2.0.17559) —
+recompilée en natif, livrée sous forme d'**un AppImage par interface**, capable de **lancer les jeux**. Les fichiers Microsoft (firmware, XEX, polices)
 ne sont jamais versionnés : l'AppImage les importe depuis une mise à jour officielle fournie par
 l'utilisateur au premier lancement.
 
@@ -15,6 +16,7 @@ l'utilisateur au premier lancement.
 | XAM | **Recompilé** (module DLL ReXGlue) quand un `xam.xex` complet et déchiffrable de la **même version** existe ; sinon **émulation haut niveau** (HLE ReXGlue + `dash_*.cpp`) | Mélanger Dashboard et XAM de versions différentes n'a jamais existé sur console. |
 | Versions Blades (≤ 7258) | HLE pour l'instant (XAM 6770 = base 1888 indéchiffrable + delta) ; recompilation de XAM si une base déchiffrable est obtenue | — |
 | Versions NXE/Metro avec XAM complet (17559, autres mises à jour complètes) | Dashboard **et** XAM recompilés | Écrans XAM d'origine (succès, Guide…) au lieu des remplaçants ImGui. |
+| Versions à porter | **Une par interface** (Blades 6770, NXE la plus récente, Metro 17559) ; les autres versions (6717, 7258, 5759, 4532, 2255) restent en l'état, sans effort supplémentaire | Les versions d'une même interface diffèrent peu ; l'effort va aux trois interfaces. |
 | Lancement des jeux | `XamLoaderLaunchTitle` → lanceur : **port natif enregistré** (ex. Skate1Recompiled) pour ce TitleID, sinon **Xenia** (Linux) avec le XEX/ISO ; retour au Dashboard à la fin du jeu | Un jeu ne s'exécute nativement que s'il est lui-même recompilé. |
 | Modèle d'exécution | Les tâches sont confiées à des agents **Sonnet** ; revue et intégration par la session principale | Demande de l'utilisateur (coût). |
 
