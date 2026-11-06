@@ -348,3 +348,8 @@
 0x9272D7F8 = {}  # ref 0x920E6F0C
 0x9272FA50 = {}  # ref 0x920E6F4C
 0x9272FA58 = {}  # ref 0x920E6F58
+
+# Continuations de funclets (finally/catch) : le funclet se termine par `b` vers un point situé dans sa
+# fonction parente. On déclare ce point comme fonction (jusqu'au premier blr/b), le funclet l'appelle puis
+# retourne au parent, qui exécute lui-même la suite (le code en double est sans effet).
+0x9222D328 = { end = 0x9222D340 }  # continuation depuis 0x9222D378

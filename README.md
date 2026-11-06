@@ -140,7 +140,8 @@ Les modules `xam.xex` de XeBuilds (6717, 7258) portent la version 1888 : XAM res
 Blades. Corrections génériques ajoutées à l'outil pendant P3 : continuations de funclets (le funclet `finally` se
 termine par un `b` vers sa fonction parente : le point d'arrivée est déclaré comme fonction jusqu'au premier
 `blr`/`b`, section « continuations de funclets » d'`overrides.toml`), copie du profil de test et de `input_test.sh`
-dans le projet, extraction de la ressource `gamercrd` de XAM.
+dans le projet, extraction de la ressource `gamercrd` de XAM. 6770 en avait aussi une (`0x9222D328`), ajoutée à
+son `overrides.toml` ; Achievements revérifié à l'écran après reconstruction.
 
 ## Contrôles
 
