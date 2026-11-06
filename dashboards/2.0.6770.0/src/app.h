@@ -2,6 +2,8 @@
 
 #pragma once
 
+#include <cstdlib>
+
 #include "dash_app_base.h"
 
 class DashApp : public xenondash::DashAppBase {
@@ -12,7 +14,7 @@ class DashApp : public xenondash::DashAppBase {
   // Rendu natif (native_gpu/) : pas de plugin GPU Xenos ; la fenêtre et la présentation sont gérées par native_gpu.
   void OnPreSetup(rex::RuntimeConfig& config) override {
     xenondash::DashAppBase::OnPreSetup(config);
-    config.gpu_plugin.clear();
+    if (!std::getenv("DASH_NGPU_DISABLE")) config.gpu_plugin.clear();  // DASH_NGPU_DISABLE=1 : émulation « xenos » (référence)
   }
 #endif
 

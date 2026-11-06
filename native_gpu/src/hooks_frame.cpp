@@ -3,10 +3,12 @@
 //   92128AF0  D3DDevice_Clear(dev, nb_rects, rects, flags, couleur ARGB, z, stencil)
 //   92121EE8  D3DDevice_Swap / Present             -> présentation du tampon d'image natif
 
+#include <atomic>
 #include "ngpu.h"
 #include "vk_backend.h"
 
 namespace ngpu {
+void NextFrame();
 void NullGpuAttach(uint32_t dev);
 void NullGpuCompleteNow(uint8_t* base, uint32_t dev);
 }
@@ -35,10 +37,12 @@ NGPU_HOOK(921296F0) {
 }
 
 NGPU_HOOK(92128AF0) {
+  if (std::getenv("DASH_NGPU_EVLOG")) std::fprintf(stderr, "[ev] clear flags=%X color=%08X rects=%u\n", ctx.r6.u32, ctx.r7.u32, ctx.r4.u32);
   ngpu::NullGpuAttach(ctx.r3.u32);
   uint32_t flags = ctx.r6.u32, color = ctx.r7.u32;
   if (flags & 0xF) {
     float c[4] = {((color >> 16) & 255) / 255.f, ((color >> 8) & 255) / 255.f, (color & 255) / 255.f, ((color >> 24) & 255) / 255.f};
+    if (std::getenv("DASH_NGPU_CLEARGRAY")) { c[0] = c[1] = c[2] = 0.3f; c[3] = 1; }
     ngpu::VkClear(c);
   }
   NGPU_ORIG(92128AF0);
@@ -46,9 +50,17 @@ NGPU_HOOK(92128AF0) {
 }
 
 NGPU_HOOK(92121EE8) {
+  if (std::getenv("DASH_NGPU_EVLOG")) std::fprintf(stderr, "[ev] swap\n");
   ngpu::NullGpuAttach(ctx.r3.u32);
   NGPU_ORIG(92121EE8);
   uint64_t n = ngpu::VkPresent();
+  ngpu::NextFrame();
   if (n == 1 || n % 300 == 0) NGPU_LOG("image %llu présentée", (unsigned long long)n);
   return true;
 }
+
+namespace ngpu {
+static std::atomic<uint64_t> g_frame{0};
+uint64_t FrameCounter() { return g_frame.load(); }
+void NextFrame() { g_frame++; }
+}  // namespace ngpu

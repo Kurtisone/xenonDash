@@ -7,6 +7,8 @@ add_library(xenondash_native_gpu OBJECT
     src/null_gpu.cpp
     src/vk_backend.cpp
     src/hooks_frame.cpp
+    src/hooks_draw.cpp
+    src/guest_tex.cpp
 )
 find_package(Vulkan REQUIRED)
 target_include_directories(xenondash_native_gpu PRIVATE ${Vulkan_INCLUDE_DIRS})
