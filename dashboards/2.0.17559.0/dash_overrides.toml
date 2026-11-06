@@ -1,2 +1,7 @@
 # Corrections MANUELLES de l'analyse de dash.xex (2.0.17559.0) : jamais écrasé par tools/port_dashboard.sh.
 # Les corrections automatiques (cibles non résolues, fonctions atteintes par pointeur) sont dans overrides.toml.
+
+# CRT de la 17559 : setjmp/longjmp (utilisés par Lua : lua_pcall / luaD_throw). Sans cela, longjmp « revient » et le
+# Dashboard appelle exit() (panic Lua).
+setjmp_address = 0x9291C760
+longjmp_address = 0x9291C330

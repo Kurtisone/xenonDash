@@ -386,3 +386,25 @@ u32 XamBuildLegacySystemResourceLocator_entry(mapped_wstring filename, mapped_vo
 
 REX_HOOK(__imp__XamBuildLegacySystemResourceLocator,
          dash::resources::XamBuildLegacySystemResourceLocator_entry)
+
+// XamPackageManagerGetFilePathW(nom, tampon, taille_en_caractères) : le Dashboard NXE/Metro (17559) résout ses
+// « langpack://<nom> » (dashcomm.xzp, consoles.xzp, network.xzp...) par le gestionnaire de paquets de XAM. Les ressources
+// du Dashboard sont fournies comme fichiers de la flash (media:\<nom>.xzp) ; on renvoie ce chemin.
+REX_HOOK_RAW(__imp__XamPackageManagerGetFilePathW) {
+  const uint32_t name_ptr = ctx.r3.u32, out_ptr = ctx.r4.u32, count = ctx.r5.u32;
+  std::u16string name;
+  if (name_ptr) {
+    auto* in = reinterpret_cast<const rex::be<uint16_t>*>(base + name_ptr);
+    for (size_t i = 0; in[i] && i < 260; i++) name += char16_t(uint16_t(in[i]));
+  }
+  std::string utf8;
+  for (char16_t c : name) utf8 += c < 128 ? char(c) : '?';
+  std::u16string path = u"media:\\" + (name.size() > 3 && name.compare(1, 2, u"..") == 0 ? name.substr(3) : name);  // « L..<nom> » -> « <nom> »
+  REXLOG_INFO("[dash] XamPackageManagerGetFilePathW('{}') -> media:\\{}", utf8, utf8);
+  if (!out_ptr || !count) { ctx.r3.u64 = 0x80070057; return; }
+  auto* out = reinterpret_cast<rex::be<uint16_t>*>(base + out_ptr);
+  uint32_t n = std::min<uint32_t>(uint32_t(path.size()), count - 1);
+  for (uint32_t i = 0; i < n; i++) out[i] = uint16_t(path[i]);
+  out[n] = 0;
+  ctx.r3.u64 = 0;
+}

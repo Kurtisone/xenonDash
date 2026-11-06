@@ -204,6 +204,42 @@ def stage_assets(a, ctx):
                 log(f"{res}.xzp converti depuis {a.shrdres_xam}")
     else:
         log("avertissement : pas de shrdres.xzp (--shrdres ou --shrdres-xam) : icônes/chaînes partagées absentes")
+    extract_dash_resources(ctx, assets, flash)
+
+
+def extract_dash_resources(ctx, assets, flash):
+    """Ressources XZP embarquées dans dash.xex (dashcomm, consoles, network, slots, hubui... pour NXE/Metro) : le
+    Dashboard les demande par « langpack://L..<nom>.xzp » (XamPackageManagerGetFilePathW -> media:\\<nom>.xzp). Elles sont
+    déjà au format natif (XUIZ) : copiées telles quelles dans la flash (sans écraser un fichier existant). Le
+    Dashboard 17559 ouvre aussi media:\\en-US\\shrdres.xzp : on y place un lien vers shrdres.xzp."""
+    import struct
+    xex = os.path.join(assets, "dash.xex")
+    pe = os.path.join(ctx["work"], "dash_res.pe")
+    run([XEXINFO, xex, pe], log_path=os.path.join(ctx["work"], "dash_res_xexinfo.txt"))
+    data, img = open(xex, "rb").read(), open(pe, "rb").read()
+    n, = struct.unpack(">I", data[0x14:0x18])
+    opt = dict(struct.unpack(">II", data[0x18 + i * 8:0x20 + i * 8]) for i in range(n))
+    if 0x2FF not in opt or 0x10201 not in opt:
+        return
+    base, v = opt[0x10201], opt[0x2FF]
+    size, = struct.unpack(">I", data[v:v + 4])
+    count = 0
+    for j in range((size - 4) // 16):
+        e = data[v + 4 + j * 16:v + 20 + j * 16]
+        name = e[:8].rstrip(b"\0").decode("latin1")
+        addr, length = struct.unpack(">II", e[8:16])
+        blob = img[addr - base:addr - base + length]
+        out = os.path.join(flash, name + ".xzp")
+        if blob[:4] == b"XUIZ" and not os.path.exists(out):
+            open(out, "wb").write(blob)
+            count += 1
+    if count:
+        log(f"{count} ressources XZP de dash.xex copiées dans la flash (media:\\<nom>.xzp)")
+        loc = os.path.join(flash, "en-US")
+        os.makedirs(loc, exist_ok=True)
+        link = os.path.join(loc, "shrdres.xzp")
+        if os.path.exists(os.path.join(flash, "shrdres.xzp")) and not os.path.lexists(link):
+            os.symlink(os.path.join("..", "shrdres.xzp"), link)
 
 
 # --------------------------------------------------------------------------------------------------
