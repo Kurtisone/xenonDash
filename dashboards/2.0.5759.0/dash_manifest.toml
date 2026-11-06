@@ -1,0 +1,11 @@
+[project]
+name = "dash"
+sdk_version = "0.10.0"
+game_root = "assets"
+
+[entrypoint]
+file_path = "assets/dash.xex"
+out_directory_path = "generated/dash"
+# dash_overrides.toml : corrections manuelles (versionnées à la main) ;
+# overrides.toml : corrections automatiques, écrites par tools/port_dashboard.sh.
+includes = ["dash_overrides.toml", "overrides.toml"]

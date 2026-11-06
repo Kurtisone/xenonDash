@@ -1,0 +1,2 @@
+# Corrections MANUELLES de l'analyse de dash.xex (2.0.7258.0) : jamais écrasé par tools/port_dashboard.sh.
+# Les corrections automatiques (cibles non résolues, fonctions atteintes par pointeur) sont dans overrides.toml.

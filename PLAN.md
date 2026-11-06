@@ -75,14 +75,19 @@ l'utilisateur au premier lancement.
   (`DASH_6770`) et les stubs/ordinaux XAM propres à une version restent à vérifier par version (P3) ; pas de
   récupération automatique des fonctions dont le funclet `catch` retourne dans la fonction parente.
 
-### P3 — Portage des versions Blades
-- Essai P2 fait sur **2.0.6717.0** (dash.xex complet du paquet, flash 6770 en attendant) : codegen (7 cibles non
-  résolues + 334 fonctions par pointeur), compilation (1 stub d'import auto) et capture Games sans FATAL, du premier
-  coup. 4532, 5759 et 7258 ont aussi un `$flash_dash.xex` complet ; 2255 n'a qu'un delta `.xexp` (base à fournir).
-- À fournir par version : le dossier `$SystemUpdate` (paquet `su20076000_00000000`) et les modules/polices de la
-  version (archive XeBuilds, `--flash-dir`) ; vérifier ensuite à l'écran les écrans propres à la version.
-- 2.0.7258, 6717, 5759, 4532, 2255 via P2 ; corrections manuelles documentées par version.
-- Flash par version : modules et polices (XeBuilds), `shrdres` converti.
+### P3 — Portage des versions Blades (FAIT en partie)
+- **6717 : OK** (Games + profil, Achievements, Played Games, captures dans `dashboards/2.0.6717.0/runs/preuves/`).
+- **7258 : partiel** : démarre, interface en tuiles (NXE avant la lettre) et profil détecté ; il a fallu un correctif du
+  SDK (imports sans thunk, adresse 0 dans `PPCFuncMappings`). Achievements/Played Games non atteints (écran de
+  profil derrière « Sign In »).
+- **5759 et 4532 : partiel** : codegen et compilation OK, écran noir (déréférencement nul à l'initialisation XUI,
+  voir README). Pistes : tracer les appels XAM/noyau avant le crash et les comparer à 6717 ; ces versions ouvrent
+  `media:\gamercrd.xzp` (ressource XAM de la même version, indisponible : XAM base 1888 chiffrée).
+- **2255 : impossible** (que des deltas `.xexp` sur la base 1888).
+- Outil : continuations de funclets (`finally`) déclarées automatiquement, copie du profil de test et de
+  `input_test.sh`, extraction de `gamercrd`.
+- Reste : débloquer 5759/4532 ; atteindre le profil/succès sous 7258 ; modules flash XeBuilds manquants pour 5759/4532
+  (on emprunte ceux de 6717) ; regénérer 6770 avec l'outil pour y ajouter d'éventuelles continuations de funclets.
 
 ### P4 — Versions avec XAM recompilé (17559 d'abord)
 - Dashboard 17559 + XAM 17559 recompilés ; XAM comme module ReXGlue (`[[modules]]`), ses exports

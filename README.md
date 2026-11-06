@@ -120,6 +120,28 @@ fonction (hors les `extern` des 5 hooks de diagnostic), compilation sans erreur,
 compare l'écart moyen, ~0,5/255 contre ~1,7 entre deux lancements du même binaire), aucun FATAL. Essai sur 2.0.6717.0 :
 codegen, compilation et smoke test passent sans intervention.
 
+## Versions portées (phase P3)
+
+Chaque version est un projet `dashboards/<version>/` produit par `tools/port_dashboard.sh` (les mises à jour sont
+rangées dans `firmware/<version>/`, les modules flash XeBuilds de 6717 et 7258 dans `firmware/xebuild-<n>/` ;
+l'archive XeBuilds ne contient pas 5759, 4532 ni 2255, on y utilise les polices et modules 6717). Test à l'écran :
+`dashboards/<version>/input_test.sh` (profil de test copié depuis 6770 par l'outil).
+
+| Version | État | Particularités |
+|---|---|---|
+| 2.0.6770.0 | OK (référence) | voir plus haut |
+| 2.0.6717.0 | **OK** : Games avec profil (Gamerscore 155), Achievements (9 succès), Played Games (3 jeux, sauvegardes) | 7 cibles non résolues + 334 fonctions par pointeur ; 1 stub d'import auto ; une continuation de funclet `finally` (`0x9222D1B0`) déclarée par l'outil (sans elle : `FATAL Unresolved call` en ouvrant Games Library). Captures : `dashboards/2.0.6717.0/runs/preuves/` |
+| 2.0.7258.0 | **partiel** : démarre et s'affiche (interface « Xbox 360 / Xbox Live » en tuiles, type NXE avant la lettre, **pas** les Blades), profil détecté (« 1 Profile Found, Signed In Locally »), navigation vers Game Library / Recent Games | import de fonction **sans thunk** (`XamVoiceSubmitPacket`, adresse 0) : correctif du SDK (`codegen` l'ignore) sans lequel `No function registered at <entrée>` ; Achievements/Played Games non atteints (écran de profil derrière la tuile « Sign In », non géré en HLE) ; artefacts roses de lavapipe. Captures : `dashboards/2.0.7258.0/runs/preuves/` |
+| 2.0.5759.0 | **partiel** : codegen (12 cibles, 299 fonctions par pointeur) et compilation OK, **écran noir** au démarrage | déréférencement nul (invité `0x8`) pendant l'initialisation XUI, après le second `XamProfileCreateEnumerator` (`sub_9226CE00`, message XUI vers un objet dont le champ `+12` est nul) ; non résolu. Ce Dashboard ouvre `media:\gamercrd.xzp` (ressource de `xam.xex`, absente de la flash) : l'outil en extrait désormais une version convertie de XAM 17559 (format de scènes probablement incompatible) |
+| 2.0.4532.0 | **partiel** : codegen (10 cibles, 285 fonctions par pointeur) et compilation OK, écran noir | même symptôme que 5759 |
+| 2.0.2255.0 | **impossible** | la mise à jour ne contient que des deltas `.xexp` (dash compris) appliqués sur la base 1888, dont les modules sont chiffrés et dont on ne dispose pas de clé ; l'outil s'arrête proprement (« dash.xex introuvable ») |
+
+Les modules `xam.xex` de XeBuilds (6717, 7258) portent la version 1888 : XAM reste émulé (HLE) pour toutes les versions
+Blades. Corrections génériques ajoutées à l'outil pendant P3 : continuations de funclets (le funclet `finally` se
+termine par un `b` vers sa fonction parente : le point d'arrivée est déclaré comme fonction jusqu'au premier
+`blr`/`b`, section « continuations de funclets » d'`overrides.toml`), copie du profil de test et de `input_test.sh`
+dans le projet, extraction de la ressource `gamercrd` de XAM.
+
 ## Contrôles
 
 **Manette** : toute manette reconnue par SDL (Xbox, DualShock/DualSense, etc.) fonctionne directement.

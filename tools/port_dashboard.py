@@ -37,9 +37,11 @@ STAGES = ["extract", "assets", "pe", "scaffold", "codegen", "build", "smoke", "c
 
 # Polices : nom canonique dans la flash console (XeBuilds les fournit en minuscules)
 FONT_NAMES = {"xenonclatin.xtt": "XenonCLatin.xtt", "xenonjklatin.xtt": "XenonJKLatin.xtt"}
+# Ressources de xam.xex à fournir aussi comme media:\<nom>.xzp (convertie comme shrdres.xzp)
+XAM_XZP_RESOURCES = ["gamercrd"]
 # Gabarit : fichiers copiés s'ils n'existent pas encore (relatif au gabarit -> relatif au projet)
 TEMPLATE_FILES = ["CMakeLists.txt", "CMakePresets.json", "dash_manifest.toml", "dash_overrides.toml",
-                  "src/app.h", "src/main.cpp", "run_headless.sh"]
+                  "src/app.h", "src/main.cpp", "run_headless.sh", "input_test.sh"]
 
 
 class StageError(Exception):
@@ -192,6 +194,14 @@ def stage_assets(a, ctx):
         run([sys.executable, os.path.join(TOOLS, "xex_resource.py"), a.shrdres_xam, pe, "shrdres", raw])
         run([sys.executable, os.path.join(TOOLS, "xzp_alias.py"), raw, out])
         log(f"shrdres.xzp converti depuis {a.shrdres_xam}")
+        # autres ressources de XAM ouvertes par le Dashboard via media:\<nom>.xzp (gamercrd : carte de joueur, 5759)
+        for res in XAM_XZP_RESOURCES:
+            raw = os.path.join(ctx["work"], f"{res}_raw.xzp")
+            rc, _ = run([sys.executable, os.path.join(TOOLS, "xex_resource.py"), a.shrdres_xam, pe, res, raw],
+                        check=False)
+            if rc == 0 and os.path.exists(raw):
+                run([sys.executable, os.path.join(TOOLS, "xzp_alias.py"), raw, os.path.join(flash, res + ".xzp")])
+                log(f"{res}.xzp converti depuis {a.shrdres_xam}")
     else:
         log("avertissement : pas de shrdres.xzp (--shrdres ou --shrdres-xam) : icônes/chaînes partagées absentes")
 
@@ -245,6 +255,12 @@ def stage_scaffold(a, ctx):
         if os.access(src, os.X_OK):
             os.chmod(dst, 0o755)
         log(f"gabarit -> {os.path.relpath(dst, ROOT)}")
+    # profil de test (GPD fictifs, non Microsoft) repris du projet 6770 pour les parcours à l'écran
+    prof = os.path.join(dest, "assets", "profiles")
+    ref = os.path.join(ROOT, "dashboards", "2.0.6770.0", "assets", "profiles")
+    if not os.path.exists(prof) and os.path.isdir(ref) and os.path.abspath(ref) != os.path.abspath(prof):
+        shutil.copytree(ref, prof)
+        log("profil de test copié depuis dashboards/2.0.6770.0/assets/profiles")
     ov = os.path.join(dest, "overrides.toml")
     if not os.path.exists(ov):
         open(ov, "w").write("")
@@ -268,7 +284,7 @@ def manual_keys(dest):
     return keys
 
 
-def write_overrides(dest, unresolved, ptr):
+def write_overrides(dest, unresolved, ptr, cont=None):
     lines = [
         "# Corrections AUTOMATIQUES de l'analyse de dash.xex, écrites par tools/port_dashboard.sh.",
         "# Ne pas éditer : régénéré à chaque exécution (les corrections manuelles vont dans dash_overrides.toml).",
@@ -283,8 +299,28 @@ def write_overrides(dest, unresolved, ptr):
     lines.append("# cibles des tables de portée SEH, situées dans une fonction, sont écartées).")
     for addr, ref in sorted(ptr.items()):
         lines.append(f"0x{addr:08X} = {{}}  # ref 0x{ref:08X}")
+    if cont:
+        lines.append("")
+        lines.append("# Continuations de funclets (finally/catch) : le funclet se termine par `b` vers un point situé dans sa")
+        lines.append("# fonction parente. On déclare ce point comme fonction (jusqu'au premier blr/b), le funclet l'appelle puis")
+        lines.append("# retourne au parent, qui exécute lui-même la suite (le code en double est sans effet).")
+        for addr, (end, src) in sorted(cont.items()):
+            lines.append(f"0x{addr:08X} = {{ end = 0x{end:08X} }}  # continuation depuis 0x{src:08X}")
     with open(os.path.join(dest, "overrides.toml"), "w") as f:
         f.write("\n".join(lines) + "\n")
+
+
+def block_end(ctx, start):
+    """Fin (exclue) du bloc commençant à `start` : première instruction terminale (blr, bctr, b sans lien)."""
+    img = ctx["pe_data"]
+    a = start
+    for _ in range(512):
+        off = a - ctx["base"]
+        w = struct.unpack(">I", img[off:off + 4])[0]
+        a += 4
+        if w in (0x4E800020, 0x4E800420) or ((w >> 26) == 18 and not (w & 1)):
+            return a
+    return a
 
 
 def scan_ptr_funcs(ctx, gen_dir, manual, known_extra):
@@ -319,9 +355,10 @@ def stage_codegen(a, ctx):
     if not os.path.exists(os.path.join(dest, "dash_manifest.toml")):
         raise StageError("projet absent (étape scaffold)")
     manual = manual_keys(dest)
-    unresolved, ptr = {}, {}
+    unresolved, ptr, cont = {}, {}, {}
+    ctx["pe_data"] = open(ctx["pe"], "rb").read()
     gen_dir = os.path.join(dest, "generated", "dash")
-    write_overrides(dest, unresolved, ptr)
+    write_overrides(dest, unresolved, ptr, cont)
     final_warn = ""
     for it in range(1, a.max_iter + 1):
         lp = os.path.join(ctx["work"], f"codegen{it}.log")
@@ -339,11 +376,24 @@ def stage_codegen(a, ctx):
                                  + "\n".join(out.splitlines()[-20:]))
             unresolved.update(new)
             log(f"  {len(new)} cible(s) non résolue(s) ajoutée(s)")
-            write_overrides(dest, unresolved, ptr)
+            write_overrides(dest, unresolved, ptr, cont)
             continue
         final_warn = "\n".join(l for l in out.splitlines() if l.startswith("Unresolved"))
         new = scan_ptr_funcs(ctx, gen_dir, manual, set(unresolved) | set(ptr))
         log(f"  fonctions par pointeur : {len(new)} nouvelles")
+        # continuations de funclets : « Unresolved b target T from S » avec T dans une fonction déjà générée
+        newc = {}
+        for m in re.finditer(rf"^Unresolved b target {ADDR} from {ADDR}", final_warn, re.M):
+            t, s_ = int(m.group(1), 16), int(m.group(2), 16)
+            if t not in manual and t not in unresolved and t not in ptr and t not in cont:
+                newc[t] = (block_end(ctx, t), s_)
+        if newc:
+            log(f"  {len(newc)} continuation(s) de funclet déclarée(s) comme fonction")
+            cont.update(newc)
+            write_overrides(dest, unresolved, ptr, cont)
+            ptr.update(new)
+            write_overrides(dest, unresolved, ptr, cont)
+            continue
         if not new:
             ctx["codegen_warnings"] = final_warn
             n_fn = len(re.findall(r"\{ 0x[0-9A-F]{8}, sub_", open(os.path.join(gen_dir, "dash_init.cpp")).read()))
@@ -354,7 +404,7 @@ def stage_codegen(a, ctx):
                     + final_warn.replace("\n", "\n    "))
             return
         ptr.update(new)
-        write_overrides(dest, unresolved, ptr)
+        write_overrides(dest, unresolved, ptr, cont)
     raise StageError(f"codegen : pas de convergence en {a.max_iter} itérations")
 
 
