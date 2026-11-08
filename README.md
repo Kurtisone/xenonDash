@@ -666,3 +666,7 @@ Sous Xvfb, RADV ne peut pas présenter (pas de DRI3) : utiliser lavapipe :
 - Une exception C++ dans le Dashboard reste fatale (`RtlUnwind` non implémenté côté SDK, retour de
   *funclet* `catch` non géré) ; vue une fois, causée par le stub de `XamIsSystemTitleId`.
 - Stubs : `XamGetLanguage`, `XGetAudioFlags`, `HalGetCurrentAVPack`, `XamSetDashContext`, messages XMP.
+
+## Licence
+
+XenonDash est distribué sous licence GPL-3.0 (voir `LICENSE`). Aucun fichier Microsoft ni de jeu n'est fourni ; les binaires recompilés contiennent une traduction de code propriétaire et sont réservés à un usage personnel.
