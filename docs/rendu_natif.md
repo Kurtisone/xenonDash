@@ -510,8 +510,8 @@ les enseignements ci-dessous sont à reporter dans la couche commune.
 
 ### 12.3 Parité mesurée
 Le fond est animé : une comparaison pixel à pixel entre deux instants est dominée par la phase de l'animation. Mesure brute natif/oracle sur Games
-(instants différents) : voir sortie de `framecmp.py` ci-dessus dans le rapport ; avant correction PSNR ≈ 8 dB (couches fausses), après elle est nettement meilleure
-mais **non comparable au plancher de bruit de l'oracle** (non mesuré proprement : il faudrait figer l'horloge invitée). Parité visuelle : fond, panneau, icônes, logo, texte corrects.
+(instants différents) : **écart moyen 14,4/255, PSNR 22,7 dB, 4,2 % de pixels à écart > 32** (avant : 80,1/255, 8,45 dB, 82,6 %) ;
+zones entre 6 et 13 d'écart moyen, uniformes (animation du fond). Cette mesure reste **non comparable au plancher de bruit de l'oracle** (non mesuré proprement : il faudrait figer l'horloge invitée). Parité visuelle : fond, panneau, icônes, logo, texte corrects.
 FPS non remesuré (≈ 22 images/s sous lavapipe avec la machine chargée ; 50 au jalon 1).
 
 ### 12.4 Reste (non fait)
