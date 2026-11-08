@@ -14,12 +14,14 @@ void NullGpuCompleteNow(uint8_t* base, uint32_t dev);
 }
 
 NGPU_HOOK(9212A418) {
+  if (ngpu::Observe()) return false;
   ngpu::NullGpuCompleteNow(base, ctx.r3.u32);
   return false;
 }
 // 92129788(dev, pos, taille) : attend que le pointeur de lecture du GPU (mot +60 du bloc de retour) sorte de la zone
 // demandée -> GPU drainé : pointeur de lecture = position demandée.
 NGPU_HOOK(92129788) {
+  if (ngpu::Observe()) return false;
   uint32_t dev = ctx.r3.u32;
   ngpu::NullGpuCompleteNow(base, dev);
   uint32_t idp = ngpu::Be32(base + dev + 10896);
@@ -29,6 +31,7 @@ NGPU_HOOK(92129788) {
 // 921296F0(dev, a, b) : attend le second mot du bloc de retour (+4), écrit par le GPU (fence secondaire) ;
 // condition de sortie ((b - mot) & 3) == 0.
 NGPU_HOOK(921296F0) {
+  if (ngpu::Observe()) return false;
   uint32_t dev = ctx.r3.u32;
   ngpu::NullGpuCompleteNow(base, dev);
   uint32_t idp = ngpu::Be32(base + dev + 10896);
@@ -37,6 +40,7 @@ NGPU_HOOK(921296F0) {
 }
 
 NGPU_HOOK(92128AF0) {
+  if (ngpu::Observe()) return false;
   if (std::getenv("DASH_NGPU_EVLOG")) std::fprintf(stderr, "[ev] clear flags=%X color=%08X rects=%u\n", ctx.r6.u32, ctx.r7.u32, ctx.r4.u32);
   ngpu::NullGpuAttach(ctx.r3.u32);
   uint32_t flags = ctx.r6.u32, color = ctx.r7.u32;
@@ -50,6 +54,7 @@ NGPU_HOOK(92128AF0) {
 }
 
 NGPU_HOOK(92121EE8) {
+  if (ngpu::Observe()) { ngpu::NextFrame(); return false; }
   if (std::getenv("DASH_NGPU_EVLOG")) std::fprintf(stderr, "[ev] swap\n");
   ngpu::NullGpuAttach(ctx.r3.u32);
   NGPU_ORIG(92121EE8);

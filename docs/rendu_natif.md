@@ -479,3 +479,41 @@ Le jalon « A1-A3 + noyau XUI » (≈ 20 j dans l'étude) est atteint en une ses
 (sommets en argument, pas de flux/indices à reconstruire), XenosRecomp fournit directement des SPIR-V utilisables, et le SDK sait fonctionner sans plugin.
 Reste pour 6770 : RT/Resolve 5 j, états (viewport/scissor/profondeur/échantillonneurs/mips) 4 j, autres chemins de dessin et formats 4 j, vidéo (A7) 5 j,
 mise au point contre l'oracle 6 j, soit **≈ 24 j** (contre 51 j au §8) ; 13604 (+10 j) et 17559 (+13 j) inchangés en ordre de grandeur. **Total ≈ 65 j-personne** (± 30 %).
+
+## 12. Jalon 2 (arrêté en cours de route, 2026-11-08) : parité de l'écran Games
+
+Le jalon 2 a été **interrompu volontairement** : l'utilisateur veut réutiliser à terme la couche D3D native de Skate1Native
+(`../Skate1Recompiled`, `docs/native_d3d.md`) comme rendu commun (voir **P8** dans `PLAN.md`). `native_gpu/` reste donc un prototype 6770 ;
+les enseignements ci-dessous sont à reporter dans la couche commune.
+
+### 12.1 Corrigé (commit de cette session)
+- **Cause principale des « couches dupliquées/mal placées » : adresse des textures.** La fetch constant contient une page *virtuelle* avec bits de région
+  (A/C/E). Pour la région E (`>= 0xE0000000`, pages de 4 Ko) le SDK décale la mémoire de **+0x1000** ; il faut lire `physical_membase + (base & 0x1FFFFFFF) + 0x1000`
+  (`PhysAddr()` dans `guest_tex.h`). Avant : on lisait la page voisine, donc les dégradés 128x1 d'un autre dessin. Après correction l'écran Games est
+  presque reconnaissable à l'identique (`runs/preuves/natif2_natif.png` contre `natif2_emulation.png`, non versionnées).
+- **`DrawIndexedVerticesUP`** (`925CD0E0(dev, prim, minVertex, nbSommets, nbIndices, pIndices, format, pSommets, stride@r1+84)`) implémenté : c'est lui qui dessine
+  les lames/onglets (maillages) ; absent avant, d'où des lames manquantes. Le chemin `DrawVerticesUP` ne portait que les remplissages en dégradé.
+- Cache de textures : plus de raccourci « une vérification par image » (le contenu change au sein d'une image).
+- Registres d'état lus dans le cache du périphérique (vérifié) : `0x2100+i` à `dev+10444+4i` (masque `0x2104`, alpha ref `0x210E`, viewport `0x210F-0x2114`),
+  `0x2200+i` à `dev+10548+4i` (profondeur `0x2200`, blend `0x2201`, couleur `0x2202`, `0x2205` cull, `0x2206` VTE, `0x2208` mode), surface `dev+10368`, scissor de fenêtre `dev+10436/10440`.
+  Sur l'écran Games, toutes les valeurs sont constantes (plein écran 1280x720, profondeur désactivée, pas de cible hors écran) : **viewport/scissor, profondeur et
+  `Resolve` ne sont pas la cause des artefacts** ; l'hypothèse de l'étape 11.4 (1-2) est donc réfutée pour cet écran.
+- Alpha test : tous les PS XenosRecomp portent la constante de spécialisation `1<<1` (`clip(a - g_AlphaThreshold)`, seuil à `SharedConstants+272`) ; non branchée (RB_COLORCONTROL = `0x87000007`, test désactivé sur Games).
+
+### 12.2 Outils ajoutés
+- `tools/framecmp.py` : PSNR, écart moyen, grille de zones, planche contact, conversion PPM/XWD/PNG (bibliothèque standard seule). `--noise` pour le plancher de bruit de l'oracle.
+- **Mode observation** `DASH_NGPU_OBSERVE=N` (+ `--gpu_plugin=xenos`) : l'oracle dessine, mais les dessins UP/indexés au-delà du N-ième de chaque image sont supprimés ;
+  `DASH_NGPU_UPMAX=N` fait de même en natif. Comparer les deux pour N croissant localise le premier dessin divergent (c'est ainsi qu'a été trouvé le décalage +0x1000).
+- `DASH_NGPU_DUMP=<image>:<fichier.ppm>`, `DASH_NGPU_PIXLOG=<image>:x,y`, `DASH_NGPU_DRAWINFO=<image>`, `DASH_NGPU_DRAWRANGE=a:b`, `DASH_NGPU_TEXPIX`, `DASH_NGPU_REGDUMP`.
+- `native_gpu/tools/run_headless_native.sh` accepte `DASH_BIN` ; build natif dans `dashboards/2.0.6770.0/out/build/native` (copier `librexgpu-xenos.so` pour l'oracle).
+- Option `DASH_NATIVE_GPU` ajoutée au gabarit `tools/templates/dashboard/CMakeLists.txt` (OFF).
+
+### 12.3 Parité mesurée
+Le fond est animé : une comparaison pixel à pixel entre deux instants est dominée par la phase de l'animation. Mesure brute natif/oracle sur Games
+(instants différents) : voir sortie de `framecmp.py` ci-dessus dans le rapport ; avant correction PSNR ≈ 8 dB (couches fausses), après elle est nettement meilleure
+mais **non comparable au plancher de bruit de l'oracle** (non mesuré proprement : il faudrait figer l'horloge invitée). Parité visuelle : fond, panneau, icônes, logo, texte corrects.
+FPS non remesuré (≈ 22 images/s sous lavapipe avec la machine chargée ; 50 au jalon 1).
+
+### 12.4 Reste (non fait)
+Artefacts résiduels : fines lignes verticales pleine hauteur (x≈235 et 1040), arcs fantômes près des lames, texte légèrement rogné ; cause non identifiée (candidats : rect lists, `DrawVertices`/`SetStreamSource`, échantillonnage mip/bord).
+Non fait : cibles hors écran/`Resolve` (non utilisés sur Games), couche ImGui Vulkan, navigation Achievements/Played Games/dialogues en natif, formats rares, comparaison figée.

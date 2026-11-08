@@ -152,13 +152,14 @@ l'utilisateur au premier lancement.
   embarquer libX11/xcb/wayland si une distribution cible ne les fournit pas, dialogue graphique de sélection de
   fichier (paquet STFS : zenity ne sélectionne ici que des dossiers), relance après un jeu sous AppImage (non testée).
 
-### P7 — Rendu natif D3D (EN COURS : jalon 1 FAIT sur 6770)
+### P7 — Rendu natif D3D (jalon 2 partiel, arrêté 2026-11-08 ; converge vers la couche commune de P8)
 - `native_gpu/` (bibliothèque OBJECT, liée seulement avec `-DDASH_NATIVE_GPU=ON`) : enveloppeurs de fonctions D3D invitées (symbole fort sur l'alias faible
   `sub_XXXXXXXX`), GPU nul + vblank, Vulkan direct (SDL, sans plugin), shaders SPIR-V de XenosRecomp, textures détuilées. Détail, cartographie confirmée et écarts :
   [docs/rendu_natif.md](docs/rendu_natif.md) §11.
 - **Fait (6770)** : runtime sans plugin GPU, `Clear`/`Swap` natifs, dessins `DrawVerticesUP`/`BeginVertices`+`EndVertices`, constantes, textures 2D, blend ; écran Games
   reconnaissable (rendu encore partiel : cibles hors écran, scissor, profondeur, échantillonneurs).
-- **Suite** : cibles de rendu/`Resolve` (artefacts principaux), états, chemins de dessin restants, vidéo (A7), parité contre l'oracle `xenos`, retrait de l'émulation ;
+- **Jalon 2 (partiel)** : bug des textures E (+0x1000) corrigé, `DrawIndexedVerticesUP`, outil `tools/framecmp.py`, mode observation ; Games presque identique. Détail : docs/rendu_natif.md §12. Poursuite via **P8** (couche D3D de Skate1Native).
+- **Suite (ancien plan)** : cibles de rendu/`Resolve`, états, chemins de dessin restants, vidéo (A7), parité contre l'oracle `xenos`, retrait de l'émulation ;
   puis dérivation par motif de code pour 13604/17559 (+XAM). Estimation restante ≈ 24 j pour 6770, ≈ 65 j au total.
 
 ### P8 — Fusion des ports de jeux, recompilation à la demande (PROPOSÉ 2026-11-08)

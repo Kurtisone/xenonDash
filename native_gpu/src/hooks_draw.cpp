@@ -11,6 +11,7 @@
 #include <sys/uio.h>
 #include <unistd.h>
 
+#include <algorithm>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -169,16 +170,37 @@ HostTexture* GetTexture(uint32_t texptr, SamplerDesc& sd) {
   TexEntry& te = g.textures[texptr];
   uint64_t frame = ngpu::FrameCounter();
   bool same = te.tex && !std::memcmp(&te.fc, &fc, sizeof fc);
-  if (same && te.checked_frame == frame) return te.tex;
+  if (same && te.checked_frame == frame && std::getenv("DASH_NGPU_FRAMECACHE")) return te.tex;
   size_t sz = TextureDataSize(ti);
   // Les données peuvent résider dans l'une des trois vues de la mémoire physique (0xA/0xC/0xE...) ; lecture protégée
   // (process_vm_readv rend EFAULT au lieu de planter si la plage n'est pas mappée).
   std::vector<uint8_t> raw(sz + 8);
+  // La mémoire physique (GPU) est lue comme le fait le plugin : physical_membase + (adresse & 0x1FFFFFFF). Les vues invitées
+  // 0xA/0xC/0xE... diffèrent (décalages de pages du SDK) et ne donnent pas toujours le même contenu.
   bool got = false;
-  for (uint32_t viewbase : {0xA0000000u, 0xC0000000u, 0xE0000000u}) {
-    uint32_t addr = viewbase | (ti.base & 0x1FFFFFFF);
-    struct iovec lo{raw.data(), sz}, re{gb + addr, sz};
-    if (process_vm_readv(getpid(), &lo, 1, &re, 1, 0) == (ssize_t)sz) { got = true; break; }
+  {
+    const uint8_t* src = rex::system::kernel_memory()->TranslatePhysical(PhysAddr(ti.base));
+    struct iovec lo{raw.data(), sz}, re{const_cast<uint8_t*>(src), sz};
+    if (process_vm_readv(getpid(), &lo, 1, &re, 1, 0) == (ssize_t)sz) got = true;
+  }
+  if (std::getenv("DASH_NGPU_VIEWS") && ti.width * ti.height <= 256) {
+    for (uint32_t viewbase : {0xA0000000u, 0xC0000000u, 0xE0000000u}) {
+      uint32_t addr = viewbase | (ti.base & 0x1FFFFFFF);
+      std::vector<uint8_t> tmp(sz + 8); struct iovec lo{tmp.data(), sz}, re{gb + addr, sz};
+      ssize_t r = process_vm_readv(getpid(), &lo, 1, &re, 1, 0);
+      std::fprintf(stderr, "[view %08X tex %08X base %08X r=%zd]", viewbase, texptr, addr, r);
+      for (int i = 0; i < 32 && r > 0; i++) std::fprintf(stderr, " %02X", tmp[i]);
+      std::fputc('\n', stderr);
+    }
+  }
+  if (std::getenv("DASH_NGPU_VIEWS2") && ti.width * ti.height <= 256) {
+    auto rd = [&](uint32_t a, std::vector<uint8_t>& o) { o.assign(sz + 8, 0); struct iovec lo{o.data(), sz}, re{gb + a, sz}; return process_vm_readv(getpid(), &lo, 1, &re, 1, 0) == (ssize_t)sz; };
+    std::vector<uint8_t> e, a;
+    if (rd(0xE0000000u | (ti.base & 0x1FFFFFFF), e)) {
+      for (int d = -4; d <= 4; d++) for (uint32_t vb : {0xA0000000u, 0xC0000000u, 0xE0000000u}) {
+        if (rd(vb + (ti.base & 0x1FFFFFFF) + d * 0x1000, a) && !std::memcmp(a.data(), e.data(), sz) && !(vb == 0xE0000000u && d == 0)) std::fprintf(stderr, "[alias] E(%08X) == view %08X delta %d\n", ti.base, vb, d);
+      }
+    }
   }
   if (!got) { NGPU_LOG("texture %08X : données illisibles (base %08X)", texptr, ti.base); return nullptr; }
   uint64_t h = 1469598103934665603ull;
@@ -187,6 +209,11 @@ HostTexture* GetTexture(uint32_t texptr, SamplerDesc& sd) {
   if (same && te.hash == h) { te.checked_frame = frame; return te.tex; }
   std::vector<uint8_t> rgba;
   if (!DecodeTexture(raw.data(), fc, ti, rgba)) return nullptr;
+  if (std::getenv("DASH_NGPU_TEXPIX") && ti.width * ti.height <= 256) {
+    std::fprintf(stderr, "[texpix %08X base %08X fmt %u e%u %ux%u raw %02X%02X%02X%02X]", texptr, ti.base, ti.format, ti.endian, ti.width, ti.height, raw[0], raw[1], raw[2], raw[3]);
+    for (uint32_t i = 0; i < ti.width * ti.height; i += std::max(1u, ti.width * ti.height / 8)) std::fprintf(stderr, " %02X%02X%02X%02X", rgba[i * 4], rgba[i * 4 + 1], rgba[i * 4 + 2], rgba[i * 4 + 3]);
+    std::fputc('\n', stderr);
+  }
   HostTexture* nt = VkCreateTexture(ti.width, ti.height, rgba.data());
   if (!nt) return nullptr;
   if (te.tex) VkDestroyTexture(te.tex);
@@ -253,10 +280,34 @@ NGPU_HOOK(9212E3C0) {
 // ----------------------------------------------------------------------------------------------------------
 // Dessin
 // ----------------------------------------------------------------------------------------------------------
-static bool DoDraw(uint8_t* base, uint32_t dev, uint32_t prim, uint32_t count, uint32_t data, uint32_t stride, uint32_t lr);
+static bool DoDraw(uint8_t* base, uint32_t dev, uint32_t prim, uint32_t count, uint32_t data, uint32_t stride, uint32_t lr, const std::vector<uint32_t>* indices = nullptr);
 
+static bool ObserveSkip() {  // mode observation : vrai si ce dessin UP/indexé dépasse le N-ième de l'image
+  static uint64_t fr = ~0ull, k = 0;
+  if (fr != ngpu::FrameCounter()) { fr = ngpu::FrameCounter(); k = 0; }
+  return ++k > (uint64_t)std::atoll(std::getenv("DASH_NGPU_OBSERVE"));
+}
+static bool g_is_up = false;  // true pendant un DrawVerticesUP (diagnostic : DASH_NGPU_UPMAX)
 NGPU_HOOK(925CCB68) {
+  g_is_up = true;
+  struct Reset { ~Reset() { g_is_up = false; } } reset;
   return DoDraw(base, ctx.r3.u32, ctx.r4.u32, ctx.r5.u32, ctx.r6.u32, ctx.r7.u32, (uint32_t)ctx.lr);
+}
+
+// 925CD0E0 = D3DDevice_DrawIndexedVerticesUP(dev, prim, minVertex, nbVertices, nbIndices, pIndices, format (4 = 32 bits, sinon 16),
+//                                            pSommets, stride [pile : r1+84]) ; (l'intérieur 925CCBB0 recopie les données dans l'anneau)
+NGPU_HOOK(925CD0E0) {
+  uint32_t prim = ctx.r4.u32, nverts = ctx.r6.u32, nidx = ctx.r7.u32, pidx = ctx.r8.u32, fmt = ctx.r9.u32, pv = ctx.r10.u32;
+  uint32_t stride = Be32(base + ctx.r1.u32 + 84);
+  if (ngpu::Observe()) {  // l'oracle dessine ; on ne supprime que les dessins UP/indexés au-delà du N-ième de l'image
+    return ObserveSkip();
+  }
+  std::vector<uint32_t> idx(nidx);
+  for (uint32_t i = 0; i < nidx; i++) idx[i] = (fmt & 4) ? Be32(base + pidx + 4 * i) : Be16(base + pidx + 2 * i);
+  if (std::getenv("DASH_NGPU_LOGIDX")) std::fprintf(stderr, "[idxdraw] prim=%u nv=%u ni=%u fmt=%u stride=%u pv=%08X\n", prim, nverts, nidx, fmt, stride, pv);
+  g_is_up = true;
+  struct Reset { ~Reset() { g_is_up = false; } } reset;
+  return DoDraw(base, ctx.r3.u32, prim, nidx, pv, stride, (uint32_t)ctx.lr, &idx);
 }
 
 // 925CC6B8 = D3DDevice_BeginVertices(dev, primType, nbSommets, stride) -> pointeur d'écriture des sommets ;
@@ -276,9 +327,32 @@ NGPU_HOOK(925CCB58) {
   return false;
 }
 
-static bool DoDraw(uint8_t* base, uint32_t dev, uint32_t prim, uint32_t count, uint32_t data, uint32_t stride, uint32_t lr) {
+static bool DoDraw(uint8_t* base, uint32_t dev, uint32_t prim, uint32_t count, uint32_t data, uint32_t stride, uint32_t lr, const std::vector<uint32_t>* indices) {
   g.draws++;
   if (std::getenv("DASH_NGPU_NODRAW")) return true;
+  if (ngpu::Observe()) {  // l'oracle dessine ; on ne supprime que les dessins au-delà du N-ième de l'image
+    if (!g_is_up) return false;
+    return ObserveSkip();
+  }
+  {  // DASH_NGPU_DRAWRANGE="a:b" : ne dessine que les dessins a..b de chaque image (bissection des artefacts)
+    static uint64_t fr = ~0ull, k = 0;
+    if (fr != ngpu::FrameCounter()) { fr = ngpu::FrameCounter(); k = 0; }
+    k++;
+    static uint64_t upfr = ~0ull, upk = 0;
+    if (upfr != ngpu::FrameCounter()) { upfr = ngpu::FrameCounter(); upk = 0; }
+    if (g_is_up) { upk++; static const char* um = std::getenv("DASH_NGPU_UPMAX"); if (um && upk > (uint64_t)std::atoll(um)) return true; }
+    static const char* dr = std::getenv("DASH_NGPU_DRAWRANGE");
+    if (dr) { unsigned a = 0, b = ~0u; std::sscanf(dr, "%u:%u", &a, &b); if (k < a || k > b) return true; }
+    static const char* dl = std::getenv("DASH_NGPU_DRAWINFO");
+    if (dl && ngpu::FrameCounter() == (uint64_t)std::atoll(dl)) std::fprintf(stderr, "[di %llu] prim=%u n=%u vs=%08X ps=%08X tex0=%08X tex1=%08X\n", (unsigned long long)k, prim, count, g.obj2container[g.vs], g.obj2container[g.ps], g.tex[0], g.tex[1]);
+    if (dl && ngpu::FrameCounter() == (uint64_t)std::atoll(dl)) {
+      auto R = [&](uint32_t r) { return Be32(base + dev + (r >= 0x2200 ? 10548 + 4 * (r - 0x2200) : 10444 + 4 * (r - 0x2100))); };
+      std::fprintf(stderr, "     blend=%08X cc=%08X dc=%08X mode=%08X su=%08X vte=%08X mask=%X aref=%08X scis=%08X vp=%g,%g,%g,%g surf=%08X ci=%08X di=%08X wscis=%08X/%08X\n", R(0x2201), R(0x2202), R(0x2200), R(0x2208), R(0x2205), R(0x2206), R(0x2104), R(0x210E),
+                   Be32(base + dev + 10440), BeF32(base + dev + 10504), BeF32(base + dev + 10508), BeF32(base + dev + 10512), BeF32(base + dev + 10516), Be32(base + dev + 10368), Be32(base + dev + 10372), Be32(base + dev + 10376), Be32(base + dev + 10436), Be32(base + dev + 10440));
+      for (int t = 0; t < 2; t++) if (g.tex[t]) { std::fprintf(stderr, "     tex%d:", t); for (int i = 0; i < 6; i++) std::fprintf(stderr, " %08X", Be32(base + g.tex[t] + 28 + 4 * i)); std::fputc('\n', stderr); }
+      std::fprintf(stderr, "     psc0-3:"); for (int i = 0; i < 16; i++) std::fprintf(stderr, " %g", g.psc[i]); std::fputc('\n', stderr);
+    }
+  }
   if (std::getenv("DASH_NGPU_EVLOG") && g.draws < 120) std::fprintf(stderr, "[ev] draw %llu\n", (unsigned long long)g.draws);
   auto skip = [&](const char* why) { g.skipped++; NGPU_LOG("dessin %llu ignoré : %s", (unsigned long long)g.draws, why); return true; };
   auto vo = g.obj2container.find(g.vs), po = g.obj2container.find(g.ps);
@@ -314,6 +388,7 @@ static bool DoDraw(uint8_t* base, uint32_t dev, uint32_t prim, uint32_t count, u
   (void)ne;
   const uint32_t hs = (uint32_t)atts.size() * 16;
   auto fetch = [&](uint32_t vi, uint32_t* out) {
+    if (indices) vi = (*indices)[vi];
     for (size_t a = 0; a < atts.size(); a++) DecodeElem(base + data + vi * stride + atts[a].e.offset_bytes, atts[a].e, atts[a].u, out + a * 4);
   };
   std::vector<uint32_t> verts;
@@ -374,6 +449,21 @@ static bool DoDraw(uint8_t* base, uint32_t dev, uint32_t prim, uint32_t count, u
     for (int r = 0; r < 4; r++) std::fprintf(stderr, "   psc[%d]= %g %g %g %g\n", r, g.psc[r * 4], g.psc[r * 4 + 1], g.psc[r * 4 + 2], g.psc[r * 4 + 3]);
     for (uint32_t i = 0; i < d.vcount && i < 4; i++) { std::fprintf(stderr, "   v%u:", i); for (uint32_t k = 0; k < hs / 4; k++) { float f; std::memcpy(&f, &verts[i * (hs / 4) + k], 4); std::fprintf(stderr, " %g", f); } std::fputc('\n', stderr); }
   }
+  if (std::getenv("DASH_NGPU_REGDUMP") && g.draws == (uint64_t)std::atoi(std::getenv("DASH_NGPU_REGDUMP"))) {
+    for (uint32_t o = 10300; o < 10800; o += 16) {
+      std::fprintf(stderr, "[reg +%u]", o);
+      for (int k = 0; k < 4; k++) std::fprintf(stderr, " %08X", Be32(base + dev + o + 4 * k));
+      std::fputc('\n', stderr);
+    }
+  }
   VkDraw(d);
+  if (const char* pl = std::getenv("DASH_NGPU_PIXLOG")) {  // "image:x,y" : valeur du pixel après chaque dessin de l'image
+    unsigned fr = 0; int px = 0, py = 0; std::sscanf(pl, "%u:%d,%d", &fr, &px, &py);
+    if (ngpu::FrameCounter() == fr) {
+      static uint32_t last = 0; uint32_t v = VkReadPixel(px, py);
+      if (v != last) std::fprintf(stderr, "[pix] dessin vs=%08X ps=%08X tex0=%08X : pixel %08X -> %08X\n", vo->second, po->second, g.tex[0], last, v);
+      last = v;
+    }
+  }
   return true;  // la commande PM4 d'origine n'est plus émise
 }

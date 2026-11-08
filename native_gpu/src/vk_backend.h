@@ -54,5 +54,6 @@ struct DrawDesc {
   float half_pixel[2] = {0, 0};
 };
 bool VkDraw(const DrawDesc& d);
+uint32_t VkReadPixel(int x, int y);  // diagnostic
 
 }  // namespace ngpu

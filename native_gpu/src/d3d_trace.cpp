@@ -63,6 +63,10 @@ bool Enabled() {
   static const bool v = std::getenv("DASH_NGPU_DISABLE") == nullptr;
   return v;
 }
+bool Observe() {
+  static const bool v = std::getenv("DASH_NGPU_OBSERVE") != nullptr;
+  return v;
+}
 bool Verbose() {
   static const bool v = std::getenv("DASH_NGPU_VERBOSE") != nullptr;
   return v;

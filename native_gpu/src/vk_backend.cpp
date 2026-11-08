@@ -451,7 +451,43 @@ VkPipeline GetPipeline(const DrawDesc& d) {
   return p;
 }
 
+// Copie le tampon d'image dans un fichier PPM (diagnostic, DASH_NGPU_DUMP).
+void DumpBackbuffer(const char* path) {
+  VkBuffer buf; VkDeviceMemory mem; uint8_t* ptr; const VkDeviceSize sz = (VkDeviceSize)kBackbufferWidth * kBackbufferHeight * 4;
+  if (!MakeBuffer(sz, VK_BUFFER_USAGE_TRANSFER_DST_BIT, &buf, &mem, &ptr, nullptr)) return;
+  if (!BeginCb()) return;
+  EndRendering();
+  Barrier(g.cb, g.bb, g.bblayout, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
+  g.bblayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
+  VkBufferImageCopy bc{}; bc.imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1}; bc.imageExtent = {kBackbufferWidth, kBackbufferHeight, 1};
+  vkCmdCopyImageToBuffer(g.cb, g.bb, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, buf, 1, &bc);
+  Submit();
+  if (FILE* f = std::fopen(path, "wb")) {
+    std::fprintf(f, "P6\n%u %u\n255\n", kBackbufferWidth, kBackbufferHeight);
+    for (VkDeviceSize i = 0; i < sz; i += 4) std::fwrite(ptr + i, 1, 3, f);
+    std::fclose(f);
+  }
+  vkUnmapMemory(g.dev, mem); vkDestroyBuffer(g.dev, buf, nullptr); vkFreeMemory(g.dev, mem, nullptr);
+}
+
 }  // namespace
+
+// Lit un pixel du tampon d'image (diagnostic : DASH_NGPU_PIXLOG).
+uint32_t VkReadPixel(int x, int y) {
+  std::lock_guard<std::mutex> l(g.mu);
+  VkBuffer buf; VkDeviceMemory mem; uint8_t* ptr;
+  if (!MakeBuffer(256, VK_BUFFER_USAGE_TRANSFER_DST_BIT, &buf, &mem, &ptr, nullptr)) return 0;
+  if (!BeginCb()) return 0;
+  EndRendering();
+  Barrier(g.cb, g.bb, g.bblayout, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
+  VkBufferImageCopy bc{}; bc.imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1}; bc.imageOffset = {x, y, 0}; bc.imageExtent = {1, 1, 1};
+  vkCmdCopyImageToBuffer(g.cb, g.bb, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, buf, 1, &bc);
+  g.bblayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
+  Submit();
+  uint32_t v; std::memcpy(&v, ptr, 4);
+  vkUnmapMemory(g.dev, mem); vkDestroyBuffer(g.dev, buf, nullptr); vkFreeMemory(g.dev, mem, nullptr);
+  return v;
+}
 
 bool VkInit() {
   std::lock_guard<std::mutex> l(g.mu);
@@ -481,6 +517,10 @@ uint64_t VkPresent() {
   EndRendering();
   Barrier(g.cb, g.bb, g.bblayout, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
   g.bblayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
+  if (const char* dm = std::getenv("DASH_NGPU_DUMP")) {  // "<image>:<fichier.ppm>" : copie du tampon d'image après N présentations
+    char* colon = nullptr; unsigned long want = std::strtoul(dm, &colon, 10);
+    if (colon && *colon == ':' && want == g.presented) { DumpBackbuffer(colon + 1); BeginCb(); }
+  }
   if (!EnsureSwapchain()) { Submit(); return g.presented; }
   uint32_t idx = 0;
   VkResult r = vkAcquireNextImageKHR(g.dev, g.sc, UINT64_MAX, g.sem_acq, VK_NULL_HANDLE, &idx);

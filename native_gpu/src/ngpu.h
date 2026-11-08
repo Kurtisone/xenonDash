@@ -19,6 +19,7 @@ inline float BeF32(const void* p) { uint32_t v = Be32(p); float f; std::memcpy(&
 
 // Ensemble de l'état du backend natif.
 bool Verbose();
+bool Observe();  // DASH_NGPU_OBSERVE=N : mode observation (oracle xenos actif) ; les dessins au-delà du N-ième de chaque image sont supprimés
 bool Enabled();  // false avec DASH_NGPU_DISABLE=1 (les crochets natifs sont ignorés ; sert aux mesures de référence)
 #define NGPU_LOG(...)                                   \
   do {                                                  \

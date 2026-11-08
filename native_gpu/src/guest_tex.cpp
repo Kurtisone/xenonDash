@@ -60,7 +60,7 @@ TexInfo DescribeTexture(const FetchConst& f) {
   t.pitch = ((f.d[0] >> 22) & 0x1FF) * 32;
   t.tiled = (f.d[0] >> 31) & 1;
   uint32_t phys = ((f.d[1] >> 12) & 0xFFFFF) << 12;
-  t.base = 0xA0000000u | (phys & 0x1FFFFFFF);
+  t.base = phys;  // adresse de page invitée avec bits de région (A/C/E) ; voir PhysAddr()
   bool blk;
   t.ok = BytesPerBlock(t.format, &blk) != 0 && t.width <= 4096 && t.height <= 4096;
   return t;
