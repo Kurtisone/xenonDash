@@ -161,6 +161,27 @@ l'utilisateur au premier lancement.
 - **Suite** : cibles de rendu/`Resolve` (artefacts principaux), états, chemins de dessin restants, vidéo (A7), parité contre l'oracle `xenos`, retrait de l'émulation ;
   puis dérivation par motif de code pour 13604/17559 (+XAM). Estimation restante ≈ 24 j pour 6770, ≈ 65 j au total.
 
+### P8 — Fusion des ports de jeux, recompilation à la demande (PROPOSÉ 2026-11-08)
+Idée de l'utilisateur : XenonDash voit le XEX d'un jeu (disque, My Games, Games Library) et, au premier lancement,
+le recompile en binaire natif, mis en cache, puis le lance ; les travaux des ports existants (Skate1Recompiled/Skate1Native,
+TrialsReVolution : Trials HD/Evolution/Fusion) sont fusionnés dans XenonDash.
+- **Recettes par jeu** (`games/<TitleID>/`) : manifeste et overrides de codegen, hooks/correctifs C++ du port, correctifs SDK
+  propres au jeu, vérification du XEX (hash/version/TU). Reprises de Skate1Recompiled et TrialsReVolution.
+- **Un seul SDK** : le fork `xenondash` absorbe les correctifs SDK des trois projets (ceux d'émulation GPU de Trials deviennent
+  inutiles si le rendu natif suffit).
+- **Un seul rendu natif** : la couche D3D native de Skate1Native (60 FPS sur Steam Deck, cache de shaders XenosRecomp,
+  rejeu de captures) devient la bibliothèque partagée par le Dashboard et les jeux ; `native_gpu/` (P7) converge vers elle ;
+  correspondance des fonctions D3D par motif de code pour chaque XEX.
+- **Recompilation à la demande** : XenonDash lance `codegen` + compilation (conteneur podman/docker comme Skate, ou
+  clang hôte), écran de progression, cache `~/.local/share/xenondash/games/<TitleID>/<hash>/`, puis le lanceur P5.
+  Jeu sans recette : tentative générique (boucle automatique de P2), sans repli sur l'émulation.
+- **Contraintes** : temps de compilation (dizaines de minutes), espace disque et mémoire (Skate : 40 Go, 16 Go de RAM),
+  chaîne de compilation chez l'utilisateur ; licences (Skate1Recompiled GPL-3.0 → XenonDash en GPL-3.0 ;
+  vérifier TrialsReVolution et ses tiers) ; aucun fichier de jeu ni binaire distribué.
+- Étapes : (1) inventaire des correctifs des trois projets et de leurs licences ; (2) SDK unifié ; (3) extraction du rendu
+  natif de Skate en bibliothèque, Dashboard 6770 dessus ; (4) format de recette + Skate porté en recette, compilé et lancé
+  depuis le Dashboard ; (5) Trials ; (6) recompilation générique.
+
 ## Risques connus
 - Rendu logiciel (lavapipe/Xvfb) qui se fige sur certaines transitions : tests sur vrai GPU requis.
 - Exceptions C++ du Dashboard fatales (`RtlUnwind` non implémenté dans le SDK) : à implémenter dans le
