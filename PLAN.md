@@ -179,6 +179,7 @@ TrialsReVolution : Trials HD/Evolution/Fusion) sont fusionnés dans XenonDash.
 - **Contraintes** : temps de compilation (dizaines de minutes), espace disque et mémoire (Skate : 40 Go, 16 Go de RAM),
   chaîne de compilation chez l'utilisateur ; licences (Skate1Recompiled GPL-3.0 → XenonDash en GPL-3.0 ;
   vérifier TrialsReVolution et ses tiers) ; aucun fichier de jeu ni binaire distribué.
+- Inventaire fait (étape 1) : [docs/fusion_ports.md](docs/fusion_ports.md) (SDK, licences, rendu natif de Skate, recette, plan chiffré ≈ 62-76 j).
 - Étapes : (1) inventaire des correctifs des trois projets et de leurs licences ; (2) SDK unifié ; (3) extraction du rendu
   natif de Skate en bibliothèque, Dashboard 6770 dessus ; (4) format de recette + Skate porté en recette, compilé et lancé
   depuis le Dashboard ; (5) Trials ; (6) recompilation générique.
