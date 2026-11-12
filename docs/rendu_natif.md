@@ -514,3 +514,10 @@ FPS non remesuré (≈ 22 images/s sous lavapipe avec la machine chargée ; 50 a
 ### 12.4 Reste (non fait)
 Artefacts résiduels : fines lignes verticales pleine hauteur (x≈235 et 1040), arcs fantômes près des lames, texte légèrement rogné ; cause non identifiée (candidats : rect lists, `DrawVertices`/`SetStreamSource`, échantillonnage mip/bord).
 Non fait : cibles hors écran/`Resolve` (non utilisés sur Games), couche ImGui Vulkan, navigation Achievements/Played Games/dialogues en natif, formats rares, comparaison figée.
+
+## 13. Suite : noyau de rendu commun (P8, 2026-11-12)
+
+Le prototype `native_gpu/` converge vers `ngpu_core/` (rendu de Skate1Native) : la façade 6770 (`front6770.cpp`) remplace `hooks_draw.cpp` + `vk_backend.cpp` (conservés avec `NGPU_CORE=OFF`).
+Les artefacts résiduels de §12.4 (lignes verticales x≈235/1040, arcs fantômes) avaient pour cause la lecture des fetch constants dans l'objet D3DTexture au lieu de l'**ombre du périphérique**
+(état d'échantillonnage fusionné par `SetTexture`) ; avec l'ombre, et une rampe d'affichage approchée, l'écran Games est à 3,4/255 et 32,8 dB de l'oracle (§12.3 : 14,4/255, 22,7 dB).
+Détail, API, limites : [ngpu_core.md](ngpu_core.md).

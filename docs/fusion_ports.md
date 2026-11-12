@@ -493,3 +493,10 @@ les 70 SPIR-V sont **octet pour octet identiques** à ceux de l'ancien XenosReco
 variables (§4.4). `patches/xenosrecomp-dash360.patch` est conservé comme historique, remplacé par la série.
 Reste : tester la série sur des shaders de Skate et de Trials (non disponibles ici) ; brancher `tools/xenos_batch.py` par défaut sur
 `work/XenosRecomp-unified`.
+
+## 9. Avancement : noyau de rendu commun (P8, étape 3, 2026-11-12)
+
+`ngpu_core/` extrait (copie brute `cd52a1b`, séparation `d83d903`), Dashboard 6770 branché (`03f0244` et suivants). Détail, API, mesures, reste pour Skate : [ngpu_core.md](ngpu_core.md).
+Correction de l'analyse du §3.5-3.6 : les deux « façades » (à ombre de périphérique pour Skate, à fonctions D3D pour le Dashboard) n'en font qu'une : le D3D 6770 (XDK 2.0.5526) a la **même ombre
+de périphérique** que Skate (fetch constants `+0x480`, constantes `+0x780`/`+0x1780`, registres `+10368…`) ; la façade du Dashboard est la façade à ombre plus un adaptateur pour les
+dessins `UP` (sommets en ligne, déclaration de sommets à la place des `vfetch` patchés). Ce que le noyau ne sait pas (rect list, fan) est développé par la façade.

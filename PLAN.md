@@ -184,9 +184,12 @@ TrialsReVolution : Trials HD/Evolution/Fusion) sont fusionnés dans XenonDash.
   conflit `mnk_input_driver` résolu en gardant les deux comportements, D3D12 écarté) ; Dashboards 6770, 6717, 13604, 17559 construits et testés
   (smoke) contre ce SDK ; sous-module et `sdk/` basculés sur `unified`. XenosRecomp : série `patches/xenosrecomp/` + `tools/build_xenosrecomp.sh`,
   70/70 shaders UI identiques. Détail et reste (isolation de l'émulation GPU, Skate/Fusion non rejoués) : [docs/fusion_ports.md](docs/fusion_ports.md) §8.
+- **Noyau de rendu commun FAIT (2026-11-12, étape 3)** : `ngpu_core/` (moteur de Skate1Native sur plume/Vulkan, `ShaderProvider`, `Profile`, `Core`), façade D3D 6770 (`native_gpu/src/front6770.cpp`, option `NGPU_CORE`, défaut ON avec `-DDASH_NATIVE_GPU=ON`) :
+  écran Games à **3,4/255, 32,8 dB** de l'oracle `xenos` (plancher de bruit 1,8/255, 36 dB ; ancien backend 14,3/255, 22,9 dB), artefacts (lignes x≈235/1040, arcs, calques) disparus : l'ombre du périphérique 6770 est celle de Skate.
+  Reste : ImGui en natif, MSAA, rampe d'affichage réelle, présentation sans copie CPU, façade Skate et profil de recette (étape 4), 13604/17559. Détail : [docs/ngpu_core.md](docs/ngpu_core.md).
 - Inventaire fait (étape 1) : [docs/fusion_ports.md](docs/fusion_ports.md) (SDK, licences, rendu natif de Skate, recette, plan chiffré ≈ 62-76 j).
 - Étapes : (1) inventaire des correctifs des trois projets et de leurs licences ; (2) SDK unifié ; (3) extraction du rendu
-  natif de Skate en bibliothèque, Dashboard 6770 dessus ; (4) format de recette + Skate porté en recette, compilé et lancé
+  natif de Skate en bibliothèque, Dashboard 6770 dessus (FAIT, voir ci-dessus) ; (4) format de recette + Skate porté en recette, compilé et lancé
   depuis le Dashboard ; (5) Trials ; (6) recompilation générique.
 
 ## Risques connus
