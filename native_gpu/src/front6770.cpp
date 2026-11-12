@@ -192,31 +192,25 @@ void BeginFrameIfNeeded() {
 }
 
 // ---- construction de l'ombre de peripherique canonique ----
+// Le D3D du 6770 (XDK 2.0.5526) a la MEME disposition d'ombre que celui de Skate (5632) pour ce qui sert au noyau : fetch constants a
+// +0x480 (fusionnees avec l'etat d'echantillonnage par SetTexture/SetSamplerState), constantes de sommets a +0x780 et de pixels a
+// +0x1780 (vu dans le code de SetTexture 92123F20 et Set*ShaderConstantF), registres a +10368... L'ombre est donc un simple
+// instantane du peripherique ; seules les adresses de textures de la region E sont corrigees (+0x1000, docs/rendu_natif.md §12.1).
 void BuildShadow(const uint8_t* base, uint32_t dev) {
-  std::memcpy(g.shadow + kRegsFirst, base + dev + kRegsFirst, kRegsEnd - kRegsFirst);
-  std::memcpy(g.shadow + xenos::device::kVertexConstants, g.vsc, sizeof(g.vsc));
-  std::memcpy(g.shadow + xenos::device::kPixelConstants, g.psc, sizeof(g.psc));
+  std::memcpy(g.shadow, base + dev, kShadowSize);
   static const bool point = std::getenv("DASH_NGPU_POINT") != nullptr;
   for (uint32_t slot = 0; slot < 16; ++slot) {
     uint8_t* fetch = g.shadow + xenos::device::kFetchConstants + 24 * slot;
-    if (!g.tex[slot]) {
-      std::memset(fetch, 0, 24);
-      continue;
-    }
-    std::memcpy(fetch, base + g.tex[slot] + 28, 24);
     uint32_t d[6];
     for (int i = 0; i < 6; ++i) d[i] = Be32(fetch + 4 * i);
-    // Region E (>= 0xE0000000, pages de 4 Ko) : le SDK decale la memoire de +0x1000 (docs/rendu_natif.md §12.1).
+    if ((d[0] & 3) != 2) continue;  // pas une texture
     const auto fix = [](uint32_t word) {
       const uint32_t addr = word & 0xFFFFF000;
       return addr >= 0xE0000000u ? (word & 0xFFF) | (addr + 0x1000) : word;
     };
     d[1] = fix(d[1]);
     if (d[5] & 0xFFFFF000) d[5] = fix(d[5]);
-    // Etat d'echantillonnage : le D3D du 6770 ne le met pas dans la fetch constant de l'objet (SetSamplerState ecrit
-    // ailleurs, non decode) ; filtre lineaire par defaut comme l'ancien backend (DASH_NGPU_POINT = point).
-    const uint32_t filter = point ? 0 : 1;
-    d[3] = (d[3] & ~((3u << 19) | (3u << 21) | (3u << 23))) | (filter << 19) | (filter << 21) | (2u << 23);
+    if (point) d[3] &= ~((3u << 19) | (3u << 21));
     for (int i = 0; i < 6; ++i) PutBe32(fetch + 4 * i, d[i]);
   }
 }
@@ -389,6 +383,17 @@ bool DoDraw(uint8_t* base, uint32_t dev, uint32_t prim, uint32_t count, uint32_t
     return true;
   };
   if (!EnsureCore()) return true;
+  {  // DASH_NGPU_DRAWRANGE="a:b" : ne dessine que les dessins a..b de chaque image (bissection des artefacts)
+    static uint64_t frame = ~0ull, k = 0;
+    if (frame != g.frames) { frame = g.frames; k = 0; }
+    ++k;
+    static const char* range = std::getenv("DASH_NGPU_DRAWRANGE");
+    if (range) {
+      unsigned a = 0, b = ~0u;
+      std::sscanf(range, "%u:%u", &a, &b);
+      if (k < a || k > b) return true;
+    }
+  }
   auto vo = g.objects.find(g.vs), po = g.objects.find(g.ps);
   if (vo == g.objects.end() || po == g.objects.end()) return skip("shader inconnu");
   auto dit = g.decls.find(g.decl);
@@ -401,6 +406,15 @@ bool DoDraw(uint8_t* base, uint32_t dev, uint32_t prim, uint32_t count, uint32_t
   const uint8_t* vertices = base + data;
   ng::DrawCall call;
   BuildShadow(base, dev);
+  if (const char* rv = std::getenv("DASH_NGPU_REGVARY"); rv && g.frames == uint64_t(std::atoll(rv))) {  // diagnostic : registres qui varient d'un dessin a l'autre
+    static uint8_t last[kShadowSize];
+    static bool have = false;
+    static std::map<uint32_t, int> changed;
+    if (have) for (uint32_t o = kRegsFirst; o < kRegsEnd; o += 4) if (std::memcmp(last + o, g.shadow + o, 4) && changed[o]++ == 0)
+      std::fprintf(stderr, "[regvary] dessin %llu : +%u (reg %#x) %08X -> %08X\n", (unsigned long long)g.draws, o, 0, Be32(last + o), Be32(g.shadow + o));
+    std::memcpy(last, g.shadow, kShadowSize);
+    have = true;
+  }
   call.state.data = g.shadow;
   call.vs_key = vs.key;
   call.ps_key = ps.key;
@@ -442,6 +456,19 @@ bool DoDraw(uint8_t* base, uint32_t dev, uint32_t prim, uint32_t count, uint32_t
     std::fprintf(stderr, "[di %llu] prim=%u n=%u stride=%u vs=%016llX ps=%016llX surf=%08X ci=%08X di=%08X blend=%08X cc=%08X dc=%08X mode=%08X vte=%08X mask=%X vp=%g,%g,%g,%g,%g,%g tex0=%08X\n",
                  (unsigned long long)g.draws, prim, count, stride, (unsigned long long)vs.key, (unsigned long long)ps.key, st.Reg(0x2000), st.Reg(0x2001), st.Reg(0x2002), st.Reg(0x2201),
                  st.Reg(0x2202), st.Reg(0x2200), st.Reg(0x2205), st.Reg(0x2206), st.Reg(0x2104), st.RegF(0x210F), st.RegF(0x2110), st.RegF(0x2111), st.RegF(0x2112), st.RegF(0x2113), st.RegF(0x2114), g.tex[0]);
+    if (g.tex[0]) {
+      const xenos::TextureFetch t = xenos::DecodeTextureFetch(st, 0);
+      std::fprintf(stderr, "     tex0: fmt %u endian %u %s %ux%u pitch %u dim %u swz %03X mips %u..%u mipaddr %08X addr %08X filt %u/%u/%u clamp %u,%u signed %d\n", t.format, t.endian, t.tiled ? "tiled" : "linear", t.width, t.height, t.pitch, t.dimension,
+                   t.swizzle, t.mip_min_level, t.mip_max_level, t.mip_address, t.address, t.mag_filter, t.min_filter, t.mip_filter, t.clamp[0], t.clamp[1], int(t.is_signed));
+    }
+    for (const DeclElem& e : dit->second.elems) {
+      if (e.usage != 0 || e.uidx != 0) continue;
+      std::fprintf(stderr, "     pos(fmt %u):", e.type & 0x3F);
+      for (uint32_t v = 0; v < count && v < 6; ++v) std::fprintf(stderr, " (%g,%g)", BeF32(vertices + (indices ? (*indices)[v] : v) * size_t(stride) + e.offset), BeF32(vertices + (indices ? (*indices)[v] : v) * size_t(stride) + e.offset + 4));
+      std::fprintf(stderr, "  c0..3:");
+      for (int k = 0; k < 8; ++k) std::fprintf(stderr, " %g", BeF32(g.vsc + 4 * k));
+      std::fputc('\n', stderr);
+    }
   }
   g.core->renderer().Draw(call);
   return true;
