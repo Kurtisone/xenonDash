@@ -1,4 +1,7 @@
-// skate1 - native D3D layer: renderer (see docs/native_d3d.md)
+// SPDX-License-Identifier: GPL-3.0-or-later
+// ngpu_core - noyau de rendu natif Vulkan commun (XenonDash, P8), voir docs/ngpu_core.md.
+// Reprise de Skate1Native (Kurtisone/Skate1Recompiled, GPL-3.0), src/native_gpu/renderer.h, commit 81805f51,
+// elle-meme derivee d'Unleashed Recompiled (hedge-dev, GPL-3.0). Texte d'origine : "skate1 - native D3D layer: renderer".
 //
 // Turns the game's D3D calls into plume work: draws (XenosRecomp shaders,
 // state from the D3D device shadow, vertex/index buffers and textures from
@@ -23,9 +26,10 @@
 
 #include <plume_render_interface.h>
 
+#include "profile.h"
+#include "shader_provider.h"
 #include "xenos_decode.h"
 
-struct ShaderCacheEntry;
 
 namespace native_gpu {
 
@@ -44,6 +48,9 @@ struct DrawCall {
   // Indexed draws: the guest index buffer (physical address, size in bytes).
   uint32_t indices_address = 0;
   uint32_t indices_size = 0;
+  // Indexed draws from user memory (DrawIndexedVerticesUP): the big-endian indices
+  // themselves (indices_size bytes), used instead of indices_address.
+  const uint8_t* inline_indices = nullptr;
   bool indices_32bit = false;
   // BeginVertices / EndVertices: the vertices written into the command buffer.
   const uint8_t* inline_vertices = nullptr;
@@ -93,9 +100,11 @@ class Renderer {
   // `physical` is the guest physical memory; `container` returns the shader
   // container (big-endian) for a cache key, for the vertex elements;
   // `watcher` may be null (guest memory never changes, as in a replay).
+  // `shaders` supplies the recompiled SPIR-V by microcode key (mandatory);
+  // `profile` carries what is specific to a game (interface shaders, scene sizes).
   bool Initialize(plume::RenderDevice* device, const uint8_t* physical,
-                  std::function<const uint8_t*(uint64_t key)> container,
-                  WriteWatcher* watcher = nullptr);
+                  std::function<const uint8_t*(uint64_t key)> container, ShaderProvider* shaders,
+                  WriteWatcher* watcher = nullptr, const Profile& profile = {});
 
   void BeginFrame();
   void Draw(const DrawCall& call);
@@ -158,7 +167,7 @@ class Renderer {
 
  private:
   struct Shader {
-    const ShaderCacheEntry* entry = nullptr;
+    bool valid = false;
     uint32_t microcode_offset = 0;
     struct Element {
       uint32_t address, usage, usage_index;
@@ -222,11 +231,12 @@ class Renderer {
 
   plume::RenderDevice* device_ = nullptr;
   WriteWatcher* watcher_ = nullptr;
+  ShaderProvider* shader_provider_ = nullptr;
+  Profile profile_;
   std::unordered_map<uint64_t, GuestBuffer> guest_buffers_;
   std::vector<std::unique_ptr<plume::RenderBuffer>> retired_buffers_;
   const uint8_t* physical_ = nullptr;
   std::function<const uint8_t*(uint64_t)> container_;
-  std::vector<uint8_t> spirv_;
 
   // Frames in flight: the game's render thread records frame N while the GPU
   // runs frame N-1. Each slot owns what its commands use.

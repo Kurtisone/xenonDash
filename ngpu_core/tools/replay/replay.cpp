@@ -1,4 +1,7 @@
-// skate1 - offline replay of a frame capture with the native renderer
+// SPDX-License-Identifier: GPL-3.0-or-later
+// ngpu_core - reprise de Skate1Native (Kurtisone/Skate1Recompiled, GPL-3.0), tools/native_replay/replay.cpp, commit 81805f51 ;
+// adaptee au noyau (profil et source de shaders de Skate : profiles/skate1). Les adresses D3D ci-dessous sont celles de
+// Skate (XDK 2.0.5632), a terme dans le profil de la recette. Texte d'origine : "skate1 - offline replay of a frame capture with the native renderer
 // (src/native_gpu/renderer.cpp, milestone B in docs/native_d3d.md).
 //
 //   native_replay <capture.sk1c> <shader cache inputs dir> <out.ppm> [first last]
@@ -27,7 +30,9 @@
 
 #include <plume_render_interface.h>
 
-#include "native_gpu/renderer.h"
+#include "renderer.h"
+#include "skate1/profile.h"
+#include "skate1/static_shader_provider.h"
 
 namespace plume {
 std::unique_ptr<RenderInterface> CreateVulkanInterface();
@@ -160,11 +165,16 @@ int main(int argc, char** argv) {
 
   auto interface = plume::CreateVulkanInterface();
   auto device = interface->createDevice();
+  native_gpu::StaticShaderProvider provider;
+  if (!provider.Initialize()) {
+    std::fprintf(stderr, "shader cache initialization failed\n");
+    return 1;
+  }
   native_gpu::Renderer renderer;
   if (!renderer.Initialize(device.get(), physical, [&](uint64_t key) -> const uint8_t* {
         auto it = containers.find(key);
         return it == containers.end() ? nullptr : it->second.data();
-      })) {
+      }, &provider, nullptr, native_gpu::Skate1Profile())) {
     std::fprintf(stderr, "renderer initialization failed\n");
     return 1;
   }

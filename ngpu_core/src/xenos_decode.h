@@ -1,3 +1,8 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+// ngpu_core - reprise de Skate1Native (Kurtisone/Skate1Recompiled, GPL-3.0), src/native_gpu/xenos_decode.h,
+// commit 81805f51, sans modification de code (en-tete seul). La disposition de l'ombre du peripherique decrite
+// plus bas est la disposition CANONIQUE du noyau : la facade d'une version de XDK qui n'a pas cette ombre la
+// synthetise (voir docs/ngpu_core.md). Texte d'origine ci-dessous.
 // skate1 - native D3D layer: decoding of the Xenos state the game's D3D keeps
 // in its device shadow (see docs/native_d3d.md). Header-only, shared by the
 // in-game renderer and tools/native_replay.

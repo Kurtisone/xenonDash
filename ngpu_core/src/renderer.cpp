@@ -1,4 +1,11 @@
-// skate1 - native D3D layer: renderer (see renderer.h)
+// SPDX-License-Identifier: GPL-3.0-or-later
+// ngpu_core - noyau de rendu natif Vulkan commun (XenonDash, P8).
+// Reprise de Skate1Native (Kurtisone/Skate1Recompiled, GPL-3.0), src/native_gpu/renderer.cpp, commit 81805f51 ;
+// ce moteur reprend lui-meme les structures du renderer d'Unleashed Recompiled (hedge-dev, GPL-3.0, tas bindless,
+// constantes partagees XenosRecomp). Texte d'origine : "skate1 - native D3D layer: renderer".
+// Modifications par rapport a Skate1Native (voir docs/ngpu_core.md) : cache de shaders via ShaderProvider au lieu
+// des tables compilees, listes de shaders d'interface et plage de pitch de la scene dans un Profile, taille du
+// tampon d'indices/sommets en ligne (UP) ; aucune dependance au jeu ni au SDK.
 
 #include "renderer.h"
 
@@ -14,14 +21,9 @@
 
 #define XXH_INLINE_ALL
 #include <xxhash.h>
-#include <smolv.h>
-#ifdef NATIVE_GPU_ZSTD
-#include <zstd.h>
-#endif
 
 #include <plume_vulkan.h>
 
-#include "shader_cache.h"
 #include "shaders/native_shaders.h"
 
 using namespace plume;
@@ -35,30 +37,6 @@ constexpr uint32_t kTextureHeapSize = 8192;
 constexpr uint32_t kSamplerHeapSize = 256;
 // Largest EDRAM surface height: 10 MB of EDRAM.
 constexpr uint32_t kMaxSurfaceHeight = 2048;
-
-// The game's interface: its shaders keep their 16:9 place on wider pictures.
-constexpr uint64_t kInterfaceVertexShaders[] = {
-    0x9984423845937B08ull,  // simpledraw_p_sc_uv,
-    0xD61C8067CBAB6D32ull,  // simpledraw_p_n_sc,
-    0xF4C9E67C53263D9Dull,  // simpledraw_p_sc_uv,
-    0xBC3E27BBE36EEF1Aull,  // simpledraw_p_c_uv,
-    0xD949C2119E3C383Dull,  // simpledraw_p_n_sc_uv,
-    0x3EAE4C5DE646DF7Full,  // simpledraw_p_n_c_uv,
-    0x0A718F34D79ED591ull,  // minimap,
-    0xFE833B61BCE7FABCull,  // simpledraw_p_n_sc_uv,
-    0x0190382CCA5FEA26ull,  // simpledraw_p_n_c,
-    0x3654AF42C7D5A775ull,  // font,
-    0xD5D9BB34F6616C4Eull,  // simpledraw_p_c,
-    0x69CDC5D8FD2961B4ull,  // simpledraw_p_n_c_uv,
-    0x2F42BE8AE7BE99EAull,  // simpledraw_p_sc,
-    0xDED9E9293C2BE681ull,  // simpledraw_p_c_uv,
-    0x1CDF21FD205A4EAAull,  // simpledraw_p_sc,
-    0x26D45C70F251147Dull,  // font,
-    0x63D4FB864AF8378Full,  // simpledraw_p_c,
-    0x336B6CF2172DD2FFull,  // simpledraw_p_n_c,
-    0x7F31D2881987B4F3ull,  // minimap,
-    0x0FFD46E9EB7E10B6ull,  // simpledraw_p_n_sc
-};
 
 // XenosRecomp's shared constants (SharedConstants in Unleashed's video.cpp).
 struct SharedConstants {
@@ -241,26 +219,15 @@ void CopySwapped32(uint8_t* dst, const uint8_t* src, size_t bytes) {
 }  // namespace
 
 bool Renderer::Initialize(RenderDevice* device, const uint8_t* physical,
-                          std::function<const uint8_t*(uint64_t key)> container, WriteWatcher* watcher) {
+                          std::function<const uint8_t*(uint64_t key)> container, ShaderProvider* shaders,
+                          WriteWatcher* watcher, const Profile& profile) {
   device_ = device;
   watcher_ = watcher;
   physical_ = physical;
   container_ = std::move(container);
-  // The game's cache is stored uncompressed (XENOS_RECOMP_NO_ZSTD, no zstd in
-  // the Steam Deck build); zstd only where the replay tool links it.
-  if (g_spirvCacheCompressedSize == g_spirvCacheDecompressedSize) {
-    spirv_.assign(g_compressedSpirvCache, g_compressedSpirvCache + g_spirvCacheCompressedSize);
-  } else {
-#ifdef NATIVE_GPU_ZSTD
-    spirv_.resize(g_spirvCacheDecompressedSize);
-    if (ZSTD_decompress(spirv_.data(), spirv_.size(), g_compressedSpirvCache,
-                        g_spirvCacheCompressedSize) != spirv_.size()) {
-      return false;
-    }
-#else
-    return false;
-#endif
-  }
+  shader_provider_ = shaders;
+  profile_ = profile;
+  if (!shader_provider_) return false;
   queue_ = device_->createCommandQueue(RenderCommandListType::DIRECT);
   for (Frame& frame : frames_) {
     frame.commands = queue_->createCommandList();
@@ -644,17 +611,11 @@ Renderer::Shader* Renderer::GetShader(uint64_t key) {
   auto [it, inserted] = shaders_.try_emplace(key);
   Shader& info = it->second;
   if (inserted) {
-    const ShaderCacheEntry* begin = g_shaderCacheEntries;
-    const ShaderCacheEntry* end = begin + g_shaderCacheEntryCount;
-    const ShaderCacheEntry* entry = std::lower_bound(
-        begin, end, key, [](const ShaderCacheEntry& lhs, uint64_t rhs) { return lhs.hash < rhs; });
-    if (entry == end || entry->hash != key) return nullptr;
-    info.entry = entry;
-    // The cache's SPIR-V is smol-v encoded.
-    const uint8_t* encoded = &spirv_[entry->spirvOffset];
-    std::vector<uint8_t> decoded(smolv::GetDecodedBufferSize(encoded, entry->spirvSize));
-    smolv::Decode(encoded, entry->spirvSize, decoded.data(), decoded.size());
-    info.shader = device_->createShader(decoded.data(), decoded.size(), "main", RenderShaderFormat::SPIRV);
+    // The provider hands over the recompiled shader's SPIR-V (uncompressed).
+    std::vector<uint8_t> spirv;
+    if (!shader_provider_->Find(key, spirv)) return nullptr;
+    info.valid = true;
+    info.shader = device_->createShader(spirv.data(), spirv.size(), "main", RenderShaderFormat::SPIRV);
     if (const uint8_t* data = container_ ? container_(key) : nullptr) {
       const uint32_t shader = xenos::LoadBE32(data + 0x18);
       info.microcode_offset = xenos::LoadBE32(data + shader);
@@ -677,7 +638,7 @@ Renderer::Shader* Renderer::GetShader(uint64_t key) {
       }
     }
   }
-  return info.entry ? &info : nullptr;
+  return info.valid ? &info : nullptr;
 }
 
 uint32_t Renderer::ResolvedIndex(Texture& texture, uint32_t swizzle) {
@@ -993,8 +954,12 @@ static uint32_t ViewportBottom(const xenos::DeviceState& state) {
 }
 
 // The scene and what works at its size; the small passes stay as they are.
-float Renderer::SurfaceScale(uint32_t pitch) const { return pitch >= 1024 && pitch <= 1280 ? render_scale_ : 1.0f; }
-float Renderer::SurfaceWide(uint32_t pitch) const { return pitch >= 1024 && pitch <= 1280 ? render_wide_ : 1.0f; }
+float Renderer::SurfaceScale(uint32_t pitch) const {
+  return pitch >= profile_.scene_pitch_min && pitch <= profile_.scene_pitch_max ? render_scale_ : 1.0f;
+}
+float Renderer::SurfaceWide(uint32_t pitch) const {
+  return pitch >= profile_.scene_pitch_min && pitch <= profile_.scene_pitch_max ? render_wide_ : 1.0f;
+}
 
 Renderer::Texture& Renderer::GetColorSurface(const xenos::DeviceState& state) {
   const uint32_t surface = state.Reg(xenos::reg::RB_SURFACE_INFO);
@@ -1613,8 +1578,7 @@ void Renderer::Draw(const DrawCall& call) {
     return last.offset;
   };
   const bool worldDraw = color.scale_x > color.scale && desc.depthEnabled &&
-                         std::find(std::begin(kInterfaceVertexShaders), std::end(kInterfaceVertexShaders),
-                                   call.vs_key) == std::end(kInterfaceVertexShaders);
+                         !profile_.IsInterface(call.vs_key);
   const uint64_t vsConstants = uploadConstants(vs_constants_, state.data + xenos::device::kVertexConstants);
   const uint64_t psConstants = uploadConstants(ps_constants_, state.data + xenos::device::kPixelConstants);
   shared.booleans = (state.U32(xenos::device::kVertexBoolConstants) & 0xFF) |
@@ -1630,8 +1594,7 @@ void Renderer::Draw(const DrawCall& call) {
 
   // Viewport from the D3D viewport transform (the shaders invert Y).
   // The interface keeps its 16:9 shape, in the middle of a wider picture.
-  bool interfaceDraw = std::find(std::begin(kInterfaceVertexShaders), std::end(kInterfaceVertexShaders),
-                                 call.vs_key) != std::end(kInterfaceVertexShaders);
+  bool interfaceDraw = profile_.IsInterface(call.vs_key);
   // Except what covers the whole screen, like the dimming behind the pause menu.
   if (interfaceDraw && call.inline_vertices && !inputSlots.empty() && call.count <= 6) {
     const uint32_t stride = inputSlots[0].stride;
@@ -1662,7 +1625,7 @@ void Renderer::Draw(const DrawCall& call) {
     constexpr uint32_t kWorldFrame = 50;
     const bool world = world_draws_last_frame_ >= kWorldFrame && !interface_cover_;
     // The minimap's shader has no such position: it lives in the top right corner.
-    const bool minimap = call.vs_key == 0x0A718F34D79ED591ull || call.vs_key == 0x7F31D2881987B4F3ull;
+    const bool minimap = profile_.IsCornerWidget(call.vs_key);
     xOffset = !world ? spare * 0.5f : minimap || screenX > 880.0f ? spare : screenX < 400.0f ? 0.0f : spare * 0.5f;
   }
   world_draws_ += worldDraw;
@@ -1714,10 +1677,19 @@ void Renderer::Draw(const DrawCall& call) {
   commands_->setVertexBuffers(0, vertexViews.data(), uint32_t(vertexViews.size()), inputSlots.data());
   if (call.indices_size) {
     const auto fill = [&](uint8_t* data) { xenos::SwapEndian(data, call.indices_size, call.indices_32bit ? 2 : 1); };
-    const RenderBuffer* buffer =
-        GetGuestBuffer(call.indices_address, call.indices_size, call.indices_32bit ? 2 : 1, std::ref(fill));
-    RenderIndexBufferView view{buffer, call.indices_size,
-                               call.indices_32bit ? RenderFormat::R32_UINT : RenderFormat::R16_UINT};
+    const RenderFormat indexFormat = call.indices_32bit ? RenderFormat::R32_UINT : RenderFormat::R16_UINT;
+    RenderIndexBufferView view;
+    if (call.inline_indices) {
+      // User memory indices: converted at every draw into the frame's upload buffer.
+      convert_buffer_.assign(call.inline_indices, call.inline_indices + call.indices_size);
+      fill(convert_buffer_.data());
+      const uint64_t at = Allocate(convert_buffer_.data(), call.indices_size, 16);
+      view = RenderIndexBufferView{upload_->at(at), call.indices_size, indexFormat};
+    } else {
+      const RenderBuffer* buffer =
+          GetGuestBuffer(call.indices_address, call.indices_size, call.indices_32bit ? 2 : 1, std::ref(fill));
+      view = RenderIndexBufferView{buffer, call.indices_size, indexFormat};
+    }
     commands_->setIndexBuffer(&view);
     commands_->drawIndexedInstanced(call.count, 1, call.start, int32_t(call.base_vertex), 0);
   } else if (quads) {
