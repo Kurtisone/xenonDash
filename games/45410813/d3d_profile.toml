@@ -1,0 +1,70 @@
+# Profil de rendu natif de Skate (XDK 2.0.5632) : ce que la facade (native/) et ngpu_core doivent savoir du jeu.
+# Adresses de la XDK D3D liee statiquement dans default.xex (docs de Skate1Native : docs/d3d_functions.md), cles de microcode
+# (XXH3-64) des vertex shaders d'interface. Aucun contenu du jeu : des adresses et des nombres.
+# tools/recipe_build.py en tire d3d_profile.generated.h et d3d_hooks.generated.inc (compiles avec le jeu).
+
+[device]
+address = "0x40002200"   # D3DDevice invite (toujours r3 des methodes du peripherique)
+state_size = 0x3400      # taille de l'ombre copiee a chaque appel (fetch constants, constantes, registres)
+
+[functions]
+BeginVertices = "0x82CB29D8"        # (device, prim, count, stride) -> pointeur de sommets
+DrawIndexedVertices = "0x82CB38E8"  # (device, prim, base vertex, start index, count)
+DrawVertices = "0x82CB3500"         # (device, prim, start vertex, count)
+EndVertices = "0x82CB2E78"
+ClearF = "0x82CC7510"               # (device, flags, rect, color)
+BeginTiling = "0x82CC4FF0"
+Resolve = "0x82CC7FF0"
+Swap = "0x82CCBE98"
+CreateVertexShader = "0x82CC1038"   # (objet, taille, &info) : info[0] = conteneur de shader
+CreatePixelShader = "0x82CC0EB0"
+SetPixelShader = "0x82CBDFE8"
+SetVertexShader = "0x82CBE2E8"
+
+[constants]
+aspect_float = "0x82191174"         # 16/9 en flottant (elargissement de l'image)
+aspect_double = "0x82191258"        # 16/9 en double : la projection de la camera
+
+# Crochets generes : l'appel d'origine s'execute, puis la facade recoit (arguments d'avant l'appel, r3 apres).
+[[hook]]
+address = "0x82CB29D8"
+[[hook]]
+address = "0x82CB38E8"
+[[hook]]
+address = "0x82CB3500"
+[[hook]]
+address = "0x82CB2E78"
+[[hook]]
+address = "0x82CC7510"
+[[hook]]
+address = "0x82CC4FF0"
+[[hook]]
+address = "0x82CC7FF0"
+
+# GPU nul : sans emulation, personne ne lit le tampon de commandes ni n'ecrit les compteurs que la XDK D3D scrute. On publie
+# « tout est consomme » et on declenche nous-memes l'interruption de retour de balayage (vblank). Adresses retrouvees par
+# comparaison de motifs avec le D3D du Dashboard 6770 (docs/recettes.md) : memes fonctions, memes decalages (+10896/+10908).
+[null_gpu]
+fence_ptr = 10896          # +decalage du pointeur vers le bloc de retour du GPU (identifiant ecrit en retour)
+fence_value = 10908        # +decalage de la derniere position emise
+drain_ptr_word = 60        # mot +60 du bloc de retour : pointeur de lecture du GPU
+second_word = 4            # mot +4 du bloc de retour : fence secondaire
+vblank_handler = "0x82CCB758"   # gestionnaire de l'interruption graphique (dev)
+wait_fence = "0x82CB11C0"       # attente de fence (dev, fence, ...)
+wait_drain = "0x82CB0060"       # attente de drainage de l'anneau (dev, pos, taille)
+wait_second = "0x82CAFF88"      # attente de la fence secondaire (dev, a, b)
+
+[profile]
+interface_vertex_shaders = [
+  "0x9984423845937B08", "0xD61C8067CBAB6D32", "0xF4C9E67C53263D9D", "0xBC3E27BBE36EEF1A", "0xD949C2119E3C383D",
+  "0x3EAE4C5DE646DF7F", "0x0A718F34D79ED591", "0xFE833B61BCE7FABC", "0x0190382CCA5FEA26", "0x3654AF42C7D5A775",
+  "0xD5D9BB34F6616C4E", "0x69CDC5D8FD2961B4", "0x2F42BE8AE7BE99EA", "0xDED9E9293C2BE681", "0x1CDF21FD205A4EAA",
+  "0x26D45C70F251147D", "0x63D4FB864AF8378F", "0x336B6CF2172DD2FF", "0x7F31D2881987B4F3", "0x0FFD46E9EB7E10B6",
+]
+corner_vertex_shaders = ["0x0A718F34D79ED591", "0x7F31D2881987B4F3"]   # minicarte
+scene_pitch_min = 1024
+scene_pitch_max = 1280
+
+# Reglages d'execution du rendu natif (ajoutes a runtime.toml) : aucun plugin GPU.
+[runtime]
+native_gpu = true

@@ -1,0 +1,52 @@
+# Recette de Skate (EA Black Box, 2007, TitleID 45410813) : voir docs/recettes.md.
+# Reprise de Skate1Native (Kurtisone/Skate1Recompiled, GPL-3.0, commit 81805f51) : analyse (functions.toml), crochets (src/),
+# couche de rendu (native/, sur ngpu_core). Aucun octet du jeu : adresses, parametres et code de port seulement.
+schema = 1
+title_id = "45410813"
+name = "Skate"
+
+[sdk]
+series = "unified"          # branche `unified` du fork ReXGlue (docs/fusion_ports.md section 8)
+
+# Verrou : hachage SHA-256 de l'image PE decodee (dechiffree, decompressee) du default.xex, verifie contre le XEX de l'utilisateur.
+# Hors de ces hachages : pas de recompilation (mode generique : P8, etape 6).
+[[xex]]
+version = "0.0.0.3"
+media_id = "21D6D331"
+sha256_image = "5b7c7cf4a9c2dafe55b13aaa1d91b5930aafbb94b5effc852ed8ac3f84196fb9"
+
+[codegen]
+project = "skate1"                  # nom du projet ReXGlue : les crochets incluent generated/default/skate1_init.h
+out_directory = "generated/default"
+files = ["functions.toml"]          # bornes de fonctions et setjmp/longjmp (adresses seulement)
+
+[runtime]
+file = "runtime.toml"
+
+[extract]
+sources = ["folder", "iso"]         # dossier deja extrait, ou ISO (tools/extract_iso.py)
+needs = ["default.xex", "data"]
+
+[shaders]
+harvest = "harvest_shaders.py"      # conteneurs de shaders des archives .big du jeu (RefPack)
+archives = "data"
+image_shaders = "image_shaders.py"  # shaders compiles dans l'executable (image decodee)
+
+[render]
+mode = "native"                     # native : ngpu_core, aucun plugin GPU ; emulated : refuse (zero emulation)
+profile = "d3d_profile.toml"
+
+[build]
+min_ram_gb = 16
+min_disk_gb = 40
+arch_flags = "-march=x86-64-v2"
+estimate_minutes = { codegen = 10, shaders = 4, compile = 30 }
+
+[bootstrap]
+seconds = 40
+headless = true
+expect = ["ngpu_core on", "first native frame presented"]
+
+[features]
+fps_modes = [30, 40, 60]
+wide_aspect = true
