@@ -118,19 +118,21 @@ Diagnostics (tous par variables d'environnement) : `DASH_NGPU_DRAWINFO=<image>` 
 - Non thread-safe côté noyau : la façade sérialise par un mutex.
 - Le cache de pipelines (`LoadPipelineCache`) n'est pas branché côté Dashboard.
 
-## 6. Pour Skate en recette (étape suivante, fusion_ports.md §6 étape 7)
+## 6. Skate en recette (FAIT 2026-11-12, étape suivante de fusion_ports.md §6 étape 7)
 
-1. Façade Skate : `profiles/skate1/front/` (live_renderer, registre de shaders, capture, hooks 5632 : 7 appels D3D + Swap) à porter sur `Core`/`ShaderProvider` : remplace
-   `g_shaderCacheEntries` par `StaticShaderProvider` (cache produit par `build_shader_cache.sh`, à intégrer à la recette, clés = `XENOS_RECOMP_MICROCODE_KEY` de l'XenosRecomp unifié,
-   `tools/build_xenosrecomp.sh`, à valider sur les shaders de Skate : non disponibles ici) et `Skate1Profile()`.
-2. La présentation de Skate passe par le patch SDK de présentation native (`rex_gpu_set_native_guest_output_renderer`, branche `unified`) : l'image `presented()` y est déjà au bon format ;
-   la façade du Dashboard utilise `vk_backend` à la place (mode détaché) ; deux présentateurs à unifier dans le noyau.
-3. Profil de recette (`games/<TitleID>/d3d_profile.toml`) : adresses D3D (Begin/EndVertices, DrawIndexedVertices, DrawVertices, ClearF, BeginTiling, Resolve, Swap), adresse du périphérique
-   (`0x40002200`), constantes de projection de l'image élargie, listes `interface_vertex_shaders`/`corner_vertex_shaders` (clés de microcode), plage de pitch. Le même format décrira le Dashboard
-   (adresses `9212…/925C…` ci-dessus) : une seule façade à ombre, deux tables d'adresses, et la façade « par fonctions » n'est plus qu'un adaptateur pour les dessins `UP`.
-4. Hooks propres au jeu (pause, quit, caméra large, intro) : hors du noyau, dans la recette (`src/`).
-5. Rejeu : brancher `tools/replay` sur le cache de Skate et comparer à une capture `.sk1c` (non faisable ici).
-6. Dérivation des adresses par motif : les deux XDK vus (5526 Dashboard, 5632 Skate) partagent l'ombre ; les motifs porteront sur les points d'entrée seulement.
+Détail et mesures : [recettes.md](recettes.md). Ce qui était prévu ici et ce qui a été fait :
+
+1. Façade Skate : reprise de `profiles/skate1/front/` (live_renderer, registre de shaders) dans `games/45410813/native/front.cpp`, sur `Core` : `StaticShaderProvider` (cache produit par
+   XenosRecomp unifié, **identique octet pour octet** à celui de Skate1Native : 348 shaders, SHA-256 `06880cfb…`) copié dans le `MapShaderProvider` du noyau, profil tiré de `d3d_profile.toml`. FAIT.
+2. Présentation : au lieu du patch SDK de présentation native, **aucun plugin GPU** ; le fil de rendu présente l'image `presented()` par le présentateur Vulkan du Dashboard (`native_gpu/src/vk_backend.cpp`,
+   fenêtre SDL du SDK), avec un GPU nul propre à Skate (`native/null_gpu.cpp`, fonctions D3D retrouvées par motif depuis le Dashboard 6770). Le présentateur reste une copie CPU (un seul tampon 1280x720 : image élargie/échelle de rendu
+   recadrées) : à remplacer par la chaîne d'échange plume (§5). FAIT en l'état.
+3. Profil de recette `games/<TitleID>/d3d_profile.toml` : adresses D3D, `[null_gpu]`, constantes de l'image élargie, listes de shaders d'interface, plage de pitch ; le moteur en tire un en-tête et les crochets D3D. FAIT pour Skate
+   (le Dashboard 6770 garde sa façade `front6770.cpp` : même noyau, deux tables d'adresses restent à unifier).
+4. Hooks propres au jeu (pause, quit, caméra large, intro, cadence) : dans la recette (`src/`). FAIT.
+5. Rejeu `.sk1c` : non repris (la capture de Skate1Native n'est pas portée dans la façade de recette). Reste.
+6. Dérivation des adresses par motif : faite à la main pour le GPU nul (§4 de recettes.md) ; à automatiser pour un nouveau XEX (recompilation générique).
+7. Reste mesuré : gamma d'affichage de Skate (puissance 1,16 reprise du Dashboard, non mesurée contre une référence), MSAA, parité pixel contre l'émulation de Skate1Native (non comparée ici).
 
 ## 7. Reproduire
 

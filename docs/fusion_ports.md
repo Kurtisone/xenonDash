@@ -500,3 +500,9 @@ Reste : tester la série sur des shaders de Skate et de Trials (non disponibles 
 Correction de l'analyse du §3.5-3.6 : les deux « façades » (à ombre de périphérique pour Skate, à fonctions D3D pour le Dashboard) n'en font qu'une : le D3D 6770 (XDK 2.0.5526) a la **même ombre
 de périphérique** que Skate (fetch constants `+0x480`, constantes `+0x780`/`+0x1780`, registres `+10368…`) ; la façade du Dashboard est la façade à ombre plus un adaptateur pour les
 dessins `UP` (sommets en ligne, déclaration de sommets à la place des `vfetch` patchés). Ce que le noyau ne sait pas (rect list, fan) est développé par la façade.
+
+## 10. Avancement : moteur de recettes et Skate en recette (P8, étape 4, 2026-11-12)
+
+Fait : format de recette (`games/45410813/`), moteur `tools/recipe_build.py` (cache, codegen, XenosRecomp unifié, compilation, test d'amorçage), Skate rendu par `ngpu_core` sans plugin GPU, lancement et construction à la demande
+depuis le Dashboard 6770 (disque simulé). Construction à froid : **12 min** (codegen 2 min, shaders 3,3 min, compilation 6 min, amorçage 43 s), cache 600 Mo, pic mémoire ≈ 6 Go : bien en deçà du « 30 à 45 min, 40 Go, 16 Go » de §5.3.
+Cache de shaders identique à celui de Skate1Native. Détail, format réel (écarts par rapport au §5.1 : `[codegen]`, `[shaders]`, `[bootstrap]`, profil D3D généré, `native/`), mesures et reste : [recettes.md](recettes.md).

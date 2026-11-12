@@ -18,7 +18,7 @@ games/45410813/
   src/               hooks propres au jeu (pause, quit, intro, cadence, tuiles...), repris de Skate1Native, compilés avec le jeu
   native/            façade de rendu natif sur ngpu_core (front.cpp), GPU nul (null_gpu.cpp), xd_front.h
   tools/             outils propres au jeu : récolte des shaders dans les archives .big (RefPack), shaders de l'exécutable
-  patches/           correctifs SDK/XenosRecomp propres au jeu (aucun pour Skate : tout est dans la branche `unified`)
+  patches/ tests/    (prévus, absents pour Skate) correctifs SDK/XenosRecomp propres au jeu, attentes de vérification
 ```
 
 `recipe.toml` (schéma 1) :
@@ -98,6 +98,45 @@ Décalages `+10896` / `+10908` identiques ; plus loin dans le périphérique ils
 
 L'écran de progression est une fenêtre ImGui du Dashboard (versions rendues par le plugin `xenos`, ou à terme par `ngpu_core` quand ImGui y sera porté, voir ngpu_core.md §5) ; il ne s'agit pas d'une scène XUI d'origine.
 
-## 6. Mesures et reste
+## 6. Mesures (Skate, machine de développement : 12 cœurs, 30 Go de RAM, clang 23, Arch Linux)
 
-(voir §7 après la première construction complète)
+Construction complète à froid (`tools/recipe_build.py build`, cache vide, aucune autre charge ; XenosRecomp et le SDK déjà construits) :
+
+| Étape | Durée |
+|---|---|
+| identify + prepare + extract + scaffold | < 1 s |
+| codegen (`rexglue codegen`, 24 000 fonctions environ, 501 fichiers C++) | 124 s |
+| shaders (récolte des archives, shaders de l'exécutable, XenosRecomp : 348 shaders) | 197 s |
+| compilation (cmake + ninja, 271 unités, 12 tâches, `-march=x86-64-v2`, sans info de débogage) | 357 s |
+| test d'amorçage (Xvfb + lavapipe, 40 s) | 43 s |
+| **Total** | **720 s (12 min)** |
+
+(Skate1Native annonce 30 à 45 min en conteneur Ubuntu 22.04 avec 16 Go : le codegen de la branche `unified` est plus rapide et le C++ généré compile sans info de débogage.)
+Reconstruction après changement des hooks ou de la façade (codegen et shaders en cache, ninja incrémental) : 20 à 70 s. Cache déjà construit : < 1 s (hachage de l'image XEX, 0,2 s par `rexglue dump-xex`).
+
+- **Disque** : cache de Skate ≈ **600 Mo** (code généré 270 Mo, objets, 97 Mo de binaire + bibliothèque dans `bin/`) ; les 6,4 Go du jeu ne sont pas copiés. Le détail du build
+  est jetable : `recipe_build.py clean 45410813` libère tout.
+- **Mémoire** : pic d'environ **5,8 Go** au-dessus de la base (8,5 Go au total) pendant la compilation à 12 tâches ; le moteur choisit les tâches par `min(cœurs, RAM disponible / 2,2 Go)`.
+- **Exécution** (lavapipe, logiciel) : 40 à 50 images/s dans l'écran-titre, noyau seul 19 à 26 ms par image sur le fil de rendu.
+
+Preuves (non versionnées, `work/proof/`) : écran-titre natif (`skate_title_native.png`), lancement depuis le disque simulé du Dashboard 6770 (`p3_cache_game.png`, `p3_cache_retour.png`),
+fenêtre de progression (`p3_progression.png`), construction à froid depuis le Dashboard puis lancement automatique de l'intro de Skate (`p3_build_game_intro.png`) et retour (`p3_build_retour.png`).
+Hachages : image XEX décodée `5b7c7cf4a9c2dafe55b13aaa1d91b5930aafbb94b5effc852ed8ac3f84196fb9` (version 0.0.0.3, MediaID `21D6D331`) ; cache de shaders (`shader_cache.cpp`)
+`06880cfb8e8c044d1bab59f16db8544f35a0b1f786d0b7edcbab4e2f89e59553`, **identique à celui de Skate1Native** (XenosRecomp unifié validé sur les 348 shaders de Skate) ; clé de cache `d86199b86b4ee9d2`.
+
+## 7. Origines, licences, reste
+
+Code repris de Skate1Native (Kurtisone/Skate1Recompiled, GPL-3.0, commit `81805f51`, lu en lecture seule) : `games/45410813/src/*`, `functions.toml` (`config/skate1_functions.toml`), `runtime.toml`,
+`tools/{refpack,harvest_shaders,image_shaders}.py`, `tools/extract_iso.py`, et la façade `native/front.cpp` (de `live_renderer.cpp`, `shader_registry.cpp`, `native_gpu.cpp`). Skate1Native dérive lui-même d'Unleashed Recompiled (GPL-3.0),
+XenosRecomp (MIT) et plume (MIT) ; voir `ngpu_core/THIRD_PARTY.md`. Aucun fichier du jeu n'est versionné.
+
+Reste :
+- **Trials** (HD, Evolution, Fusion) : recettes à écrire sur le même format (étape 5) ; Fusion demande le module PM4 optionnel.
+- **Recompilation générique** (étape 6) : un XEX sans recette (ou dont le hachage diffère : mise à jour de titre, autre région) est refusé. Il faut la boucle automatique de P2, une recette minimale générée et la dérivation par motif des adresses D3D
+  (le GPU nul et la table des fonctions de `d3d_profile.toml` ont été trouvés à la main).
+- Conteneur (`--container`) non implémenté ; binaire compilé avec le clang de l'hôte, `-march=x86-64-v2`.
+- Source ISO : extraction par `tools/extract_iso.py` prévue par le moteur mais non testée ici (aucune ISO) ; STFS/GOD non gérés.
+- Écran de progression : fenêtre ImGui (rendu par le plugin `xenos` du Dashboard) ; tant que le rendu natif du Dashboard n'affiche pas ImGui, un Dashboard natif n'a que le journal et `notify-send`. Le Dashboard invité reste figé
+  en « lancement d'un titre » (écran noir) pendant la construction ; un échec le relance après 12 s.
+- Présentation de Skate : copie CPU de l'image vers le présentateur (1280x720 fixe), gamma d'affichage approximé (1,16, non mesuré sur Skate), MSAA, capture/rejeu `.sk1c` non repris, entrées clavier/manette telles que Skate1Native (non vérifiées ici au-delà de l'écran-titre et de l'intro).
+- Dashboards 13604 et 17559 : le chemin de lancement de recette est dans `common/`, donc partagé ; testé ici avec le 6770 (smoke 13604 : voir PLAN).
