@@ -55,6 +55,8 @@ python3 tools/xzp_alias.py work/shrdres_17559.xzp dashboards/2.0.6770.0/assets/f
 | `dashboards/2.0.6770.0/assets/dash.xex` | Exécutable d'entrée |
 | `dashboards/2.0.6770.0/assets/flash/` | Contenu de la flash console, monté comme `\SystemRoot` (`media:`) |
 | `games.example.toml` | Modèle du registre de jeux `games.toml` (voir « Lancer des jeux ») |
+| `games/<TitleID>/` | **Recettes de jeux** (P8) : verrou sur le XEX, analyse, hooks et profil de rendu natif ; `tools/recipe_build.py` les recompile à la demande (voir « Recettes de jeux ») |
+| `ngpu_core/`, `native_gpu/` | Noyau de rendu natif Vulkan commun et sa façade D3D du Dashboard 6770 ([docs/ngpu_core.md](docs/ngpu_core.md)) |
 | `sdk/` | SDK ReXGlue installé (compilé depuis `third_party/rexglue-sdk`, **patché**, voir plus bas) |
 | `tools/` | Outils d'analyse (Python/C++) |
 | `work/` | Sorties d'analyse (image PE décompressée, imports, candidates) |
@@ -371,7 +373,8 @@ les versions. Exemple de registre versionné : `games.example.toml`.
 du lanceur) : une table `[game.<TitleID hexa>]` par jeu avec `name` et soit `native = "commande shell"` (+ `cwd`,
 relatif au répertoire du Dashboard ou absolu), soit `xenia = "chemin absolu du XEX/ISO"` (lancé avec la commande
 Xenia : `--dash_xenia=...`, sinon variable `DASH_XENIA`, sinon `[xenia] command`, sinon `xenia_canary`).
-Autres clés : `type` (`arcade` par défaut, `demo`, `original`, `xna` ou un nombre), `keep_ld_library_path`, `disc = true`
+Au lieu de `native`/`xenia`, `recipe = "<dossier du jeu | default.xex | ISO>"` : le jeu est **recompilé en natif à la demande** par une
+recette (voir « Recettes de jeux » ci-dessous). Autres clés : `type` (`arcade` par défaut, `demo`, `original`, `xna` ou un nombre), `keep_ld_library_path`, `disc = true`
 (ce jeu est « inséré dans le lecteur » : bouton de disque du Dashboard ; `--dash_disc=<TitleID>` ou `disc = "<TitleID>"`
 à la racine équivalent), `icon = "fichier.png"` (PNG de 16 Ko au plus) ou `spa = "fichier.spa|.gpd"` (XDBF d'où tirer
 l'icône du jeu, sinon `<TitleID>.gpd` du profil) pour l'icône du disque et de « My Games », et à la racine
@@ -458,6 +461,29 @@ sur un affichage libre, lavapipe, tout est tué à la fin) :
 - **Skate** (port natif `../Skate1Recompiled/out/pc-profile/skate1`, TitleID 45410813) : lancé depuis le Dashboard,
   il tourne sous Xvfb + lavapipe (écran-titre « Appuie sur START pour continuer », ~26 FPS), puis, le jeu tué, le
   Dashboard revient. Captures : `dashboards/2.0.6770.0/runs/preuves/p5_*.png` (dossier ignoré par git).
+
+## Recettes de jeux et recompilation à la demande (P8)
+
+XenonDash voit le XEX d'un jeu et, au premier lancement, le recompile en binaire natif (mis en cache), puis le lance ; le rendu passe par `ngpu_core`
+(aucune émulation du GPU). Détail : [docs/recettes.md](docs/recettes.md). Seuls les jeux ayant une recette `games/<TitleID>/` (aujourd'hui **Skate**, `45410813`)
+sont lançables ; un XEX inconnu est refusé (pas de repli sur l'émulation).
+
+```sh
+# registre : dashboards/<version>/assets/games.toml
+#   [game.45410813]
+#   name = "Skate"
+#   recipe = "/chemin/vers/le/dossier/du/jeu"     # contient default.xex et data/ (ou le .xex, ou l'ISO)
+#   disc = true
+# puis, depuis le Dashboard : bouton de disque (ou F5, ou My Games) -> « Skate »
+# a la main :
+tools/recipe_build.py identify /chemin/vers/le/dossier/du/jeu     # TitleID, version, hachage de l'image decodee, recette trouvee ?
+tools/recipe_build.py build    /chemin/vers/le/dossier/du/jeu     # construit le cache (~10 min) ; --force, --jobs N
+```
+
+Prérequis : SDK installé dans `sdk/` (branche `unified`), `tools/build_xenosrecomp.sh` (XenosRecomp unifié), clang, cmake, ninja, python3 ; ≈ 40 Go libres conseillés
+(Skate : mesures dans docs/recettes.md). Le cache est `$XDG_DATA_HOME/xenondash/games/<TitleID>/<clé>/` (défaut `~/.local/share`) ; le jeu reste à sa place (référencé par chemin).
+Au premier lancement le Dashboard lance la construction (processus détaché, il reste utilisable, fenêtre de progression, journal `<cache>/build.log`) puis lance le jeu ; ensuite
+le binaire du cache est lancé directement (retour au Dashboard à la fin du jeu).
 
 ## Contrôles
 

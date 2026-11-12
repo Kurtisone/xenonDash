@@ -26,6 +26,15 @@ type = "arcade"        # arcade (défaut), demo, original, xna ou un nombre
 disc = true            # « inséré dans le lecteur »
 # icon = "icones/skate.png"   # PNG <= 16 Ko ; sinon l'icône du <TitleID>.gpd du profil (ou `spa = "..."`)
 
+# Jeu recompile a la demande par une recette (games/<TitleID>/, docs/recettes.md) : au premier lancement le Dashboard construit
+# le binaire natif (cache ~/.local/share/xenondash/games/<TitleID>/, fenetre de progression), puis le lance. `recipe` = dossier du
+# jeu (default.xex + data/), default.xex ou ISO ; le jeu n'est pas copie.
+# [game.45410813]
+# name = "Skate"
+# recipe = "/chemin/vers/le/dossier/du/jeu"
+# type = "arcade"
+# disc = true
+
 [game.4D5307E6]
 name = "Halo 3 (Xenia)"
 # Jeu non recompilé : le XEX ou l'ISO est donné à la commande Xenia.

@@ -27,6 +27,7 @@ import struct
 import subprocess
 import sys
 import time
+import threading
 import tomllib
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -205,6 +206,8 @@ class Progress:
     """progress.json : lu par le Dashboard (superposition de construction) ; ecrit de facon atomique."""
 
     def __init__(self, cache, estimate):
+        self.lock = threading.Lock()
+        self.tick_fn = None   # appelee chaque seconde par le battement de coeur (progression a l'estime d'une etape sans sortie)
         self.path = os.path.join(cache, "progress.json") if cache else None
         self.state = {"stage": "", "index": 0, "total": len(STAGES), "percent": 0.0, "message": "", "done": False,
                       "error": "", "pid": os.getpid(), "started": time.time(), "estimate_s": estimate, "stages": {}}
@@ -213,12 +216,28 @@ class Progress:
         self.state.update(kw)
         self.state["elapsed_s"] = round(time.time() - self.state["started"], 1)
         if self.path:
-            tmp = self.path + ".tmp"
-            with open(tmp, "w") as f:
-                json.dump(self.state, f)
-            os.replace(tmp, self.path)
+            with self.lock:
+                tmp = self.path + ".tmp"
+                with open(tmp, "w") as f:
+                    json.dump(self.state, f)
+                os.replace(tmp, self.path)
+
+    def start_heartbeat(self):
+        """Ecrit progress.json chaque seconde (duree ecoulee a jour meme quand une etape ne dit rien)."""
+        def beat():
+            while not self.state.get("done") and not self.state.get("error"):
+                if self.tick_fn:
+                    try:
+                        self.tick_fn()
+                    except Exception:
+                        pass
+                else:
+                    self.update()
+                time.sleep(1)
+        threading.Thread(target=beat, daemon=True).start()
 
     def stage(self, name, message=""):
+        self.tick_fn = None
         if self.state["stage"] and self.state["stage"] != name:
             self.state["stages"][self.state["stage"]] = round(time.time() - self.state.get("stage_start", time.time()), 1)
         self.state["stage_start"] = time.time()
@@ -512,11 +531,10 @@ class Build:
         # progression : le codegen n'a pas de pourcentage ; on estime par le temps
         done = {"v": False}
 
-        def tick(line):
-            prog.sub(min(0.95, (time.time() - t0) / est), None)
+        prog.tick_fn = lambda: prog.sub(min(0.95, (time.time() - t0) / est), None)
         env = {"LD_LIBRARY_PATH": os.path.join(SDK, "lib")}
         run_logged([REXGLUE, "--force", "codegen", f"{name}_manifest.toml"], os.path.join(self.cache, "codegen.log"),
-                   cwd=proj, env=env, on_line=tick)
+                   cwd=proj, env=env)
         if not os.path.isfile(os.path.join(out, "sources.cmake")):
             raise RecipeError("codegen : sources.cmake absent")
         self.set_stamp("codegen", rev)
@@ -534,25 +552,28 @@ class Build:
             return
         shutil.rmtree(sh, ignore_errors=True)
         os.makedirs(sh)
+        t0 = time.time()
+        est = self.recipe.get("build", {}).get("estimate_minutes", {}).get("shaders", 4) * 60
+        prog.tick_fn = lambda: prog.sub(min(0.95, (time.time() - t0) / est), None)   # a l'estime : les outils ne disent rien
         lp = os.path.join(self.cache, "shaders.log")
         py = [sys.executable, "-I"]
         tools = os.path.join(self.rdir, "tools")
         inp = os.path.join(sh, "input")
         os.makedirs(inp)
         # 1. conteneurs des archives du jeu (decompresses, jamais versionnes)
-        prog.sub(0.05, "recolte des shaders dans les archives du jeu")
+        prog.update(message="recolte des shaders dans les archives du jeu")
         harvested = os.path.join(sh, "harvest")
         run_logged(py + [os.path.join(tools, s["harvest"]), os.path.join(self.game_dir, s["archives"]), harvested], lp)
         for f in os.listdir(harvested):
             if f.endswith(".bin"):
                 shutil.copy(os.path.join(harvested, f), inp)
         # 2. shaders compiles dans l'executable (lus dans l'image decodee)
-        prog.sub(0.3, "shaders de l'executable")
+        prog.update(message="shaders de l'executable")
         img = os.path.join(sh, "image")
         run_logged([REXGLUE, "dump-xex", self.xex, img], lp, env={"LD_LIBRARY_PATH": os.path.join(SDK, "lib")})
         run_logged(py + [os.path.join(tools, s["image_shaders"]), img, inp], lp)
         # 3. XenosRecomp unifie
-        prog.sub(0.45, "XenosRecomp (SPIR-V)")
+        prog.update(message="XenosRecomp (SPIR-V)")
         env = {"XENOS_RECOMP_MICROCODE_KEY": "1", "XENOS_RECOMP_NO_ZSTD": "1",
                "LD_LIBRARY_PATH": os.path.join(XENOSRECOMP_DIR, "thirdparty", "dxc-bin", "lib", "x64")}
         run_logged([XENOSRECOMP, inp, os.path.join(sh, "shader_cache.cpp"),
@@ -684,6 +705,7 @@ class Build:
         est = sum(self.recipe.get("build", {}).get("estimate_minutes", {"x": 30}).values()) * 60
         prog = Progress(self.cache, est)
         prog.update(title_id=info["title_id"], name=self.name, cache=self.cache, source=self.game_dir)
+        prog.start_heartbeat()
         if self.ok() and not self.force and self.stages == STAGES:
             log(f"{self.name} : cache a jour ({self.cache})")
             prog.update(done=True, percent=100.0, message="deja construit")

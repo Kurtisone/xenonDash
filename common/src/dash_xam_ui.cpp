@@ -283,11 +283,11 @@ void DrawBuildProgress(ImGuiIO& io) {
       ImGui::TextWrapped("%s : %s", st.stage.c_str(), st.message.c_str());
       ImGui::TextDisabled("%.0f s écoulées (estimation de la recette : %.0f s). Journal : %s", st.elapsed, st.estimate,
                           st.log_path.c_str());
-      ImGui::TextDisabled("Le jeu se lancera tout seul à la fin ; le Dashboard reste utilisable.");
+      ImGui::TextDisabled("Le jeu se lancera tout seul à la fin (échec : retour au Dashboard).");
     } else {
       ImGui::TextColored(ImVec4(1.0f, 0.45f, 0.35f, 1.0f), "Construction de %s échouée", st.name.c_str());
       ImGui::TextWrapped("%s", st.error.c_str());
-      ImGui::TextDisabled("Échap : fermer. Journal : %s", st.log_path.c_str());
+      ImGui::TextDisabled("Retour au Dashboard dans quelques secondes. Journal : %s", st.log_path.c_str());
       if (ImGui::IsKeyPressed(ImGuiKey_Escape) || ImGui::IsKeyPressed(ImGuiKey_GamepadFaceRight)) dismissed = st.error + st.name;
     }
   }

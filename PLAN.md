@@ -187,10 +187,14 @@ TrialsReVolution : Trials HD/Evolution/Fusion) sont fusionnés dans XenonDash.
 - **Noyau de rendu commun FAIT (2026-11-12, étape 3)** : `ngpu_core/` (moteur de Skate1Native sur plume/Vulkan, `ShaderProvider`, `Profile`, `Core`), façade D3D 6770 (`native_gpu/src/front6770.cpp`, option `NGPU_CORE`, défaut ON avec `-DDASH_NATIVE_GPU=ON`) :
   écran Games à **3,4/255, 32,8 dB** de l'oracle `xenos` (plancher de bruit 1,8/255, 36 dB ; ancien backend 14,3/255, 22,9 dB), artefacts (lignes x≈235/1040, arcs, calques) disparus : l'ombre du périphérique 6770 est celle de Skate.
   Reste : ImGui en natif, MSAA, rampe d'affichage réelle, présentation sans copie CPU, façade Skate et profil de recette (étape 4), 13604/17559. Détail : [docs/ngpu_core.md](docs/ngpu_core.md).
+- **Moteur de recettes et Skate en recette FAITS (2026-11-12, étape 4)** : `games/45410813/` (verrou SHA-256 de l'image XEX décodée, analyse, hooks, profil D3D, façade sur `ngpu_core`, GPU nul de Skate),
+  `tools/recipe_build.py` (identification, cache `~/.local/share/xenondash/games/<TitleID>/<clé>/`, codegen, shaders par XenosRecomp unifié, compilation clang hôte, test d'amorcage).
+  Skate rendu **en natif par `ngpu_core`, sans plugin xenos** (écran-titre sous Xvfb/lavapipe, ≈ 40-50 images/s) ; cache de shaders **identique octet pour octet** à celui de Skate1Native (348 shaders) ;
+  depuis le Dashboard 6770 : disque simulé « Skate » -> construction à la demande (fenêtre de progression ImGui) ou cache -> Skate natif -> retour. Détail, mesures et reste : [docs/recettes.md](docs/recettes.md).
 - Inventaire fait (étape 1) : [docs/fusion_ports.md](docs/fusion_ports.md) (SDK, licences, rendu natif de Skate, recette, plan chiffré ≈ 62-76 j).
 - Étapes : (1) inventaire des correctifs des trois projets et de leurs licences ; (2) SDK unifié ; (3) extraction du rendu
   natif de Skate en bibliothèque, Dashboard 6770 dessus (FAIT, voir ci-dessus) ; (4) format de recette + Skate porté en recette, compilé et lancé
-  depuis le Dashboard ; (5) Trials ; (6) recompilation générique.
+  depuis le Dashboard (FAIT) ; (5) Trials ; (6) recompilation générique.
 
 ## Risques connus
 - Rendu logiciel (lavapipe/Xvfb) qui se fige sur certaines transitions : tests sur vrai GPU requis.

@@ -323,6 +323,36 @@ void Notify(const std::string& title, const std::string& body) {
   }
 }
 
+// Relance le Dashboard à l'identique (échec d'une construction : le Dashboard invité est resté dans l'état « lancement d'un
+// titre », écran noir) : superviseur détaché puis sortie, comme pour un lancement de jeu mais sans jeu.
+void RestartDashboard() {
+  std::string exe = SelfExe();
+  auto args = SelfArgs();
+  if (exe.empty() || args.empty()) return;
+  std::string cwd0 = fs::current_path().string();
+  std::string relaunch = "exec " + Q(exe);
+  for (size_t i = 1; i < args.size(); i++) {
+    if (args[i].rfind("--dash_launch", 0) == 0) {
+      if (args[i].find('=') == std::string::npos && i + 1 < args.size()) i++;
+      continue;
+    }
+    relaunch += " " + Q(args[i]);
+  }
+  std::string script = "sleep 1; cd " + Q(cwd0) + "; DASH_RETURNED_FROM=build_failed; export DASH_RETURNED_FROM; " + relaunch;
+  REXLOG_INFO("[dash] relance du Dashboard après l'échec de la construction");
+  rex::FlushLogging();
+  if (fork() == 0) {
+    setsid();
+    long maxfd = sysconf(_SC_OPEN_MAX);
+    for (int fd = 3; fd < (maxfd > 4096 ? 4096 : maxfd); fd++) close(fd);
+    execl("/bin/sh", "sh", "-c", script.c_str(), static_cast<char*>(nullptr));
+    _exit(127);
+  }
+  std::this_thread::sleep_for(std::chrono::milliseconds(300));
+  rex::FlushLogging();
+  std::_Exit(0);
+}
+
 void BuildMonitor(Game g, pid_t pid, std::string cache) {
   const fs::path progress = fs::path(cache) / "progress.json";
   auto last_log = std::chrono::steady_clock::now() - std::chrono::seconds(10);
@@ -371,6 +401,9 @@ void BuildMonitor(Game g, pid_t pid, std::string cache) {
   }
   if (!ok) {
     Notify("Construction de " + g.name + " échouée", err.empty() ? "voir le journal " + cache + "/build.log" : err);
+    // l'erreur reste affichée 12 s (écran de progression), puis le Dashboard est relancé
+    std::this_thread::sleep_for(std::chrono::seconds(12));
+    RestartDashboard();
     return;
   }
   Notify(g.name + " est prêt", "lancement du jeu");
@@ -396,6 +429,10 @@ bool PrepareRecipeGame(Game& g) {
     g_build.failed = true;
     g_build.name = g.name;
     g_build.error = "source ou recette inutilisable : " + g.recipe;
+    std::thread([] {
+      std::this_thread::sleep_for(std::chrono::seconds(12));
+      RestartDashboard();
+    }).detach();
     return false;
   }
   const std::string cache = JsonField(info, "cache");
