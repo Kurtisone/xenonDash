@@ -30,6 +30,10 @@ import time
 import threading
 import tomllib
 
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import codegen_loop
+import d3d_match
+
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 GAMES = os.path.join(ROOT, "games")
 TOOLS = os.path.join(ROOT, "tools")
@@ -73,6 +77,33 @@ def sha256_tree(paths):
         with open(p, "rb") as f:
             h.update(f.read())
     return h.hexdigest()
+
+
+def write_if_changed(path, text):
+    """Ecrit un fichier seulement si son contenu change : ninja/CMake relancent le codegen sur un simple changement de date."""
+    if os.path.isfile(path) and open(path).read() == text:
+        return
+    with open(path, "w") as f:
+        f.write(text)
+
+
+def sync_tree(src, dst, skip=("__pycache__",)):
+    """Copie src dans dst en ne touchant que les fichiers dont le contenu differe ; supprime ceux qui n'existent plus."""
+    os.makedirs(dst, exist_ok=True)
+    keep = set()
+    for d, dirs, files in os.walk(src):
+        dirs[:] = [x for x in dirs if x not in skip]
+        rel = os.path.relpath(d, src)
+        os.makedirs(os.path.join(dst, rel), exist_ok=True)
+        for f in files:
+            a, b = os.path.join(d, f), os.path.normpath(os.path.join(dst, rel, f))
+            keep.add(b)
+            if not os.path.isfile(b) or open(a, "rb").read() != open(b, "rb").read():
+                shutil.copy(a, b)
+    for d, dirs, files in os.walk(dst):
+        for f in files:
+            if os.path.normpath(os.path.join(d, f)) not in keep:
+                os.remove(os.path.join(d, f))
 
 
 def tree_files(root, skip=("__pycache__", ".git")):
@@ -134,7 +165,7 @@ def identify(xex, work):
 # Recette
 # --------------------------------------------------------------------------------------------------
 def load_recipe(title_id):
-    d = os.path.join(GAMES, title_id.upper())
+    d = os.path.join(GAMES, title_id if title_id.startswith("_") else title_id.upper())
     p = os.path.join(d, "recipe.toml")
     if not os.path.isfile(p):
         return None, d
@@ -188,12 +219,17 @@ def recipe_rev(rdir):
     files += [(os.path.join(ROOT, "ngpu_core"), r) for _, r in tree_files(os.path.join(ROOT, "ngpu_core"))
               if not r.startswith("tools/")]
     files += [(TEMPLATE, r) for _, r in tree_files(TEMPLATE)]
+    if os.path.basename(rdir) == "_generic":    # le mode generique depend aussi du matcher, de ses signatures et de la boucle de codegen
+        files += [(TOOLS, "d3d_match.py"), (TOOLS, "codegen_loop.py")] + [(TOOLS, os.path.join("d3d_signatures", f))
+                                                                          for f in sorted(os.listdir(d3d_match.SIGDIR))]
     return hashlib.sha256((sha256_tree(files) + str(ENGINE_REV)).encode()).hexdigest()[:12]
 
 
 def cache_key(info, recipe, rdir):
     sdk_ver, sdk_hash = sdk_id()
     parts = [info["sha256_image"], str(recipe["schema"]), sdk_hash, xenosrecomp_id(), recipe_codegen_rev(rdir, recipe)]
+    if recipe.get("generic"):
+        parts.append("generic-" + recipe_rev(rdir))
     return hashlib.sha256("|".join(parts).encode()).hexdigest()[:16], {
         "xex_image": info["sha256_image"], "sdk": sdk_ver, "sdk_hash": sdk_hash, "xenosrecomp": xenosrecomp_id(),
         "codegen_rev": parts[-1]}
@@ -284,15 +320,35 @@ def run_logged(cmd, log_path, cwd=None, env=None, on_line=None, check=True, time
 # Sources (dossier du jeu, ISO)
 # --------------------------------------------------------------------------------------------------
 def resolve_source(arg, cache_parent_for_iso):
-    """Renvoie (dossier_du_jeu, chemin_default_xex). Un dossier contient default.xex ; une ISO est extraite (cache)."""
+    """Renvoie (dossier_du_jeu, chemin_default_xex). Un dossier contient default.xex ; ISO, STFS, GOD... sont extraits (cache)
+    par tools/xcontainer.py (lot A) ; repli sur tools/extract_iso.py pour une ISO si xcontainer est absent."""
     arg = os.path.abspath(os.path.expanduser(arg))
     if os.path.isdir(arg):
         x = os.path.join(arg, "default.xex")
-        if not os.path.isfile(x):
-            raise RecipeError(f"{arg} ne contient pas default.xex")
-        return arg, x
+        if os.path.isfile(x):
+            return arg, x
     if arg.lower().endswith(".xex") and os.path.isfile(arg):
         return os.path.dirname(arg), arg
+    xc = os.path.join(TOOLS, "xcontainer.py")
+    if os.path.exists(arg) and os.path.isfile(xc):
+        if os.path.isdir(arg):    # arborescence de paquets (<TitleID>/<type>/<paquet>) : on extrait celui qui contient un XEX
+            r = subprocess.run([sys.executable, "-I", xc, "info", arg], stdout=subprocess.PIPE, text=True)
+            try:
+                pk = [x["name"] for x in json.loads(r.stdout).get("packages", [])]
+            except ValueError:
+                pk = []
+            for name in pk:
+                try:
+                    return resolve_source(os.path.join(arg, name), cache_parent_for_iso)
+                except RecipeError:
+                    continue
+        out = os.path.join(cache_parent_for_iso, "src-" + hashlib.sha256(arg.encode()).hexdigest()[:10])
+        os.makedirs(out, exist_ok=True)
+        r = subprocess.run([sys.executable, "-I", xc, "extract", arg, out], stdout=subprocess.PIPE, text=True)
+        game = r.stdout.strip().splitlines()[-1] if r.stdout.strip() else ""
+        if r.returncode == 0 and game and os.path.isfile(os.path.join(game, "default.xex")):
+            return game, os.path.join(game, "default.xex")
+        raise RecipeError(f"extraction de {arg} par xcontainer.py echouee")
     if arg.lower().endswith(".iso") and os.path.isfile(arg):
         out = os.path.join(cache_parent_for_iso, "iso-" + hashlib.sha256(arg.encode()).hexdigest()[:10])
         if not os.path.isfile(os.path.join(out, "default.xex")):
@@ -302,7 +358,7 @@ def resolve_source(arg, cache_parent_for_iso):
             if r.returncode != 0:
                 raise RecipeError("extraction de l'ISO echouee")
         return out, os.path.join(out, "default.xex")
-    raise RecipeError(f"source non reconnue : {arg} (dossier avec default.xex, .xex ou .iso)")
+    raise RecipeError(f"source non reconnue : {arg} (dossier avec default.xex, .xex, ISO, STFS, GOD)")
 
 
 # --------------------------------------------------------------------------------------------------
@@ -356,6 +412,110 @@ def gen_d3d_profile(rdir, recipe, dest):
     return prof
 
 
+# Roles dont l'appel est suivi par la facade apres la fonction d'origine (arguments d'avant, r3 apres) : methodes du peripherique
+AFTER_ROLES = ["BeginVertices", "DrawIndexedVertices", "DrawVertices", "EndVertices", "Clear", "BeginTiling", "Resolve"]
+
+
+def gen_generic_profile(report, dest, missing_dir):
+    """Rapport de d3d_match.analyze -> d3d_profile.generated.h + d3d_hooks.generated.inc + d3d_nullgpu_hooks.generated.inc."""
+    roles = {k: int(v["addr"], 16) for k, v in report["roles"].items()}
+    off = report["offsets"]
+    ok = lambda r: r in report["roles"] and report["roles"][r]["confidence"] >= d3d_match.MIN_CONFIDENCE
+    h = ["// genere par tools/recipe_build.py (mode generique) depuis tools/d3d_match.py : ne pas versionner",
+         "#pragma once", "#include <cstdint>", "namespace xd_profile {",
+         "constexpr uint32_t kStateSize = 0x3400;"]
+    for i, r in enumerate(AFTER_ROLES, 1):
+        h.append(f"constexpr uint32_t k_{r} = {i};")
+    h.append(f"constexpr const char* kMissingShaderDir = \"{missing_dir}\";")
+    for k in ("fence_ptr", "fence_value", "drain_ptr_word", "second_word"):
+        h.append(f"constexpr uint32_t kNull_{k} = 0x{off[k]:X}u;")
+    h.append(f"constexpr uint32_t kNull_vblank_handler = 0x{roles['VblankHandler']:08X}u;")
+    # aucune liste de shaders d'interface, aucune plage de pitch de scene : echelle de rendu 1
+    h += ["constexpr uint64_t kInterfaceVertexShaders[] = {0};", "constexpr uint64_t kCornerVertexShaders[] = {0};",
+          "constexpr uint32_t kScenePitchMin = 1;", "constexpr uint32_t kScenePitchMax = 0;", "}  // namespace xd_profile"]
+    open(os.path.join(dest, "d3d_profile.generated.h"), "w").write("\n".join(h) + "\n")
+    inc = ["// genere par tools/recipe_build.py (mode generique) : un crochet par fonction D3D retrouvee par d3d_match.py"]
+    for r in AFTER_ROLES:
+        a = f"{roles[r]:08X}"
+        inc.append(f"REX_HOOK_RAW(sub_{a}) {{ const PPCContext before = ctx; __imp__sub_{a}(ctx, base);"
+                   f" XdFrontOnCall(xd_profile::k_{r}, before, ctx.r3.u32, base); }}  // {r}")
+    a = f"{roles['Swap']:08X}"
+    inc.append(f"REX_HOOK_RAW(sub_{a}) {{ XdFrontOnSwap(base); __imp__sub_{a}(ctx, base); }}  // Swap")
+    for kind in ("Vertex", "Pixel"):
+        inner, wrap = roles.get(f"Create{kind}ShaderInner"), roles[f"Create{kind}Shader"]
+        if inner and ok(f"Create{kind}ShaderInner"):   # constructeur sur place (objet = r3, &info = r5, info[0] = conteneur)
+            a = f"{inner:08X}"
+            inc.append(f"REX_HOOK_RAW(sub_{a}) {{ const uint32_t object = ctx.r3.u32; const uint32_t container = REX_LOAD_U32(ctx.r5.u32);"
+                       f" __imp__sub_{a}(ctx, base); XdFrontOnShaderCreate(base, object, container); }}  // Create{kind}ShaderInner")
+        else:                                            # enveloppe publique (pFunction = r3) -> objet en r3
+            a = f"{wrap:08X}"
+            inc.append(f"REX_HOOK_RAW(sub_{a}) {{ const uint32_t container = ctx.r3.u32; __imp__sub_{a}(ctx, base);"
+                       f" XdFrontOnShaderCreate(base, ctx.r3.u32, container); }}  // Create{kind}Shader")
+    open(os.path.join(dest, "d3d_hooks.generated.inc"), "w").write("\n".join(inc) + "\n")
+    ng = ["// genere par tools/recipe_build.py (mode generique) : attentes de la XDK D3D, voir null_gpu.cpp"]
+    a = f"{roles['WaitFence']:08X}"
+    ng.append(f"REX_HOOK_RAW(sub_{a}) {{ ngpu::NullGpuCompleteNow(base, ctx.r3.u32); __imp__sub_{a}(ctx, base); }}  // WaitFence")
+    a = f"{roles['WaitDrain']:08X}"
+    ng.append(f"REX_HOOK_RAW(sub_{a}) {{ const uint32_t dev = ctx.r3.u32; ngpu::NullGpuCompleteNow(base, dev);"
+              f" const uint32_t idp = ngpu::Be32(base + dev + xd_profile::kNull_fence_ptr);"
+              f" if (idp) ngpu::PutBe32(base + idp + xd_profile::kNull_drain_ptr_word, ctx.r4.u32); __imp__sub_{a}(ctx, base); }}  // WaitDrain")
+    a = f"{roles['WaitSecond']:08X}"
+    ng.append(f"REX_HOOK_RAW(sub_{a}) {{ const uint32_t dev = ctx.r3.u32; ngpu::NullGpuCompleteNow(base, dev);"
+              f" const uint32_t idp = ngpu::Be32(base + dev + xd_profile::kNull_fence_ptr);"
+              f" if (idp) ngpu::PutBe32(base + idp + xd_profile::kNull_second_word, ctx.r5.u32); __imp__sub_{a}(ctx, base); }}  // WaitSecond")
+    open(os.path.join(dest, "d3d_nullgpu_hooks.generated.inc"), "w").write("\n".join(ng) + "\n")
+    return roles
+
+
+def analyze_xex(xex, image_path=None):
+    """Analyse D3D d'un XEX (mise en cache par hachage de l'image decodee). Renvoie le rapport de d3d_match.analyze."""
+    tmp = os.path.join(data_home(), "tmp-analyze")
+    os.makedirs(tmp, exist_ok=True)
+    if image_path is None:
+        image_path = decode_image(xex, tmp)[0]
+    digest = sha256_file(image_path)
+    sig_rev = hashlib.sha256(b"".join(open(os.path.join(d3d_match.SIGDIR, f), "rb").read()
+                                      for f in sorted(os.listdir(d3d_match.SIGDIR)) if f.endswith(".json"))
+                             + open(d3d_match.__file__, "rb").read()).hexdigest()[:12]
+    cache = os.path.join(data_home(), "analysis", f"{digest[:16]}-{sig_rev}.json")
+    if os.path.isfile(cache):
+        return json.load(open(cache))
+    img = d3d_match.Image(image_path, xex=xex)
+    rep = d3d_match.analyze(img, d3d_match.load_signatures())
+    rep.pop("_raw")
+    rep["sha256_image"] = digest
+    os.makedirs(os.path.dirname(cache), exist_ok=True)
+    json.dump(rep, open(cache, "w"), indent=1)
+    shutil.rmtree(tmp, ignore_errors=True)
+    return rep
+
+
+def user_functions_path(title_id):
+    """Fonctions imposees au codegen generique (decouvertes a l'execution ou declarees a la main) : jamais dans le depot."""
+    return os.path.join(data_home(), "games", title_id, "missing_functions.toml")
+
+
+def read_user_functions(title_id):
+    out = {}
+    p = user_functions_path(title_id)
+    if os.path.isfile(p):
+        for line in open(p):
+            m = re.match(r'\s*"?0x([0-9A-Fa-f]{8})"?\s*=\s*(\{[^}]*\})', line)
+            if m:
+                out[int(m.group(1), 16)] = m.group(2)
+    return out
+
+
+def extra_modules(game_dir, xex):
+    """XEX secondaires et DLL du jeu (non recompiles par le mode generique)."""
+    out = []
+    for dp, _, files in os.walk(game_dir):
+        for f in files:
+            if f.lower().endswith((".xex", ".dll", ".xexp")) and os.path.abspath(os.path.join(dp, f)) != os.path.abspath(xex):
+                out.append(os.path.relpath(os.path.join(dp, f), game_dir))
+    return sorted(out)[:50]
+
+
 # --------------------------------------------------------------------------------------------------
 # Etapes
 # --------------------------------------------------------------------------------------------------
@@ -387,8 +547,11 @@ def mem_available_gb():
 
 
 class Build:
-    def __init__(self, source_arg, force=False, stages=None, jobs=None, container=None):
+    def __init__(self, source_arg, force=False, stages=None, jobs=None, container=None, generic=False):
         self.force = force
+        self.force_generic = generic or bool(os.environ.get("XD_GENERIC"))
+        self.mode = "recipe"
+        self.generic_reason = ""
         self.stages = stages or STAGES
         self.jobs = jobs
         self.container = container
@@ -402,27 +565,32 @@ class Build:
         self.game_dir, self.xex = resolve_source(self.source_arg, os.path.join(home, "sources"))
         self.info = xex_header(self.xex)
         recipe, rdir = load_recipe(self.info["title_id"])
-        if recipe is None:
-            raise RecipeError(f"jeu {self.info['title_id']} sans recette (games/{self.info['title_id']}/) : "
-                              "pas d'execution implicite ; la recompilation generique n'existe pas encore (P8, etape 6)")
-        self.recipe, self.rdir = recipe, rdir
         tmp = os.path.join(home, "tmp-identify")
         os.makedirs(tmp, exist_ok=True)
         info = identify(self.xex, tmp)
         shutil.rmtree(tmp, ignore_errors=True)
         info["image"] = None
         self.info = info
-        locked = match_xex(recipe, info)
-        if not locked:
+        locked = match_xex(recipe, info) if recipe else None
+        if recipe is None:
+            self.generic_reason = f"pas de recette games/{self.info['title_id']}/"
+        elif not locked:
             known = ", ".join(x["sha256_image"][:12] for x in recipe.get("xex", []))
-            raise RecipeError(f"XEX {info['title_id']} version {info['version']} (image {info['sha256_image'][:12]}) "
-                              f"non reconnu par la recette (connus : {known}) ; mode generique non disponible")
-        if locked.get("version") and locked["version"] != info["version"]:
+            self.generic_reason = (f"XEX {info['version']} (image {info['sha256_image'][:12]}) hors du verrou de la recette "
+                                   f"(connus : {known})")
+        elif self.force_generic:
+            self.generic_reason = "mode generique force (--generic / XD_GENERIC)"
+        if self.generic_reason:
+            self.mode = "generic"
+            recipe, rdir = load_recipe("_generic")
+            locked = None
+        elif locked.get("version") and locked["version"] != info["version"]:
             raise RecipeError(f"version de l'en-tete {info['version']} differente de la recette {locked['version']}")
+        self.recipe, self.rdir = recipe, rdir
         self.locked = locked
         self.key, self.keyparts = cache_key(info, recipe, rdir)
         self.cache = os.path.join(home, "games", info["title_id"], self.key)
-        self.name = recipe.get("name", info["title_id"])
+        self.name = recipe.get("name", info["title_id"]) if self.mode == "recipe" else f"Jeu {info['title_id']}"
         return True
 
     def stamp(self, name):
@@ -441,7 +609,14 @@ class Build:
         if not os.path.isfile(p):
             return False
         try:
-            return json.load(open(p)).get("recipe_rev") == recipe_rev(self.rdir)
+            if json.load(open(p)).get("recipe_rev") != recipe_rev(self.rdir):
+                return False
+            if self.mode == "generic":    # boucle jouer -> reconstruire : de nouveaux microcodes manques depuis la derniere construction
+                missing = os.path.join(data_home(), "games", self.info["title_id"], "missing_shaders")
+                now = len([f for f in os.listdir(missing) if f.endswith(".bin")]) if os.path.isdir(missing) else 0
+                if now != json.load(open(os.path.join(self.cache, "shaders", "info.json"))).get("missing_added", 0):
+                    return False
+            return True
         except Exception:
             return False
 
@@ -449,6 +624,7 @@ class Build:
     def do_prepare(self, prog):
         b = self.recipe.get("build", {})
         need_disk, need_ram = b.get("min_disk_gb", 40), b.get("min_ram_gb", 16)
+        need_disk = float(os.environ.get("XD_MIN_DISK_GB", need_disk))   # abaisser pour un essai : la construction de Skate pese ~0,6 Go
         os.makedirs(self.cache, exist_ok=True)
         fd = free_gb(self.cache)
         errs = []
@@ -485,27 +661,30 @@ class Build:
         r = self.recipe
         cg = r["codegen"]
         # sources du jeu (hooks) : copiees depuis la recette (resynchronisees a chaque build)
-        shutil.rmtree(os.path.join(proj, "src"), ignore_errors=True)
-        shutil.copytree(os.path.join(self.rdir, "src"), os.path.join(proj, "src"))
-        shutil.rmtree(os.path.join(proj, "native"), ignore_errors=True)
+        sync_tree(os.path.join(self.rdir, "src"), os.path.join(proj, "src"))
         if os.path.isdir(os.path.join(self.rdir, "native")):
-            shutil.copytree(os.path.join(self.rdir, "native"), os.path.join(proj, "native"))
+            sync_tree(os.path.join(self.rdir, "native"), os.path.join(proj, "native"))
         for n in cg.get("files", []):
             shutil.copy(os.path.join(self.rdir, n), os.path.join(proj, n))
         gen = os.path.join(proj, "gen")
         os.makedirs(gen, exist_ok=True)
-        prof = gen_d3d_profile(self.rdir, r, gen)
         name = cg["project"]
+        prof = {}
+        if self.mode == "generic":
+            self.scaffold_generic(proj, gen, name)
+        else:
+            prof = gen_d3d_profile(self.rdir, r, gen)
         # manifeste ReXGlue
-        includes = ", ".join(f'"{n}"' for n in cg.get("files", []))
+        files = list(cg.get("files", [])) + (["functions.generated.toml"] if self.mode == "generic" else [])
+        includes = ", ".join(f'"{n}"' for n in files)
         manifest = (f'[project]\nname = "{name}"\nsdk_version = "0.10.0"\ngame_root = "{self.game_dir}"\n\n'
                     f'[entrypoint]\nfile_path = "{self.xex}"\nout_directory_path = "{cg["out_directory"]}"\n'
                     f'includes = [{includes}]\n')
-        open(os.path.join(proj, f"{name}_manifest.toml"), "w").write(manifest)
+        write_if_changed(os.path.join(proj, f"{name}_manifest.toml"), manifest)
         # CMakeLists du jeu depuis le gabarit
         t = open(os.path.join(TEMPLATE, "CMakeLists.txt")).read()
         t = t.replace("@NAME@", name).replace("@XENONDASH_ROOT@", ROOT).replace("@OUT@", cg["out_directory"])
-        open(os.path.join(proj, "CMakeLists.txt"), "w").write(t)
+        write_if_changed(os.path.join(proj, "CMakeLists.txt"), t)
         # configuration d'execution : runtime de la recette + game_data_root absolu (le jeu reste ou il est)
         rt = open(os.path.join(self.rdir, r.get("runtime", {}).get("file", "runtime.toml"))).read()
         rt = re.sub(r"(?m)^game_data_root\s*=.*\n", "", rt)
@@ -515,7 +694,66 @@ class Build:
             for k, v in prof.get("runtime", {}).items():
                 rt = re.sub(rf"(?m)^{k}\s*=.*\n", "", rt)
                 rt += f"{k} = {toml_value(v)}\n"
-        open(os.path.join(proj, f"{name}.runtime.toml"), "w").write(rt)
+        write_if_changed(os.path.join(proj, f"{name}.runtime.toml"), rt)
+
+    def scaffold_generic(self, proj, gen, name):
+        """Mode generique : analyse D3D de l'image (d3d_match), profil et crochets generes ; refus net si non rendable nativement."""
+        imgdir = os.path.join(self.cache, "image")
+        bins = [f for f in os.listdir(imgdir)] if os.path.isdir(imgdir) else []
+        if not any(f.endswith(".bin") for f in bins):
+            decode_image(self.xex, self.cache)
+            bins = os.listdir(imgdir)
+        self.image_path = os.path.join(imgdir, next(f for f in bins if f.endswith(".bin")))
+        extra = extra_modules(self.game_dir, self.xex)
+        if extra:
+            log(f"avertissement : XEX secondaires/DLL du jeu non recompiles par le mode generique : {', '.join(extra[:8])}"
+                + (" ..." if len(extra) > 8 else ""))
+        rep = analyze_xex(self.xex, self.image_path)
+        rep["extra_modules"] = extra
+        json.dump(rep, open(os.path.join(self.cache, "analysis.json"), "w"), indent=1)
+        found = len(rep["roles"])
+        log(f"analyse D3D : XDK {rep['xdk']}, {found} fonctions retrouvees, manquantes : {rep['missing'] or 'aucune'}")
+        if not rep["supported"]:
+            # XD_ALLOW_UNSUPPORTED=1 : essai de diagnostic (codegen, compilation, demarrage) sans garantie de rendu correct ; ne contourne
+            # que le verdict, jamais le besoin des fonctions et des decalages (et ne bascule jamais sur l'emulation)
+            if not os.environ.get("XD_ALLOW_UNSUPPORTED") or rep["missing"] or any(
+                    k not in rep["offsets"] or rep["offsets"][k] is None for k in ("fence_ptr", "fence_value", "drain_ptr_word", "second_word")):
+                raise RecipeError("jeu non rendable nativement par le mode generique (aucun repli sur l'emulation) : " + rep["reason"])
+            log("AVERTISSEMENT (XD_ALLOW_UNSUPPORTED) : verdict ignore pour un essai de diagnostic : " + rep["reason"])
+        missing_dir = os.path.join(data_home(), "games", self.info["title_id"], "missing_shaders")
+        genstage = os.path.join(self.cache, "gen.stage")
+        shutil.rmtree(genstage, ignore_errors=True)
+        os.makedirs(genstage)
+        roles = gen_generic_profile(rep, genstage, missing_dir)
+        self.roles = roles
+        open(os.path.join(genstage, "xd_project.h"), "w").write(f'#pragma once\n#include "generated/default/{name}_init.h"\n')
+        for f in os.listdir(genstage):
+            write_if_changed(os.path.join(gen, f), open(os.path.join(genstage, f)).read())
+        shutil.rmtree(genstage, ignore_errors=True)
+        # overrides initiaux : fonctions crochetees (declarees comme debuts de fonction) + setjmp/longjmp du CRT par signature
+        crt = {k: int(rep["roles"][k]["addr"], 16) for k in ("setjmp", "longjmp")
+               if k in rep["roles"] and rep["roles"][k]["confidence"] >= 0.85}
+        hooked = {a: a for k, a in roles.items() if k in AFTER_ROLES + ["Swap", "CreateVertexShader", "CreatePixelShader",
+                                                                          "CreateVertexShaderInner", "CreatePixelShaderInner",
+                                                                          "WaitFence", "WaitDrain", "WaitSecond"]}
+        ov = os.path.join(proj, "functions.generated.toml")
+        final = os.path.join(self.cache, "functions.final.toml")     # resultat de la boucle de codegen (relance sans refaire la boucle)
+        if os.path.isfile(final):
+            write_if_changed(ov, open(final).read())
+        else:
+            codegen_loop.write_overrides(ov + ".tmp", {}, hooked, {}, crt.get("setjmp"), crt.get("longjmp"),
+                                         read_user_functions(self.info["title_id"]))
+            write_if_changed(ov, open(ov + ".tmp").read())
+            os.remove(ov + ".tmp")
+        self.crt = crt
+        self.report = rep
+
+    def hooked_seeds(self):
+        """Fonctions crochetees : declarees comme debuts de fonction des la 1re passe (le crochet exige __imp__sub_X)."""
+        rep = json.load(open(os.path.join(self.cache, "analysis.json")))
+        hooked = set(AFTER_ROLES + ["Swap", "CreateVertexShader", "CreatePixelShader", "CreateVertexShaderInner",
+                                    "CreatePixelShaderInner", "WaitFence", "WaitDrain", "WaitSecond"])
+        return {int(v["addr"], 16): int(v["addr"], 16) for k, v in rep["roles"].items() if k in hooked}
 
     # -- etape codegen
     def do_codegen(self, prog):
@@ -523,6 +761,8 @@ class Build:
         name = self.recipe["codegen"]["project"]
         out = os.path.join(proj, self.recipe["codegen"]["out_directory"])
         rev = self.keyparts["codegen_rev"] + self.keyparts["sdk_hash"]
+        if self.mode == "generic":
+            rev += hashlib.sha256(json.dumps(sorted(read_user_functions(self.info["title_id"]).items())).encode()).hexdigest()[:8]
         if self.stamped("codegen", rev) and os.path.isfile(os.path.join(out, "sources.cmake")) and not self.force:
             log("codegen deja fait (cache)")
             return
@@ -533,8 +773,28 @@ class Build:
 
         prog.tick_fn = lambda: prog.sub(min(0.95, (time.time() - t0) / est), None)
         env = {"LD_LIBRARY_PATH": os.path.join(SDK, "lib")}
-        run_logged([REXGLUE, "--force", "codegen", f"{name}_manifest.toml"], os.path.join(self.cache, "codegen.log"),
-                   cwd=proj, env=env)
+        if self.mode == "generic":
+            img = d3d_match.Image(os.path.join(self.cache, "image", next(f for f in os.listdir(os.path.join(self.cache, "image"))
+                                                                          if f.endswith(".bin"))), xex=self.xex)
+            crt = {k: int(v["addr"], 16) for k, v in json.load(open(os.path.join(self.cache, "analysis.json")))["roles"].items()
+                   if k in ("setjmp", "longjmp") and v["confidence"] >= 0.85}
+            ldir = os.path.join(self.cache, "codegen_logs")
+            os.makedirs(ldir, exist_ok=True)
+            try:
+                stats = codegen_loop.run_loop(REXGLUE, os.path.join(SDK, "lib"), proj, f"{name}_manifest.toml", out, f"{name}_init.cpp",
+                                              img, os.path.join(proj, "functions.generated.toml"), ldir, crt.get("setjmp"),
+                                              crt.get("longjmp"), log=log,
+                                              tick=lambda i, n: prog.update(message=f"codegen, passe {i}"),
+                                              extra=read_user_functions(self.info["title_id"]), seeds=self.hooked_seeds())
+            except codegen_loop.CodegenError as e:
+                raise RecipeError(f"codegen generique : {e}")
+            json.dump(stats, open(os.path.join(self.cache, "codegen_stats.json"), "w"), indent=1)
+            shutil.copy(os.path.join(proj, "functions.generated.toml"), os.path.join(self.cache, "functions.final.toml"))
+            log(f"codegen generique : {stats['functions']} fonctions en {stats['iterations']} passes "
+                f"({stats['unresolved']} cibles, {stats['pointer']} par pointeur, {stats['continuations']} continuations)")
+        else:
+            run_logged([REXGLUE, "--force", "codegen", f"{name}_manifest.toml"], os.path.join(self.cache, "codegen.log"),
+                       cwd=proj, env=env)
         if not os.path.isfile(os.path.join(out, "sources.cmake")):
             raise RecipeError("codegen : sources.cmake absent")
         self.set_stamp("codegen", rev)
@@ -550,6 +810,8 @@ class Build:
         s = self.recipe.get("shaders")
         if not s:
             return
+        if self.mode == "generic":
+            return self.do_shaders_generic(prog, proj, sh)
         shutil.rmtree(sh, ignore_errors=True)
         os.makedirs(sh)
         t0 = time.time()
@@ -586,6 +848,35 @@ class Build:
         shutil.rmtree(img, ignore_errors=True)
         self.set_stamp("shaders", rev)
 
+    def do_shaders_generic(self, prog, proj, sh):
+        """Recolte generique (balayage des fichiers du jeu et de l'image) + shaders manques d'une partie precedente."""
+        missing = os.path.join(data_home(), "games", self.info["title_id"], "missing_shaders")
+        nmiss = len([f for f in os.listdir(missing) if f.endswith(".bin")]) if os.path.isdir(missing) else 0
+        rev = self.keyparts["xex_image"][:12] + self.keyparts["xenosrecomp"] + self.keyparts["sdk_hash"] + f"m{nmiss}"
+        if self.stamped("shaders", rev) and os.path.isfile(os.path.join(sh, "shader_cache.cpp")) and not self.force:
+            log("cache de shaders deja fait")
+            return
+        shutil.rmtree(sh, ignore_errors=True)
+        os.makedirs(sh)
+        lp = os.path.join(self.cache, "shaders.log")
+        inp = os.path.join(sh, "input")
+        t0 = time.time()
+        est = self.recipe.get("build", {}).get("estimate_minutes", {}).get("shaders", 6) * 60
+        prog.tick_fn = lambda: prog.sub(min(0.95, (time.time() - t0) / est), None)
+        prog.update(message="balayage des conteneurs de microcode (fichiers du jeu, image, shaders manques)")
+        image = os.path.join(self.cache, "image", next(f for f in os.listdir(os.path.join(self.cache, "image")) if f.endswith(".bin")))
+        run_logged([sys.executable, "-I", os.path.join(self.rdir, "tools", "scan_shaders.py"), self.game_dir, image, inp, missing], lp)
+        prog.update(message="XenosRecomp (SPIR-V)")
+        env = {"XENOS_RECOMP_MICROCODE_KEY": "1", "XENOS_RECOMP_NO_ZSTD": "1",
+               "LD_LIBRARY_PATH": os.path.join(XENOSRECOMP_DIR, "thirdparty", "dxc-bin", "lib", "x64")}
+        run_logged([XENOSRECOMP, inp, os.path.join(sh, "shader_cache.cpp"),
+                    os.path.join(XENOSRECOMP_DIR, "XenosRecomp", "shader_common.h")], lp, env=env)
+        n = len(re.findall(r"(?m)^\t\{ 0x", open(os.path.join(sh, "shader_cache.cpp")).read()))
+        log(f"{n} shaders dans le cache ({nmiss} issus de parties precedentes)")
+        json.dump({"shaders": n, "missing_added": nmiss}, open(os.path.join(sh, "info.json"), "w"))
+        shutil.rmtree(inp, ignore_errors=True)
+        self.set_stamp("shaders", rev)
+
     # -- etape compile
     def do_compile(self, prog):
         proj = os.path.join(self.cache, "project")
@@ -613,8 +904,18 @@ class Build:
                 a, n = int(m.group(1)), int(m.group(2))
                 total["n"] = n
                 prog.sub(a / n, f"compilation {a}/{n}")
-        run_logged(["cmake", "--build", bdir, "-j", str(jobs), "--target", self.recipe["codegen"]["project"]], lp,
-                   on_line=on_line)
+        build_cmd = ["cmake", "--build", bdir, "-j", str(jobs), "--target", self.recipe["codegen"]["project"]]
+        rc = run_logged(build_cmd, lp, on_line=on_line, check=self.mode != "generic")
+        if rc != 0:   # mode generique : imports du XEX sans implementation (ordinaux inconnus) -> stubs generes, puis 2e passe
+            text = open(lp, errors="replace").read()
+            undef = sorted(set(re.findall(r"undefined (?:reference to|symbol:) [`']?(sub_[0-9A-F]{8})", text)))
+            if not undef:
+                raise RecipeError("compilation en echec :\n" + "".join(text.splitlines(True)[-25:]))
+            sp = os.path.join(proj, "gen", "auto_stubs.cpp")
+            codegen_loop.write_auto_stubs(sp, undef)
+            log(f"{len(undef)} import(s) inconnu(s) -> stubs generes (gen/auto_stubs.cpp)")
+            run_logged(["cmake", "-S", proj, "-B", bdir], lp)
+            run_logged(build_cmd, lp, on_line=on_line)
         # produits du cache : binaire + bibliotheques dans bin/
         bin_dir = os.path.join(self.cache, "bin")
         shutil.rmtree(bin_dir, ignore_errors=True)
@@ -690,6 +991,17 @@ class Build:
             for f in newest:
                 text += open(os.path.join(logs, f), errors="replace").read()
         if "FATAL" in text or "Segmentation" in text:
+            m = re.search(r"Call to invalid or unregistered function at guest address 0x([0-9A-Fa-f]{8})", text)
+            if m and self.mode == "generic":
+                # fonction invoquee par pointeur que l'analyse statique n'a pas vue : declaree dans le cache utilisateur, a la prochaine
+                # construction le codegen l'inclut (boucle « jouer -> reconstruire », docs/recompilateur_generique.md)
+                a = int(m.group(1), 16)
+                up = user_functions_path(self.info["title_id"])
+                os.makedirs(os.path.dirname(up), exist_ok=True)
+                with open(up, "a") as f:
+                    f.write(f"0x{a:08X} = {{}}  # appelee a l'execution sans etre declaree (bootstrap)\n")
+                raise RecipeError(f"test d'amorcage : fonction 0x{a:08X} non declaree au codegen, ajoutee a {up} ; relancer la construction "
+                                  f"(boucle jouer -> reconstruire), voir {lp}")
             raise RecipeError("test d'amorcage : erreur fatale, voir " + lp)
         for pat in bt.get("expect", []):
             if pat not in text:
@@ -714,8 +1026,10 @@ class Build:
         steps = [("identify", None), ("prepare", self.do_prepare), ("extract", self.do_extract),
                  ("scaffold", self.do_scaffold), ("codegen", self.do_codegen), ("shaders", self.do_shaders),
                  ("compile", self.do_compile), ("bootstrap", self.do_bootstrap)]
-        msgs = {"identify": f"XEX {info['title_id']} v{info['version']} reconnu", "prepare": "controles",
-                "extract": "source du jeu", "scaffold": "projet de la recette",
+        msgs = {"identify": f"XEX {info['title_id']} v{info['version']} " + ("reconnu" if self.mode == "recipe" else
+                                                                       "sans recette : mode generique (" + self.generic_reason + ")"),
+                "prepare": "controles", "extract": "source du jeu",
+                "scaffold": "projet de la recette" if self.mode == "recipe" else "analyse D3D (motifs de code) et projet generique",
                 "codegen": "recompilation du XEX en C++ (rexglue codegen)",
                 "shaders": "cache de shaders (XenosRecomp)", "compile": "compilation native",
                 "bootstrap": "test d'amorcage"}
@@ -731,7 +1045,7 @@ class Build:
             if self.stages == STAGES:
                 json.dump({"title_id": info["title_id"], "name": self.name, "xex": info["sha256_image"],
                            "version": info["version"], "key": self.key, "keyparts": self.keyparts,
-                           "recipe_rev": recipe_rev(self.rdir), "seconds": self.t, "built": time.strftime("%F %T"),
+                           "recipe_rev": recipe_rev(self.rdir), "mode": self.mode, "seconds": self.t, "built": time.strftime("%F %T"),
                            "game_dir": self.game_dir}, open(os.path.join(self.cache, "build.ok"), "w"), indent=1)
             prog.update(done=True, percent=100.0, message="termine", stage_times=self.t)
             log(f"{self.name} : " + (f"construit en {time.time() - t0:.0f} s" if self.stages == STAGES else
@@ -745,7 +1059,38 @@ class Build:
 def launch_info(b):
     exe = b.recipe["codegen"]["project"]
     return {"title_id": b.info["title_id"], "name": b.name, "native": f"./{exe}",
-            "cwd": os.path.join(b.cache, "bin"), "cache": b.cache, "built": b.ok()}
+            "cwd": os.path.join(b.cache, "bin"), "cache": b.cache, "built": b.ok(), "mode": b.mode}
+
+
+def identify_report(source, force_generic=False):
+    """identify : TitleID, version, hachage, mode (recette/generique), XDK, fonctions D3D retrouvees ou manquantes, verdict."""
+    home = data_home()
+    game_dir, xex = resolve_source(source, os.path.join(home, "sources"))
+    tmp = os.path.join(home, "tmp-identify")
+    os.makedirs(tmp, exist_ok=True)
+    info = identify(xex, tmp)
+    image = info.pop("image", None)
+    recipe, rdir = load_recipe(info["title_id"])
+    info["recipe"] = bool(recipe)
+    info["match"] = bool(recipe and match_xex(recipe, info))
+    info["mode"] = "recipe" if info["match"] and not (force_generic or os.environ.get("XD_GENERIC")) else "generic"
+    rep = analyze_xex(xex, image)
+    shutil.rmtree(tmp, ignore_errors=True)
+    info["xdk"] = rep["xdk"]
+    info["static_libraries"] = rep["libs"]
+    info["d3d"] = {"found": rep["roles"], "missing": rep["missing"], "weak": rep["weak"], "offsets": rep["offsets"]}
+    if info["mode"] == "recipe":
+        info["supported"] = True    # la recette fait foi (rendu natif de la recette), meme si le matcher generique est moins sur
+        info["reason"] = ""
+        info["generic_supported"] = rep["supported"]
+        info["generic_reason"] = rep["reason"]
+    else:
+        info["supported"] = rep["supported"]
+        info["reason"] = rep["reason"]
+    info["extra_modules"] = extra_modules(game_dir, xex)
+    if info["extra_modules"]:
+        info["note"] = "XEX secondaires/DLL presents : non recompiles par le mode generique"
+    return info
 
 
 def main():
@@ -753,9 +1098,11 @@ def main():
     sub = ap.add_subparsers(dest="cmd", required=True)
     a = sub.add_parser("identify")
     a.add_argument("source")
+    a.add_argument("--generic", action="store_true", help="ignore la recette games/<TitleID>/")
     for n in ("build", "status", "launch-info"):
         s = sub.add_parser(n)
         s.add_argument("source")
+        s.add_argument("--generic", action="store_true", help="ignore la recette games/<TitleID>/ (mode generique)")
         if n == "build":
             s.add_argument("--force", action="store_true")
             s.add_argument("--stages", default="")
@@ -772,26 +1119,17 @@ def main():
             log(f"cache supprime : {d}")
             return 0
         if args.cmd == "identify":
-            tmp = os.path.join(data_home(), "tmp-identify")
-            os.makedirs(tmp, exist_ok=True)
-            _, x = resolve_source(args.source, os.path.join(data_home(), "sources"))
-            info = identify(x, tmp)
-            shutil.rmtree(tmp, ignore_errors=True)
-            info.pop("image", None)
-            recipe, rdir = load_recipe(info["title_id"])
-            info["recipe"] = bool(recipe)
-            info["match"] = bool(recipe and match_xex(recipe, info))
-            print(json.dumps(info, indent=1))
+            print(json.dumps(identify_report(args.source, args.generic), indent=1))
             return 0
         b = Build(args.source, force=getattr(args, "force", False),
                   stages=[s for s in getattr(args, "stages", "").split(",") if s] or None,
-                  jobs=getattr(args, "jobs", None), container=getattr(args, "container", False))
+                  jobs=getattr(args, "jobs", None), container=getattr(args, "container", False), generic=args.generic)
         if args.cmd == "build":
             b.run()
             return 0
         b.do_identify()
         if args.cmd == "status":
-            print(json.dumps({"cache": b.cache, "built": b.ok(), "key": b.key}, indent=1))
+            print(json.dumps({"cache": b.cache, "built": b.ok(), "key": b.key, "mode": b.mode}, indent=1))
         else:
             print(json.dumps(launch_info(b)))
         return 0

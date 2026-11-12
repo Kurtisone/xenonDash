@@ -1,0 +1,36 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Reglages d'execution par defaut d'un jeu recompile en mode generique (clavier/souris, rendu natif). Le moteur y ajoute
+# game_data_root (le jeu reste ou il est) et la section [runtime] du profil genere.
+fullscreen = false
+game_data_root = 'game'
+log_level = 'info'
+mnk_mode = true
+show_fps_counter = false
+quit_dialog = true
+keybind_a = 'Space'
+keybind_b = 'Control'
+keybind_x = 'Shift'
+keybind_y = 'T'
+keybind_start = 'Return'
+keybind_back = 'Tab'
+keybind_dpad_up = 'Up'
+keybind_dpad_down = 'Down'
+keybind_dpad_left = 'Left'
+keybind_dpad_right = 'Right'
+keybind_lstick_up = 'W'
+keybind_lstick_down = 'S'
+keybind_lstick_left = 'A'
+keybind_lstick_right = 'D'
+keybind_lstick_press = 'Z'
+keybind_left_trigger = 'RMB'
+keybind_right_trigger = 'LMB'
+keybind_left_shoulder = 'Q'
+keybind_right_shoulder = 'R'
+keybind_rstick_press = 'MMB'
+mnk_mouse = true
+keybind_rstick_up = ''
+keybind_rstick_down = ''
+keybind_rstick_left = ''
+keybind_rstick_right = ''
+vsync = true
+# Les reglages d'emulation GPU (depth_float24..., readback...) sont absents : aucune emulation.

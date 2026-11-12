@@ -1,0 +1,110 @@
+# References des signatures D3D : adresses (invitees) de fonctions connues dans des XEX dont la XDK est identifiee, et valeurs
+# attendues des champs lus. Aucune octet de code : `d3d_match.py learn` en tire les masques (tools/d3d_signatures/*.json).
+# Les adresses viennent de games/45410813/d3d_profile.toml (Skate) et de native_gpu/src/front6770.cpp (Dashboard 6770).
+
+[skate-5632]
+description = "Skate (45410813), D3D9 2.0.5632"
+terminator = ["setjmp", "longjmp"]   # extension = jusqu'a la 1re instruction terminale (la fonction n'a pas de .pdata propre)
+[skate-5632.roles]
+BeginVertices = 0x82CB29D8
+EndVertices = 0x82CB2E78
+DrawVertices = 0x82CB3500
+DrawIndexedVertices = 0x82CB38E8
+Clear = 0x82CC7510
+BeginTiling = 0x82CC4FF0
+Resolve = 0x82CC7FF0
+Swap = 0x82CCBE98
+# CreateVertexShader/CreatePixelShader : les enveloppes publiques (pFunction) -> objet ; l'objet est construit sur place par 82CC1038/82CC0EB0
+CreateVertexShader = 0x82CC1078
+CreatePixelShader = 0x82CC0EE8
+CreateVertexShaderInner = 0x82CC1038   # constructeur sur place (objet, taille, &info) appele par l'enveloppe
+CreatePixelShaderInner = 0x82CC0EB0
+SetTexture = 0x82CCB4D0
+SetVertexShaderConstantF = 0x82CBDA80
+SetPixelShaderConstantF = 0x82CBDB68
+SetPixelShader = 0x82CBDFE8
+SetVertexShader = 0x82CBE2E8
+VblankHandler = 0x82CCB758
+WaitFence = 0x82CB11C0
+WaitDrain = 0x82CB0060
+WaitSecond = 0x82CAFF88
+# setjmp/longjmp du CRT (functions.toml de la recette)
+setjmp = 0x82E50F20
+longjmp = 0x82E48B60
+[skate-5632.relations]
+# role = [nature, autre role] : after_end = commence juste apres la fin de l'autre ; after = adresse plus haute
+EndVertices = ["after_end", "BeginVertices"]
+SetVertexShader = ["after", "SetPixelShader"]
+CreateVertexShader = ["after", "CreatePixelShader"]
+SetPixelShaderConstantF = ["after", "SetVertexShaderConstantF"]
+CreateVertexShaderInner = ["callee_of", "CreateVertexShader"]
+CreatePixelShaderInner = ["callee_of", "CreatePixelShader"]
+[skate-5632.fields]
+# nom = [role, valeur de reference, nature (disp = deplacement d'un acces memoire, imm = immediat)]
+vertex_shader = ["SetVertexShader", 12688, "disp"]
+pixel_shader = ["SetPixelShader", 12684, "disp"]
+index_buffer = ["DrawIndexedVertices", 12428, "disp"]
+fence_ptr = ["WaitFence", 10896, "disp"]
+fence_value = ["WaitFence", 10908, "disp"]
+drain_ptr_word = ["WaitDrain", 60, "disp"]
+second_word = ["WaitSecond", 4, "disp"]
+fetch_base_slot = ["SetTexture", 48, "imm"]
+fetch_stride = ["SetTexture", 24, "imm"]
+texture_table = ["SetTexture", 3134, "imm"]
+vertex_constants_slot = ["SetVertexShaderConstantF", 120, "imm"]
+pixel_constants_slot = ["SetPixelShaderConstantF", 376, "imm"]
+reg_surface_info = ["BeginTiling", 10368, "disp"]
+reg_copy_dest_base = ["Resolve", 10780, "disp"]
+
+[dash-6770]
+description = "Dashboard 2.0.6770 (dash.xex), D3D9 2.0.6132.4"
+[dash-6770.roles]
+BeginVertices = 0x925CC6B8
+EndVertices = 0x925CCB58
+DrawVerticesUP = 0x925CCB68
+DrawIndexedVerticesUP = 0x925CD0E0
+CreateVertexShader = 0x9212EE10
+CreatePixelShader = 0x9212ED00
+SetVertexShader = 0x9212E7E8
+SetPixelShader = 0x9212E4E8
+SetTexture = 0x92123F20
+SetVertexShaderConstantF = 0x9212E2D8
+SetPixelShaderConstantF = 0x9212E3C0
+# Swap : la fonction qui appelle VdSwap (celle de Skate a le meme code) ; 92121EE8 est l'entree publique qui y mene
+Swap = 0x92121950
+VblankHandler = 0x92121210
+WaitFence = 0x9212A418
+WaitDrain = 0x92129788
+WaitSecond = 0x921296F0
+[dash-6770.relations]
+EndVertices = ["after_end", "BeginVertices"]
+SetVertexShader = ["after", "SetPixelShader"]
+CreateVertexShader = ["after", "CreatePixelShader"]
+SetPixelShaderConstantF = ["after", "SetVertexShaderConstantF"]
+[dash-6770.fields]
+vertex_shader = ["SetVertexShader", 12688, "disp"]
+pixel_shader = ["SetPixelShader", 12684, "disp"]
+fence_ptr = ["WaitFence", 10896, "disp"]
+fence_value = ["WaitFence", 10908, "disp"]
+drain_ptr_word = ["WaitDrain", 60, "disp"]
+second_word = ["WaitSecond", 4, "disp"]
+fetch_base_slot = ["SetTexture", 48, "imm"]
+fetch_stride = ["SetTexture", 24, "imm"]
+texture_table = ["SetTexture", 3134, "imm"]
+vertex_constants_slot = ["SetVertexShaderConstantF", 120, "imm"]
+pixel_constants_slot = ["SetPixelShaderConstantF", 376, "imm"]
+
+# CRT seul : setjmp/longjmp de Dashboards recompiles (dashboards/*/dash_overrides.toml)
+[crt-13604]
+description = "Dashboard 2.0.13604 : setjmp/longjmp du CRT"
+terminator = ["setjmp", "longjmp"]
+[crt-13604.roles]
+setjmp = 0x9288D320
+longjmp = 0x9288CEF0
+
+[crt-17559]
+description = "Dashboard 2.0.17559 : setjmp/longjmp du CRT"
+terminator = ["setjmp", "longjmp"]
+[crt-17559.roles]
+setjmp = 0x9291C760
+longjmp = 0x9291C330

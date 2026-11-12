@@ -1,0 +1,36 @@
+# Recette GENERIQUE (recompilateur generique, P8 etape 6) : voir docs/recompilateur_generique.md.
+# Elle n'est pas liee a un jeu : tools/recipe_build.py l'applique a tout XEX sans recette de games/<TitleID>/ (ou dont le hachage de
+# l'image decodee n'est pas verrouille), en generant l'analyse (boucle de codegen), le profil D3D (tools/d3d_match.py) et les
+# crochets. Aucun octet du jeu ni de Microsoft, aucune liste de shaders propre a un jeu.
+schema = 1
+title_id = "_generic"
+name = "generic"
+generic = true
+
+[sdk]
+series = "unified"
+
+[codegen]
+project = "xdgame"                   # les sources de la facade incluent generated/default/xdgame_init.h (via gen/xd_project.h)
+out_directory = "generated/default"
+files = []                           # functions.generated.toml est ecrit par la boucle de codegen
+
+[runtime]
+file = "runtime.toml"
+
+[shaders]
+mode = "scan"                        # balayage de tous les fichiers du jeu et de l'image decodee (tools/scan_shaders.py)
+
+[render]
+mode = "native"                      # ngpu_core ; aucune emulation : un jeu non rendable est refuse avec un diagnostic
+
+[build]
+min_ram_gb = 16
+min_disk_gb = 40
+arch_flags = "-march=x86-64-v2"
+estimate_minutes = { codegen = 12, shaders = 6, compile = 35 }
+
+[bootstrap]
+seconds = 40
+headless = true
+expect = ["ngpu_core on", "first native frame presented"]

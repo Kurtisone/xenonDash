@@ -11,7 +11,7 @@ set(XD_ROOT "@XENONDASH_ROOT@")
 include(generated/rexglue.cmake)
 
 # Hooks du jeu (recette : games/<TitleID>/src)
-file(GLOB GAME_SOURCES CONFIGURE_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/src/*.cpp)
+file(GLOB GAME_SOURCES CONFIGURE_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/src/*.cpp ${CMAKE_CURRENT_SOURCE_DIR}/gen/*.cpp)
 
 # Rendu natif (ngpu_core) : aucun plugin GPU. Cache de shaders XenosRecomp compile avec le jeu.
 option(XD_NATIVE_GPU "Rendu natif par ngpu_core (zero emulation GPU)" ON)
