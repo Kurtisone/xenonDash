@@ -27,12 +27,14 @@
 #include <ctime>
 #include <filesystem>
 #include <fstream>
+#include <mutex>
 #include <string>
 #include <thread>
 #include <vector>
 
 #include <fcntl.h>
 #include <sys/stat.h>
+#include <sys/wait.h>
 #include <unistd.h>
 
 #include <fmt/format.h>
@@ -126,13 +128,16 @@ std::vector<Game> Games() {
     if (auto n = (*t)["native"].value<std::string>()) {
       g.command = *n;
       g.kind = "native";
+    } else if (!(*t)["recipe"].value_or(std::string()).empty()) {
+      g.kind = "recipe";  // construit à la demande par tools/recipe_build.py (cache), puis lancé comme un jeu natif
     } else if (auto x = (*t)["xenia"].value<std::string>()) {
       g.command = xenia_cmd + " " + Q(*x);
       g.kind = "xenia";
     } else {
-      REXLOG_WARN("[dash] games.toml : {} n'a ni `native` ni `xenia`", k);
+      REXLOG_WARN("[dash] games.toml : {} n'a ni `native`, `recipe` ni `xenia`", k);
       continue;
     }
+    g.recipe = (*t)["recipe"].value_or(std::string());
     g.disc = (*t)["disc"].value_or(false);
     g.icon = (*t)["icon"].value_or(std::string());
     g.spa = (*t)["spa"].value_or(std::string());
@@ -229,7 +234,220 @@ void TouchLastPlayed(uint32_t title_id) {
   }
 }
 
-bool LaunchGame(const Game& g) {
+// ---- Jeux à recette : construction à la demande (docs/recettes.md) ----------------------------------------------------
+// `recipe = "<source>"` dans games.toml : au premier lancement, tools/recipe_build.py identifie le XEX, le recompile en natif
+// (cache ~/.local/share/xenondash/games/<TitleID>/<clé>/) puis le Dashboard lance le binaire du cache comme un jeu natif.
+// Le Dashboard reste vivant pendant la construction (écran de progression ImGui, journal, notify-send s'il existe) ;
+// la construction est un processus détaché (elle survit à une fermeture du Dashboard) ; à sa fin le jeu est lancé.
+namespace {
+
+std::mutex g_build_mutex;
+BuildStatus g_build;
+
+std::string ToolsRoot() {
+  if (const char* e = std::getenv("XENONDASH_ROOT")) return e;
+#ifdef XENONDASH_ROOT_DIR
+  return XENONDASH_ROOT_DIR;
+#else
+  return ".";
+#endif
+}
+
+std::string RecipeTool() { return (fs::path(ToolsRoot()) / "tools" / "recipe_build.py").string(); }
+
+// Sortie standard d'une commande (sans shell : fork/exec), code de retour dans *rc.
+std::string RunCapture(const std::vector<std::string>& argv, int* rc) {
+  int fds[2];
+  if (pipe(fds) != 0) return {};
+  pid_t pid = fork();
+  if (pid == 0) {
+    dup2(fds[1], 1);
+    int devnull = open("/dev/null", O_WRONLY);
+    dup2(devnull, 2);
+    close(fds[0]);
+    close(fds[1]);
+    std::vector<char*> a;
+    for (auto& s : argv) a.push_back(const_cast<char*>(s.c_str()));
+    a.push_back(nullptr);
+    execvp(a[0], a.data());
+    _exit(127);
+  }
+  close(fds[1]);
+  std::string out;
+  char buf[4096];
+  ssize_t n;
+  while ((n = read(fds[0], buf, sizeof(buf))) > 0) out.append(buf, size_t(n));
+  close(fds[0]);
+  int st = 0;
+  waitpid(pid, &st, 0);
+  if (rc) *rc = WIFEXITED(st) ? WEXITSTATUS(st) : -1;
+  return out;
+}
+
+// Champ d'un JSON plat produit par recipe_build.py (chaîne, nombre ou booléen) ; vide s'il est absent.
+std::string JsonField(const std::string& j, const std::string& key) {
+  auto p = j.find("\"" + key + "\"");
+  if (p == std::string::npos) return {};
+  p = j.find(':', p);
+  if (p == std::string::npos) return {};
+  p++;
+  while (p < j.size() && (j[p] == ' ' || j[p] == '\n')) p++;
+  if (p < j.size() && j[p] == '"') {
+    std::string v;
+    for (p++; p < j.size() && j[p] != '"'; p++) {
+      if (j[p] == '\\' && p + 1 < j.size()) {
+        p++;
+        v += j[p] == 'n' ? '\n' : j[p];
+      } else {
+        v += j[p];
+      }
+    }
+    return v;
+  }
+  size_t e = p;
+  while (e < j.size() && j[e] != ',' && j[e] != '}' && j[e] != '\n') e++;
+  return j.substr(p, e - p);
+}
+
+void Notify(const std::string& title, const std::string& body) {
+  REXLOG_INFO("[dash] {} : {}", title, body);
+  // notify-send s'il existe (sans shell : arguments séparés) ; échec silencieux
+  if (pid_t p = fork(); p == 0) {
+    int devnull = open("/dev/null", O_WRONLY);
+    dup2(devnull, 1);
+    dup2(devnull, 2);
+    execlp("notify-send", "notify-send", "-a", "XenonDash", title.c_str(), body.c_str(), static_cast<char*>(nullptr));
+    _exit(127);
+  } else if (p > 0) {
+    std::thread([p] { int st; waitpid(p, &st, 0); }).detach();
+  }
+}
+
+void BuildMonitor(Game g, pid_t pid, std::string cache) {
+  const fs::path progress = fs::path(cache) / "progress.json";
+  auto last_log = std::chrono::steady_clock::now() - std::chrono::seconds(10);
+  int status = 0;
+  for (;;) {
+    pid_t r = waitpid(pid, &status, WNOHANG);
+    std::string j;
+    {
+      std::ifstream f(progress);
+      j.assign(std::istreambuf_iterator<char>(f), std::istreambuf_iterator<char>());
+    }
+    {
+      std::lock_guard<std::mutex> lock(g_build_mutex);
+      g_build.stage = JsonField(j, "stage");
+      g_build.message = JsonField(j, "message");
+      g_build.percent = std::atof(JsonField(j, "percent").c_str());
+      g_build.elapsed = std::atof(JsonField(j, "elapsed_s").c_str());
+      g_build.estimate = std::atof(JsonField(j, "estimate_s").c_str());
+    }
+    auto now = std::chrono::steady_clock::now();
+    if (now - last_log >= std::chrono::seconds(5)) {
+      last_log = now;
+      REXLOG_INFO("[dash] construction de {} : {:.0f} %  [{}] {}  ({:.0f} s)", g.name, g_build.percent, g_build.stage,
+                  g_build.message, g_build.elapsed);
+    }
+    if (r == pid) break;
+    if (r < 0) {
+      status = -1;
+      break;
+    }
+    std::this_thread::sleep_for(std::chrono::seconds(1));
+  }
+  std::string err;
+  {
+    std::ifstream f(progress);
+    std::string j((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
+    err = JsonField(j, "error");
+  }
+  const bool ok = WIFEXITED(status) && WEXITSTATUS(status) == 0;
+  {
+    std::lock_guard<std::mutex> lock(g_build_mutex);
+    g_build.active = false;
+    g_build.failed = !ok;
+    g_build.error = err;
+    if (ok) g_build.percent = 100.0;
+  }
+  if (!ok) {
+    Notify("Construction de " + g.name + " échouée", err.empty() ? "voir le journal " + cache + "/build.log" : err);
+    return;
+  }
+  Notify(g.name + " est prêt", "lancement du jeu");
+  LaunchGame(g);  // le cache est construit : lancement normal (le Dashboard cède la place, puis revient)
+}
+
+// Prépare un jeu à recette : renvoie vrai si son binaire est prêt (g.command/g.cwd remplis), faux si une construction a
+// été lancée (ou échoue : le Dashboard continue).
+bool PrepareRecipeGame(Game& g) {
+  {
+    std::lock_guard<std::mutex> lock(g_build_mutex);
+    if (g_build.active) {
+      REXLOG_INFO("[dash] une construction est déjà en cours ({})", g_build.name);
+      return false;
+    }
+  }
+  int rc = 0;
+  const std::string tool = RecipeTool();
+  std::string info = RunCapture({"python3", "-I", tool, "launch-info", g.recipe}, &rc);
+  if (rc != 0 || info.empty()) {
+    Notify("Recette de " + g.name, "source ou recette inutilisable (" + g.recipe + ") : voir recipe_build.py identify");
+    std::lock_guard<std::mutex> lock(g_build_mutex);
+    g_build.failed = true;
+    g_build.name = g.name;
+    g_build.error = "source ou recette inutilisable : " + g.recipe;
+    return false;
+  }
+  const std::string cache = JsonField(info, "cache");
+  if (JsonField(info, "built") == "true") {
+    g.command = JsonField(info, "native");
+    g.cwd = JsonField(info, "cwd");
+    g.kind = "native";
+    REXLOG_INFO("[dash] {} : binaire du cache {}", g.name, g.cwd);
+    return true;
+  }
+  REXLOG_INFO("[dash] {} : pas de binaire en cache, construction (recette) : {}", g.name, cache);
+  std::error_code ec;
+  fs::create_directories(cache, ec);
+  const std::string log_path = cache + "/build.log";
+  pid_t pid = fork();
+  if (pid < 0) return false;
+  if (pid == 0) {
+    setsid();
+    int fd = open(log_path.c_str(), O_WRONLY | O_CREAT | O_TRUNC, 0644);
+    int devnull = open("/dev/null", O_RDONLY);
+    dup2(devnull, 0);
+    dup2(fd, 1);
+    dup2(fd, 2);
+    long maxfd = sysconf(_SC_OPEN_MAX);
+    for (int f = 3; f < (maxfd > 4096 ? 4096 : maxfd); f++) close(f);
+    execlp("python3", "python3", "-I", tool.c_str(), "build", g.recipe.c_str(), static_cast<char*>(nullptr));
+    _exit(127);
+  }
+  {
+    std::lock_guard<std::mutex> lock(g_build_mutex);
+    g_build = BuildStatus{};
+    g_build.active = true;
+    g_build.title_id = g.title_id;
+    g_build.name = g.name;
+    g_build.log_path = log_path;
+    g_build.message = "démarrage";
+  }
+  Notify("Construction de " + g.name, "première exécution : recompilation du jeu en natif (plusieurs dizaines de minutes)");
+  std::thread(BuildMonitor, g, pid, cache).detach();
+  return false;
+}
+
+}  // namespace
+
+BuildStatus GetBuildStatus() {
+  std::lock_guard<std::mutex> lock(g_build_mutex);
+  return g_build;
+}
+
+bool LaunchGame(const Game& g0) {
+  Game g = g0;
+  if (!g.recipe.empty() && g.command.empty() && !PrepareRecipeGame(g)) return true;  // construction en cours : le Dashboard continue
   if (g_launching.exchange(true)) return true;  // déjà en cours
   TouchLastPlayed(g.title_id);
   std::string exe = SelfExe();

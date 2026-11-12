@@ -18,6 +18,9 @@ add_library(xenondash_common OBJECT
     src/kernel_stubs.cpp
 )
 target_include_directories(xenondash_common PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src)
+# Racine de XenonDash (tools/recipe_build.py, moteur de recettes) ; XENONDASH_ROOT dans l'environnement la remplace.
+get_filename_component(XENONDASH_ROOT_DIR ${CMAKE_CURRENT_SOURCE_DIR}/.. ABSOLUTE)
+target_compile_definitions(xenondash_common PRIVATE XENONDASH_ROOT_DIR="${XENONDASH_ROOT_DIR}")
 target_compile_features(xenondash_common PUBLIC cxx_std_23)
 target_link_libraries(xenondash_common PUBLIC rex::runtime)
 rexglue_apply_target_settings(xenondash_common)

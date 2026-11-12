@@ -263,6 +263,37 @@ void OpenLauncher() {
   g_ctx.app->CallInUIThread([] { new LauncherDialog(g_ctx.imgui); });
 }
 
+// Écran de progression de la construction d'un jeu par le moteur de recettes (dash_launch.cpp, tools/recipe_build.py) :
+// fenêtre en bas de l'écran tant que la construction est active (ou a échoué : Échap la ferme). Le Dashboard reste utilisable.
+void DrawBuildProgress(ImGuiIO& io) {
+  static std::string dismissed;  // construction échouée déjà fermée par l'utilisateur
+  const launch::BuildStatus st = launch::GetBuildStatus();
+  if (!st.active && !st.failed) return;
+  if (st.failed && dismissed == st.error + st.name) return;
+  ImGui::SetNextWindowPos(ImVec2(io.DisplaySize.x * 0.5f, io.DisplaySize.y - 24.0f), ImGuiCond_Always, ImVec2(0.5f, 1.0f));
+  ImGui::SetNextWindowSize(ImVec2(std::min(760.0f, io.DisplaySize.x - 40.0f), 0.0f), ImGuiCond_Always);
+  ImGui::SetNextWindowBgAlpha(0.92f);
+  if (ImGui::Begin("Construction du jeu##dash_build", nullptr,
+                   ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove |
+                       ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoFocusOnAppearing |
+                       ImGuiWindowFlags_AlwaysAutoResize)) {
+    if (st.active) {
+      ImGui::Text("Construction de %s (recompilation native, première exécution)", st.name.c_str());
+      ImGui::ProgressBar(float(st.percent / 100.0), ImVec2(-1.0f, 0.0f), fmt::format("{:.0f} %", st.percent).c_str());
+      ImGui::TextWrapped("%s : %s", st.stage.c_str(), st.message.c_str());
+      ImGui::TextDisabled("%.0f s écoulées (estimation de la recette : %.0f s). Journal : %s", st.elapsed, st.estimate,
+                          st.log_path.c_str());
+      ImGui::TextDisabled("Le jeu se lancera tout seul à la fin ; le Dashboard reste utilisable.");
+    } else {
+      ImGui::TextColored(ImVec4(1.0f, 0.45f, 0.35f, 1.0f), "Construction de %s échouée", st.name.c_str());
+      ImGui::TextWrapped("%s", st.error.c_str());
+      ImGui::TextDisabled("Échap : fermer. Journal : %s", st.log_path.c_str());
+      if (ImGui::IsKeyPressed(ImGuiKey_Escape) || ImGui::IsKeyPressed(ImGuiKey_GamepadFaceRight)) dismissed = st.error + st.name;
+    }
+  }
+  ImGui::End();
+}
+
 // Boîte de dialogue invisible, toujours ouverte : surveille F5 (ou Back + Y).
 class HotkeyDialog : public ui::ImGuiDialog {
  public:
@@ -270,7 +301,7 @@ class HotkeyDialog : public ui::ImGuiDialog {
 
  protected:
   void OnDraw(ImGuiIO& io) override {
-    (void)io;
+    DrawBuildProgress(io);
     if (g_open.load()) return;
     if (ImGui::IsKeyPressed(ImGuiKey_F5, false) ||
         (ImGui::IsKeyDown(ImGuiKey_GamepadBack) && ImGui::IsKeyPressed(ImGuiKey_GamepadFaceUp, false))) {

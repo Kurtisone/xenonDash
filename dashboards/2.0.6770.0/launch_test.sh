@@ -8,7 +8,7 @@
 # variable DISPLAY (affichage Xvfb propre au test).
 set -u
 P=$(cd "$(dirname "$0")/../.." && pwd); D=$(cd "$(dirname "$0")" && pwd); N=$1; W=$2; shift 2
-n=100; while [ -e /tmp/.X11-unix/X$n ] || [ -e /tmp/.X$n-lock ]; do n=$((n+1)); done
+n=${XVFB_BASE:-100}; while [ -e /tmp/.X11-unix/X$n ] || [ -e /tmp/.X$n-lock ]; do n=$((n+1)); done
 DISP=:$n
 FB=$D/runs/$N.fb; mkdir -p $FB
 Xvfb $DISP -screen 0 1280x720x24 -fbdir $FB >/dev/null 2>&1 & XP=$!

@@ -40,6 +40,7 @@ XENOSRECOMP = os.environ.get(
 XENOSRECOMP_DIR = os.path.dirname(os.path.dirname(os.path.dirname(XENOSRECOMP)))
 STAGES = ["identify", "prepare", "extract", "scaffold", "codegen", "shaders", "compile", "bootstrap"]
 RECIPE_SCHEMA = 1
+ENGINE_REV = 2   # a incrementer quand la disposition des produits du cache (bin/, build.ok...) change
 
 
 class RecipeError(Exception):
@@ -186,7 +187,7 @@ def recipe_rev(rdir):
     files += [(os.path.join(ROOT, "ngpu_core"), r) for _, r in tree_files(os.path.join(ROOT, "ngpu_core"))
               if not r.startswith("tools/")]
     files += [(TEMPLATE, r) for _, r in tree_files(TEMPLATE)]
-    return sha256_tree(files)[:12]
+    return hashlib.sha256((sha256_tree(files) + str(ENGINE_REV)).encode()).hexdigest()[:12]
 
 
 def cache_key(info, recipe, rdir):
@@ -599,9 +600,14 @@ class Build:
         os.makedirs(bin_dir)
         exe = self.recipe["codegen"]["project"]
         shutil.copy(os.path.join(bdir, exe), bin_dir)
-        for f in os.listdir(bdir):
-            if f.endswith(".so") or ".so." in f:
-                shutil.copy(os.path.join(bdir, f), bin_dir)
+        for d in (bdir, os.path.join(SDK, "lib")):     # librexruntime.so : RUNPATH $ORIGIN, donc a cote du binaire
+            for f in os.listdir(d):
+                if f.startswith("librexruntime") and (f.endswith(".so") or ".so." in f):
+                    shutil.copy(os.path.join(d, f), bin_dir)
+            if any(f.startswith("librexruntime") for f in os.listdir(bin_dir)):
+                break
+        if not any(f.startswith("librexruntime") for f in os.listdir(bin_dir)):
+            raise RecipeError("librexruntime.so introuvable (SDK installe dans sdk/ ?)")
         shutil.copy(os.path.join(proj, f"{exe}.runtime.toml"), os.path.join(bin_dir, f"{exe}.toml"))
 
     # -- etape bootstrap (test d'amorcage)
@@ -613,7 +619,8 @@ class Build:
         seconds = bt.get("seconds", 30)
         display = os.environ.get("XD_DISPLAY", ":97")
         lp = os.path.join(self.cache, "bootstrap.log")
-        env = dict(os.environ, DISPLAY=display, LD_LIBRARY_PATH=os.path.join(self.cache, "bin") + ":" + os.path.join(SDK, "lib"))
+        env = dict(os.environ, DISPLAY=display)
+        env.pop("LD_LIBRARY_PATH", None)   # comme le lanceur du Dashboard : le binaire doit trouver seul ses bibliotheques
         # Test sans affichage : Xvfb n'a pas DRI3, on presente par lavapipe (rendu logiciel) s'il existe
         lvp = "/usr/share/vulkan/icd.d/lvp_icd.json"
         if bt.get("headless", True) and os.path.isfile(lvp) and "VK_ICD_FILENAMES" not in env:

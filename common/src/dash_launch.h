@@ -19,7 +19,21 @@ struct Game {
   bool disc = false;     // `disc = true` : jeu « inséré dans le lecteur » (bouton de disque du Dashboard)
   std::string icon;      // icône PNG (<= 16 Ko) ; à défaut celle du GPD/SPA du jeu (`spa`, ou <TitleID>.gpd du profil)
   std::string spa;       // fichier XDBF (.spa/.gpd) d'où tirer l'icône
+  std::string recipe;    // `recipe = "<source>"` : source du jeu (dossier avec default.xex, .xex ou .iso) ; recette games/<TitleID>/
 };
+
+// État de la construction d'un jeu par le moteur de recettes (tools/recipe_build.py), pour l'écran de progression.
+struct BuildStatus {
+  bool active = false;   // une construction est en cours
+  bool failed = false;   // la dernière construction a échoué (error)
+  uint32_t title_id = 0;
+  std::string name, stage, message, error;
+  double percent = 0.0;  // 0..100
+  double elapsed = 0.0;  // secondes
+  double estimate = 0.0; // secondes (estimation de la recette)
+  std::string log_path;
+};
+BuildStatus GetBuildStatus();
 
 std::vector<Game> Games();  // relit games.toml à chaque appel
 std::optional<Game> Find(uint32_t title_id);
