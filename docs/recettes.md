@@ -139,4 +139,4 @@ Reste :
 - Écran de progression : fenêtre ImGui (rendu par le plugin `xenos` du Dashboard) ; tant que le rendu natif du Dashboard n'affiche pas ImGui, un Dashboard natif n'a que le journal et `notify-send`. Le Dashboard invité reste figé
   en « lancement d'un titre » (écran noir) pendant la construction ; un échec le relance après 12 s.
 - Présentation de Skate : copie CPU de l'image vers le présentateur (1280x720 fixe), gamma d'affichage approximé (1,16, non mesuré sur Skate), MSAA, capture/rejeu `.sk1c` non repris, entrées clavier/manette telles que Skate1Native (non vérifiées ici au-delà de l'écran-titre et de l'intro).
-- Dashboards 13604 et 17559 : le chemin de lancement de recette est dans `common/`, donc partagé ; testé ici avec le 6770 (smoke 13604 : voir PLAN).
+- Dashboards 13604 et 17559 : le chemin de lancement de recette est dans `common/`, donc partagé ; testé ici avec le 6770 ; smoke 6770 et 13604 (build par défaut, code commun modifié) : OK.
