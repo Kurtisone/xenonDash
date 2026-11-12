@@ -39,6 +39,32 @@ NGPU_HOOK(921296F0) {
   return false;
 }
 
+#ifdef NGPU_CORE_FRONT
+// Facade sur ngpu_core (front6770.cpp) : Clear et Swap passent par le noyau de rendu.
+namespace ngpu {
+void FrontClear(const uint8_t* base, uint32_t dev, uint32_t nrects, uint32_t rects, uint32_t flags, uint32_t color, double z, uint32_t stencil);
+void FrontSwap(const uint8_t* base, uint32_t dev);
+}
+NGPU_HOOK(92128AF0) {
+  if (ngpu::Observe()) return false;
+  if (std::getenv("DASH_NGPU_EVLOG")) std::fprintf(stderr, "[ev] clear flags=%X color=%08X rects=%u\n", ctx.r6.u32, ctx.r7.u32, ctx.r4.u32);
+  ngpu::NullGpuAttach(ctx.r3.u32);
+  ngpu::FrontClear(base, ctx.r3.u32, ctx.r4.u32, ctx.r5.u32, ctx.r6.u32, ctx.r7.u32, ctx.f1.f64, ctx.r8.u32);
+  NGPU_ORIG(92128AF0);
+  return true;
+}
+
+NGPU_HOOK(92121EE8) {
+  if (ngpu::Observe()) { ngpu::NextFrame(); return false; }
+  if (std::getenv("DASH_NGPU_EVLOG")) std::fprintf(stderr, "[ev] swap\n");
+  ngpu::NullGpuAttach(ctx.r3.u32);
+  // Avant le Swap d'origine : il remet le cache de registres du peripherique a autre chose (la surface a copier y est encore).
+  ngpu::FrontSwap(base, ctx.r3.u32);
+  NGPU_ORIG(92121EE8);
+  ngpu::NextFrame();
+  return true;
+}
+#else
 NGPU_HOOK(92128AF0) {
   if (ngpu::Observe()) return false;
   if (std::getenv("DASH_NGPU_EVLOG")) std::fprintf(stderr, "[ev] clear flags=%X color=%08X rects=%u\n", ctx.r6.u32, ctx.r7.u32, ctx.r4.u32);
@@ -63,6 +89,8 @@ NGPU_HOOK(92121EE8) {
   if (n == 1 || n % 300 == 0) NGPU_LOG("image %llu présentée", (unsigned long long)n);
   return true;
 }
+
+#endif  // NGPU_CORE_FRONT
 
 namespace ngpu {
 static std::atomic<uint64_t> g_frame{0};

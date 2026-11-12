@@ -16,6 +16,9 @@ bool VkInit();
 void VkClear(const float rgba[4]);
 // Présente le tampon d'image dans la fenêtre SDL (blit + file de présentation) ; renvoie le nombre d'images présentées.
 uint64_t VkPresent();
+// Remplace le contenu du tampon d'image par une image A2B10G10R10 (w x h, 4 octets par pixel, sortie du noyau ngpu_core : au plus
+// kBackbufferWidth x kBackbufferHeight, recadree sinon), puis la presente.
+uint64_t VkPresentPacked(const uint32_t* pixels, uint32_t w, uint32_t h);
 
 
 // --- dessin ---

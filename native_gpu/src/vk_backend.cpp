@@ -553,6 +553,42 @@ uint64_t VkPresent() {
 }
 
 
+// Envoi d'une image du noyau de rendu (A2B10G10R10 : rouge bits 0-9, vert 10-19, bleu 20-29) dans le tampon d'image,
+// converti en RGBA8 par le CPU (le noyau et ce backend sont deux peripheriques Vulkan distincts : copie par la memoire).
+uint64_t VkPresentPacked(const uint32_t* pixels, uint32_t w, uint32_t h) {
+  if (!VkInit()) return 0;
+  {
+    std::lock_guard<std::mutex> l(g.mu);
+    if (!g.ring && !InitDraw()) return g.presented;
+    if (!BeginCb()) return g.presented;
+    EndRendering();
+    const uint32_t cw = std::min(w, kBackbufferWidth), ch = std::min(h, kBackbufferHeight);
+    const VkDeviceSize bytes = VkDeviceSize(cw) * ch * 4;
+    if (g.stgoff + bytes > g.stgsize) g.stgoff = 0;
+    uint8_t* dst = g.stgptr + g.stgoff;
+    for (uint32_t y = 0; y < ch; ++y) {
+      const uint32_t* src = pixels + size_t(y) * w;
+      uint8_t* row = dst + size_t(y) * cw * 4;
+      for (uint32_t x = 0; x < cw; ++x) {
+        const uint32_t p = src[x];
+        row[4 * x] = uint8_t((p & 1023) >> 2);
+        row[4 * x + 1] = uint8_t(((p >> 10) & 1023) >> 2);
+        row[4 * x + 2] = uint8_t(((p >> 20) & 1023) >> 2);
+        row[4 * x + 3] = 255;
+      }
+    }
+    Barrier(g.cb, g.bb, g.bblayout, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
+    VkBufferImageCopy region{};
+    region.bufferOffset = g.stgoff;
+    region.imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
+    region.imageExtent = {cw, ch, 1};
+    vkCmdCopyBufferToImage(g.cb, g.stg, g.bb, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &region);
+    g.bblayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+    g.stgoff = 0;  // la copie est soumise par VkPresent avant tout autre usage du tampon d'envoi
+  }
+  return VkPresent();
+}
+
 HostTexture* VkCreateTexture(uint32_t w, uint32_t h, const uint8_t* rgba) {
   if (!VkInit() || !g.draw_ok || !w || !h) return nullptr;
   std::lock_guard<std::mutex> l(g.mu);
