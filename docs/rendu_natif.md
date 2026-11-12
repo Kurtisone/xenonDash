@@ -397,12 +397,9 @@ passe de 10 à 6 jours (reste : cache par hachage, liaison des constantes et éc
 
 **Reproduire**
 ```
-git clone --recursive https://github.com/hedge-dev/XenosRecomp work/XenosRecomp
-git -C work/XenosRecomp apply "$PWD/patches/xenosrecomp-dash360.patch"
-(cd work/XenosRecomp && CC=clang CXX=clang++ cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release \
-   -DCMAKE_CXX_FLAGS_RELEASE="-O1 -g0" && cmake --build build)
+tools/build_xenosrecomp.sh   # P8 : amont + série patches/xenosrecomp/ -> work/XenosRecomp-unified (remplace l'ancien patch dash360)
 python3 -I tools/analyse_d3d.py work/dash.pe work/port extract work/shaders6770
-python3 -I tools/xenos_batch.py work/shaders6770 work/shaders_out
+python3 -I tools/xenos_batch.py work/shaders6770 work/shaders_out work/XenosRecomp-unified
 ```
 Les dossiers `work/shaders6770` (microcode Microsoft) et `work/shaders_out` (HLSL/SPIR-V dérivés) ne sont jamais versionnés.
 

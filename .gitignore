@@ -21,6 +21,7 @@ tools/xexinfo/build/
 tools/xexinfo/build.log
 work/
 sdk/
+sdk-unified/
 third_party/*
 !third_party/rexglue-sdk
 __pycache__/

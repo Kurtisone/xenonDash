@@ -180,6 +180,10 @@ TrialsReVolution : Trials HD/Evolution/Fusion) sont fusionnés dans XenonDash.
 - **Contraintes** : temps de compilation (dizaines de minutes), espace disque et mémoire (Skate : 40 Go, 16 Go de RAM),
   chaîne de compilation chez l'utilisateur ; licences (Skate1Recompiled GPL-3.0 → XenonDash en GPL-3.0 ;
   vérifier TrialsReVolution et ses tiers) ; aucun fichier de jeu ni binaire distribué.
+- **SDK unifié et XenosRecomp unifié FAITS (2026-11-12)** : branche `unified` du fork SDK (11 commits : Skate1Native/Trials `linux-android/0001..0008`,
+  conflit `mnk_input_driver` résolu en gardant les deux comportements, D3D12 écarté) ; Dashboards 6770, 6717, 13604, 17559 construits et testés
+  (smoke) contre ce SDK ; sous-module et `sdk/` basculés sur `unified`. XenosRecomp : série `patches/xenosrecomp/` + `tools/build_xenosrecomp.sh`,
+  70/70 shaders UI identiques. Détail et reste (isolation de l'émulation GPU, Skate/Fusion non rejoués) : [docs/fusion_ports.md](docs/fusion_ports.md) §8.
 - Inventaire fait (étape 1) : [docs/fusion_ports.md](docs/fusion_ports.md) (SDK, licences, rendu natif de Skate, recette, plan chiffré ≈ 62-76 j).
 - Étapes : (1) inventaire des correctifs des trois projets et de leurs licences ; (2) SDK unifié ; (3) extraction du rendu
   natif de Skate en bibliothèque, Dashboard 6770 dessus ; (4) format de recette + Skate porté en recette, compilé et lancé

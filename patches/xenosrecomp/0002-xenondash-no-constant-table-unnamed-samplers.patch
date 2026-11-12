@@ -1,0 +1,79 @@
+From c4322ef7def611b2de91e54e9b0b5da56ae57ce5 Mon Sep 17 00:00:00 2001
+From: Kurtisone <104103601+Kurtisone@users.noreply.github.com>
+Date: Sun, 8 Nov 2026 11:02:13 +0100
+Subject: [PATCH 2/4] =?UTF-8?q?XenonDash=20:=20shaders=20sans=20table=20de?=
+ =?UTF-8?q?=20constantes=20et=20=C3=A9chantillonneurs=20non=20nomm=C3=A9s?=
+ =?UTF-8?q?=20(Dashboard=20360)?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Source : patches/xenosrecomp-dash360.patch de XenonDash, rebasé sur la variante de Skate1Native. Les
+conteneurs sans table de constantes (constantTableOffset == 0) sont traités avec une table vide, l'assertion
+correspondante est retirée, et les échantillonneurs absents de la table reçoivent leurs indices de
+descripteurs depuis les constantes partagées. La partie « registres non nommés » du patch d'origine est
+remplacée par xr_cN de Skate1Native (même effet : chargement brut depuis le tampon de constantes) ; 256
+registres sont déclarés pour les deux types de shader, comme avant.
+---
+ XenosRecomp/shader_recompiler.cpp | 21 ++++++++++++++++++---
+ 1 file changed, 18 insertions(+), 3 deletions(-)
+
+diff --git a/XenosRecomp/shader_recompiler.cpp b/XenosRecomp/shader_recompiler.cpp
+index 399b050..ed43a33 100644
+--- a/XenosRecomp/shader_recompiler.cpp
++++ b/XenosRecomp/shader_recompiler.cpp
+@@ -1,3 +1,4 @@
++#include <set>
+ #include "shader_recompiler.h"
+ #include "shader_common.h"
+ 
+@@ -1105,14 +1106,16 @@ void ShaderRecompiler::recompile(const uint8_t* shaderData, const std::string_vi
+     const auto shaderContainer = reinterpret_cast<const ShaderContainer*>(shaderData);
+ 
+     assert((shaderContainer->flags & 0xFFFFFF00) == 0x102A1100);
+-    assert(shaderContainer->constantTableOffset != NULL);
+ 
+     out += include;
+     out += '\n';
+ 
+     isPixelShader = (shaderContainer->flags & 0x1) == 0;
+ 
+-    const auto constantTableContainer = reinterpret_cast<const ConstantTableContainer*>(shaderData + shaderContainer->constantTableOffset);
++    // Dash 360 : les shaders sans constante n'ont pas de table (constantTableOffset == 0) -> table vide
++    static const uint8_t s_emptyConstantTable[sizeof(ConstantTableContainer)] = {};
++    const auto constantTableContainer = reinterpret_cast<const ConstantTableContainer*>(
++        shaderContainer->constantTableOffset != 0 ? shaderData + shaderContainer->constantTableOffset : s_emptyConstantTable);
+     constantTableData = reinterpret_cast<const uint8_t*>(&constantTableContainer->constantTable);
+ 
+     out += "#ifdef __spirv__\n\n";
+@@ -1191,7 +1194,7 @@ void ShaderRecompiler::recompile(const uint8_t* shaderData, const std::string_vi
+ 
+     // Registers the code reads that no constant table entry covers (EA's
+     // shaders use raw registers next to named constants): plain loads.
+-    const uint32_t float4RegisterCount = isPixelShader ? 224 : 256;
++    const uint32_t float4RegisterCount = 256;
+     for (uint32_t i = 0; i < float4RegisterCount; i++)
+     {
+         if (float4Constants.count(i) == 0)
+@@ -1199,6 +1202,18 @@ void ShaderRecompiler::recompile(const uint8_t* shaderData, const std::string_vi
+                 i, isPixelShader ? "Pixel" : "Vertex", i * 16);
+     }
+ 
++    // Dash 360 : échantillonneurs sans entrée dans la table de constantes -> indices lus dans les constantes partagées
++    {
++        for (uint32_t r = 0; r < 16; r++)
++        {
++            if (samplers.find(r) != samplers.end())
++                continue;
++            for (size_t j = 0; j < std::size(TEXTURE_DIMENSIONS); j++)
++                println("#define s{}_Texture{}DescriptorIndex vk::RawBufferLoad<uint>(g_PushConstants.SharedConstants + {})", r, TEXTURE_DIMENSIONS[j], j * 64 + r * 4);
++            println("#define s{}_SamplerDescriptorIndex vk::RawBufferLoad<uint>(g_PushConstants.SharedConstants + {})", r, std::size(TEXTURE_DIMENSIONS) * 64 + r * 4);
++        }
++    }
++
+     out += "\n#else\n\n";
+ 
+     println("cbuffer {}ShaderConstants : register(b{}, space4)", isPixelShader ? "Pixel" : "Vertex", isPixelShader ? 1 : 0);
+-- 
+2.56.0
+

@@ -1,0 +1,494 @@
+From 11e5ccf5c000994c9a7d797b2069a7c1a88a2901 Mon Sep 17 00:00:00 2001
+From: Kurtisone <104103601+Kurtisone@users.noreply.github.com>
+Date: Sun, 8 Nov 2026 11:02:27 +0100
+Subject: [PATCH 3/4] =?UTF-8?q?Trials=20ReVolution=20:=20export=20m=C3=A9m?=
+ =?UTF-8?q?oire,=20LOD=20de=20texture,=20branche=20else,=20cube,=20pixels?=
+ =?UTF-8?q?=20invit=C3=A9s=20(reprise=20telle=20quelle)?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Source : TrialsReVolution, tools/native/xenosrecomp.patch (473 lignes). Export mémoire (eA, eM0..4, memExport),
+SetTextureLod / GetTextureComputedLod, biais et échelle d'exposant des textures, `cube` avec v.yxzz, SetpInv
+avec p0, coordonnées fenêtre (g_ScreenMul/g_ScreenAdd), pixels invités (g_PosScale), compteurs de boucle i16/i17,
+identifiant de sommet. Le crochet de 224 -> 256 registres est déjà dans le commit précédent.
+ATTENTION : repris sans condition ; le commit suivant le place derrière XENOS_RECOMP_TRIALS=1.
+---
+ XenosRecomp/shader_common.h       | 190 ++++++++++++++++++++++++++++++
+ XenosRecomp/shader_recompiler.cpp | 107 +++++++++++++++--
+ XenosRecomp/shader_recompiler.h   |   1 +
+ 3 files changed, 287 insertions(+), 11 deletions(-)
+
+diff --git a/XenosRecomp/shader_common.h b/XenosRecomp/shader_common.h
+index 5b39c94..6c3a6c9 100644
+--- a/XenosRecomp/shader_common.h
++++ b/XenosRecomp/shader_common.h
+@@ -32,6 +32,15 @@ struct PushConstants
+ #define g_SwappedTexcoords         vk::RawBufferLoad<uint>(g_PushConstants.SharedConstants + 260)
+ #define g_HalfPixelOffset          vk::RawBufferLoad<float2>(g_PushConstants.SharedConstants + 264)
+ #define g_AlphaThreshold           vk::RawBufferLoad<float>(g_PushConstants.SharedConstants + 272)
++#define g_PosScale                 vk::RawBufferLoad<float2>(g_PushConstants.SharedConstants + 288)
++#define g_ScreenMul                vk::RawBufferLoad<float3>(g_PushConstants.SharedConstants + 360)
++#define g_ScreenAdd                vk::RawBufferLoad<float3>(g_PushConstants.SharedConstants + 372)
++#define g_TexExpScale(i)           vk::RawBufferLoad<float>(g_PushConstants.SharedConstants + 296 + (i) * 4)
++#define g_TexBiasBits(i)           ((vk::RawBufferLoad<uint>(g_PushConstants.SharedConstants + 392 + ((i) >> 3) * 4) >> (((i) & 7) * 4)) & 15)
++// Memory export: the buffer that holds the exported guest memory, and its regions (guest start and end in bytes, offset).
++#define g_ExportMemory             vk::RawBufferLoad<uint64_t>(g_PushConstants.SharedConstants + 384)
++#define g_ExportRegions            (g_PushConstants.SharedConstants + 400)
++#define EXPORT_REGION_COUNT        8
+ 
+ [[vk::constant_id(0)]] const uint g_SpecConstants = 0;
+ 
+@@ -45,6 +54,9 @@ struct PushConstants
+     float2 g_HalfPixelOffset : packoffset(c16.z); \
+     float g_AlphaThreshold : packoffset(c17.x);
+ 
++#define g_ScreenMul float3(1.0, 1.0, 1.0)
++#define g_ScreenAdd float3(0.0, 0.0, 0.0)
++
+ uint g_SpecConstants();
+ 
+ #endif
+@@ -67,6 +79,179 @@ float4 tfetch2D(uint resourceDescriptorIndex, uint samplerDescriptorIndex, float
+     return texture.Sample(g_SamplerDescriptorHeap[samplerDescriptorIndex], texCoord + offset / getTexture2DDimensions(texture));
+ }
+ 
++#ifdef __spirv__
++
++// Memory export, as the SDK's translator does it: eA holds the stream (base address, index, format, count) in the
++// bits of a float4, eM0 to eM4 the elements, written in the format and byte order the stream names.
++uint exportSwap(uint v, uint endian)
++{
++    if (endian == 1)
++        return ((v & 0x00FF00FFu) << 8) | ((v >> 8) & 0x00FF00FFu);
++    if (endian == 2 || endian >= 4)
++        return (v << 24) | ((v & 0xFF00u) << 8) | ((v >> 8) & 0xFF00u) | (v >> 24);
++    if (endian == 3)
++        return (v << 16) | (v >> 16);
++    return v;
++}
++
++uint4 exportSwap128(uint4 v, uint endian)
++{
++    if (endian == 4)
++        v = v.yxwz;
++    else if (endian == 5)
++        v = v.wzyx;
++    return uint4(exportSwap(v.x, endian), exportSwap(v.y, endian), exportSwap(v.z, endian), exportSwap(v.w, endian));
++}
++
++// The element as dwords; log2Size is its size in bytes (7 when the format is not one memory export takes).
++uint4 exportPack(float4 v, uint format, bool swapRedBlue, bool isSigned, bool isNorm, out uint log2Size)
++{
++    if (swapRedBlue)
++        v = v.zyxw;
++    uint4 widths = 0;
++    log2Size = 2;
++    switch (format)
++    {
++    case 2: case 8: case 9: widths = uint4(8, 0, 0, 0); log2Size = 0; break;
++    case 3: widths = uint4(5, 5, 5, 1); log2Size = 1; break;
++    case 4: widths = uint4(5, 6, 5, 0); log2Size = 1; break;
++    case 5: widths = uint4(5, 5, 6, 0); log2Size = 1; break;
++    case 6: case 14: case 50: widths = uint4(8, 8, 8, 8); break;
++    case 7: case 54: widths = uint4(10, 10, 10, 2); break;
++    case 10: widths = uint4(8, 8, 0, 0); log2Size = 1; break;
++    case 15: widths = uint4(4, 4, 4, 4); log2Size = 1; break;
++    case 16: case 55: widths = uint4(11, 11, 10, 0); break;
++    case 17: case 56: widths = uint4(10, 11, 11, 0); break;
++    case 24: widths = uint4(16, 0, 0, 0); log2Size = 1; break;
++    case 25: widths = uint4(16, 16, 0, 0); break;
++    case 26: widths = uint4(16, 16, 16, 16); log2Size = 3; break;
++    case 30: log2Size = 1; return uint4(f32tof16(v.x), 0, 0, 0);
++    case 31: log2Size = 2; return uint4(f32tof16(v.x) | (f32tof16(v.y) << 16), 0, 0, 0);
++    case 32: log2Size = 3; return uint4(f32tof16(v.x) | (f32tof16(v.y) << 16), f32tof16(v.z) | (f32tof16(v.w) << 16), 0, 0);
++    case 36: log2Size = 2; return uint4(asuint(v.x), 0, 0, 0);
++    case 37: log2Size = 3; return uint4(asuint(v.x), asuint(v.y), 0, 0);
++    case 38: log2Size = 4; return asuint(v);
++    default: log2Size = 7; return 0;
++    }
++    uint4 packed = 0;
++    uint offset = 0;
++    for (uint c = 0; c < 4; ++c)
++    {
++        uint width = widths[c];
++        if (width == 0)
++            break;
++        float f = isnan(v[c]) ? 0.0 : v[c];
++        uint bits;
++        if (isSigned)
++        {
++            if (isNorm)
++                f = clamp(f, -1.0, 1.0) * float((1u << (width - 1)) - 1);
++            bits = uint(int(f + (f < 0.0 ? -0.5 : 0.5)));
++        }
++        else
++        {
++            if (isNorm)
++                f = saturate(f) * float((1u << width) - 1);
++            bits = uint(max(f, 0.0) + 0.5);
++        }
++        bits &= (1u << width) - 1;
++        // Two 16-bit components share each dword.
++        uint dword = log2Size == 3 ? c / 2 : 0;
++        uint shift = log2Size == 3 ? (c & 1) * 16 : offset;
++        packed[dword] |= bits << shift;
++        offset += width;
++    }
++    return packed;
++}
++
++// Where a guest address (and the bytes after it) are in the export buffer, 0 outside every region.
++uint64_t exportAddress(uint address, uint size)
++{
++    [unroll]
++    for (uint i = 0; i < EXPORT_REGION_COUNT; ++i)
++    {
++        uint4 region = vk::RawBufferLoad<uint4>(g_ExportRegions + i * 16);
++        if (address >= region.x && address + size <= region.y)
++            return g_ExportMemory + region.z + (address - region.x);
++    }
++    return 0;
++}
++
++void memExport(float4 eA, float4 eM0, float4 eM1, float4 eM2, float4 eM3, float4 eM4, uint written)
++{
++    uint4 stream = asuint(eA);
++    // The hardware validates the upper bits of the stream.
++    if (any((stream >> uint4(30, 23, 23, 23)) != uint4(1, 0x96, 0x96, 0x96)))
++        return;
++    uint info = stream.z;
++    uint endian = info & 7;
++    uint format = (info >> 8) & 63;
++    bool isSigned = (info & (1u << 16)) != 0;
++    bool isNorm = (info & (1u << 17)) == 0;
++    bool swapRedBlue = (info & (1u << 19)) != 0;
++    uint index = stream.y & 0x7FFFFF;
++    uint count = stream.w & 0x7FFFFF;
++    // Elements past the end of the stream are not stored.
++    uint remaining = uint(clamp(int(count) - int(index), 0, 5));
++    float4 elements[5] = { eM0, eM1, eM2, eM3, eM4 };
++    [unroll]
++    for (uint i = 0; i < 5; ++i)
++    {
++        if ((written & (1u << i)) == 0 || i >= remaining)
++            continue;
++        uint log2Size;
++        uint4 value = exportSwap128(exportPack(elements[i], format, swapRedBlue, isSigned, isNorm, log2Size), endian);
++        if (log2Size > 4)
++            continue;
++        uint address = (stream.x << 2) + ((index + i) << log2Size);
++        uint64_t target = exportAddress(address, 1u << log2Size);
++        if (target == 0)
++            continue;
++        if (log2Size < 2)
++        {
++            // Part of a dword: the rest is kept.
++            uint shift = (address & (log2Size == 0 ? 3 : 2)) * 8;
++            uint64_t dword = target - (address & 3);
++            uint mask = (log2Size == 0 ? 0xFFu : 0xFFFFu) << shift;
++            vk::RawBufferStore<uint>(dword, (vk::RawBufferLoad<uint>(dword) & ~mask) | ((value.x << shift) & mask));
++        }
++        else
++        {
++            for (uint d = 0; d < (1u << (log2Size - 2)); ++d)
++                vk::RawBufferStore<uint>(target + d * 4, value[d]);
++        }
++    }
++}
++
++#endif
++
++// A level the shader picked (setTexLOD), and texel rather than normalized coordinates.
++float4 tfetch2DLod(uint resourceDescriptorIndex, uint samplerDescriptorIndex, float2 texCoord, float2 offset, float lod, bool denormalized)
++{
++    Texture2D<float4> texture = g_Texture2DDescriptorHeap[resourceDescriptorIndex];
++    uint width, height, levels;
++    texture.GetDimensions(0, width, height, levels);
++    // A level past the last one reads zero (the page table's seed frames fetch level 8 of 8 to start a level over).
++    if (uint(max(lod, 0.0)) >= levels)
++        return 0.0;
++    texture.GetDimensions(uint(max(lod, 0.0)), width, height, levels);
++    float2 dimensions = float2(width, height);
++    float2 uv = denormalized ? (texCoord + offset) / dimensions : texCoord + offset / dimensions;
++    return texture.SampleLevel(g_SamplerDescriptorHeap[samplerDescriptorIndex], uv, lod);
++}
++
++float compTexLod2D(uint resourceDescriptorIndex, uint samplerDescriptorIndex, float2 texCoord)
++{
++    Texture2D<float4> texture = g_Texture2DDescriptorHeap[resourceDescriptorIndex];
++    return texture.CalculateLevelOfDetail(g_SamplerDescriptorHeap[samplerDescriptorIndex], texCoord);
++}
++
++float4 tfetch2DDenorm(uint resourceDescriptorIndex, uint samplerDescriptorIndex, float2 texCoord, float2 offset)
++{
++    Texture2D<float4> texture = g_Texture2DDescriptorHeap[resourceDescriptorIndex];
++    return texture.Sample(g_SamplerDescriptorHeap[samplerDescriptorIndex], (texCoord + offset) / getTexture2DDimensions(texture));
++}
++
+ float2 getWeights2D(uint resourceDescriptorIndex, uint samplerDescriptorIndex, float2 texCoord, float2 offset)
+ {
+     Texture2D<float4> texture = g_Texture2DDescriptorHeap[resourceDescriptorIndex];
+@@ -161,6 +346,11 @@ float4 tfetchCube(uint resourceDescriptorIndex, uint samplerDescriptorIndex, flo
+     return g_TextureCubeDescriptorHeap[resourceDescriptorIndex].Sample(g_SamplerDescriptorHeap[samplerDescriptorIndex], cubeMapData.cubeMapDirections[texCoord.z]);
+ }
+ 
++float4 texBias(uint bits, float4 value)
++{
++    return select(bool4(bits & 1, bits & 2, bits & 4, bits & 8), value * 2.0 - 1.0, value);
++}
++
+ float4 tfetchR11G11B10(uint4 value)
+ {
+     if (g_SpecConstants() & SPEC_CONSTANT_R11G11B10_NORMAL)
+diff --git a/XenosRecomp/shader_recompiler.cpp b/XenosRecomp/shader_recompiler.cpp
+index ed43a33..fcdbc85 100644
+--- a/XenosRecomp/shader_recompiler.cpp
++++ b/XenosRecomp/shader_recompiler.cpp
+@@ -226,6 +226,27 @@ void ShaderRecompiler::recompile(const VertexFetchInstruction& instr, uint32_t a
+ 
+ void ShaderRecompiler::recompile(const TextureFetchInstruction& instr, bool bicubic)
+ {
++    if (instr.opcode == FetchOpcode::SetTextureLod)
++    {
++        indent();
++        println("texLod = r{}.{};", instr.srcRegister, SWIZZLES[instr.srcSwizzle & 0x3]);
++        return;
++    }
++
++    if (instr.opcode == FetchOpcode::GetTextureComputedLod)
++    {
++        // The level the hardware would pick, in the destination components that select x: Fusion hands it to setTexLOD.
++        for (size_t i = 0; i < 4; i++)
++        {
++            if (getDestSwizzle(instr.dstSwizzle, i) != FetchDestinationSwizzle::X)
++                continue;
++            indent();
++            println("r{}.{} = compTexLod2D(s{}_Texture2DDescriptorIndex, s{}_SamplerDescriptorIndex, r{}.{}{});", instr.dstRegister, SWIZZLES[i],
++                instr.constIndex, instr.constIndex, instr.srcRegister, SWIZZLES[instr.srcSwizzle & 0x3], SWIZZLES[(instr.srcSwizzle >> 2) & 0x3]);
++        }
++        return;
++    }
++
+     if (instr.opcode != FetchOpcode::TextureFetch && instr.opcode != FetchOpcode::GetTextureWeights)
+         return;
+ 
+@@ -292,7 +313,8 @@ void ShaderRecompiler::recompile(const TextureFetchInstruction& instr, bool bicu
+             out += "1.0 - ";
+     #endif
+ 
+-        out += "tfetch";
++        // Components the fetch constant marks as unsigned biased (2 * v - 1) are converted first.
++        print("texBias(g_TexBiasBits({}), tfetch", instr.constIndex & 15);
+         break;
+     }
+     case FetchOpcode::GetTextureWeights:
+@@ -327,6 +349,13 @@ void ShaderRecompiler::recompile(const TextureFetchInstruction& instr, bool bicu
+ 
+     out += dimension;
+ 
++    const bool explicitLod = instr.opcode == FetchOpcode::TextureFetch && instr.dimension == TextureDimension::Texture2D && instr.useRegLod;
++    const bool denormalized = instr.opcode == FetchOpcode::TextureFetch && instr.dimension == TextureDimension::Texture2D && instr.texCoordDenorm;
++    if (explicitLod)
++        out += "Lod";
++    else if (denormalized)
++        out += "Denorm";
++
+ #ifdef UNLEASHED_RECOMP
+     if (bicubic)
+         out += "Bicubic";
+@@ -339,16 +368,22 @@ void ShaderRecompiler::recompile(const TextureFetchInstruction& instr, bool bicu
+     {
+     case TextureDimension::Texture2D:
+         print(", float2({}, {})", instr.offsetX * 0.5f, instr.offsetY * 0.5f);
++        if (explicitLod)
++            print(", texLod, {}", denormalized ? "true" : "false");
+         break;
+     case TextureDimension::TextureCube:
+         out += ", cubeMapData";
+         break;
+     }
+ 
+-    out += ").";
++    out += instr.opcode == FetchOpcode::TextureFetch ? "))." : ").";
+ 
+     printDstSwizzle(instr.dstSwizzle, true);
+ 
++    // The fetch constant's exponent adjust (and the scale of integer formats), set per draw.
++    if (instr.opcode == FetchOpcode::TextureFetch)
++        print(" * g_TexExpScale({})", instr.constIndex & 15);
++
+     out += ";\n";
+ 
+     printDstSwizzle01(instr.dstRegister, instr.dstSwizzle);
+@@ -581,7 +616,16 @@ void ShaderRecompiler::recompile(const AluInstruction& instr)
+     bool closeIfBracket = false;
+ 
+     std::string_view exportRegister;
+-    if (instr.exportData)
++    // Memory export: the address (eA) and up to five elements (eM0 to eM4), stored by memExport.
++    const bool memoryExport = instr.exportData && instr.vectorDest >= uint32_t(ExportRegister::ExportAddress) &&
++        instr.vectorDest <= uint32_t(ExportRegister::ExportData4);
++    if (memoryExport)
++    {
++        static constexpr const char* MEMORY_EXPORT_REGISTERS[] = { "eA", "eM0", "eM1", "eM2", "eM3", "eM4" };
++        exportRegister = MEMORY_EXPORT_REGISTERS[instr.vectorDest - uint32_t(ExportRegister::ExportAddress)];
++        usesMemoryExport = true;
++    }
++    else if (instr.exportData)
+     {
+         if (isPixelShader)
+         {
+@@ -767,7 +811,8 @@ void ShaderRecompiler::recompile(const AluInstruction& instr)
+             break;
+ 
+         case AluVectorOpcode::Cube:
+-            print("cube(r{}, cubeMapData)", instr.src1Register);
++            // The hardware takes the direction v as v.zzxy and v.yxzz: v is the second operand's yxz.
++            print("cube(({}).yxzz, cubeMapData)", op(VECTOR_1));
+             break;
+ 
+         case AluVectorOpcode::Max4:
+@@ -952,7 +997,7 @@ void ShaderRecompiler::recompile(const AluInstruction& instr)
+             break;
+ 
+         case AluScalarOpcode::SetpInv:
+-            print("{0} == 0.0 ? 1.0 : {0}", op(SCALAR_0));
++            print("p0 ? 0.0 : ({0} == 0.0 ? 1.0 : {0})", op(SCALAR_0));
+             break;
+ 
+         case AluScalarOpcode::SetpPop:
+@@ -1080,6 +1125,12 @@ void ShaderRecompiler::recompile(const AluInstruction& instr)
+         }
+     }
+ 
++    if (memoryExport && instr.vectorDest != uint32_t(ExportRegister::ExportAddress) && (instr.vectorWriteMask | instr.scalarWriteMask) != 0)
++    {
++        indent();
++        println("eMw |= {}u;", 1u << (instr.vectorDest - uint32_t(ExportRegister::ExportData0)));
++    }
++
+     if (instr.scalarOpcode >= AluScalarOpcode::KillsEq && instr.scalarOpcode <= AluScalarOpcode::KillsOne)
+     {
+         indent();
+@@ -1372,10 +1423,10 @@ void ShaderRecompiler::recompile(const uint8_t* shaderData, const std::string_vi
+             vertexElements.emplace(uint32_t(vertexElement.address), vertexElement);
+         }
+ 
++        out += "\tin uint iVertexId : SV_VertexID,\n";
+     #ifdef UNLEASHED_RECOMP
+         if (hasIndexCount)
+         {
+-            out += "\tin uint iVertexId : SV_VertexID,\n";
+             out += "\tin uint iInstanceId : SV_InstanceID,\n";
+         }
+     #endif
+@@ -1454,6 +1505,15 @@ void ShaderRecompiler::recompile(const uint8_t* shaderData, const std::string_vi
+ 
+     bool printedRegisters[32]{};
+ 
++    // Loop counts of the pixel shader constants the raw path keeps per draw.
++    if (isPixelShader)
++    {
++        out += "#ifdef __spirv__\n";
++        out += "\tint4 i16 = int4(vk::RawBufferLoad<uint>(g_PushConstants.SharedConstants + 276) & 0xFF, 0, 0, 0);\n";
++        out += "\tint4 i17 = int4(vk::RawBufferLoad<uint>(g_PushConstants.SharedConstants + 280) & 0xFF, 0, 0, 0);\n";
++        out += "#else\n\tint4 i16 = int4(1, 0, 0, 0);\n\tint4 i17 = int4(1, 0, 0, 0);\n#endif\n";
++    }
++
+     uint32_t interpolatorCount = (shader->interpolatorInfo >> 5) & 0x1F;
+ 
+     for (uint32_t i = 0; i < interpolatorCount; i++)
+@@ -1498,14 +1558,14 @@ void ShaderRecompiler::recompile(const uint8_t* shaderData, const std::string_vi
+             print("\tfloat4 r{} = ", i);
+             if (isPixelShader && i == ((shader->fieldC >> 8) & 0xFF))
+             {
+-                out += "float4((iPos.xy - 0.5) * float2(iFace ? 1.0 : -1.0, 1.0), 0.0, 0.0);\n";
++                // Guest pixels: draws to scaled surfaces are made at several host pixels to the pixel.
++                out += "float4(floor(iPos.xy * g_PosScale) * float2(iFace ? 1.0 : -1.0, 1.0), 0.0, 0.0);\n";
+             }
+-        #ifdef UNLEASHED_RECOMP
+-            else if (!isPixelShader && hasIndexCount && i == 0)
++            else if (!isPixelShader && i == 0)
+             {
+-                out += "float4(iVertexId + g_IndexCount.x * iInstanceId, 0.0, 0.0, 0.0);\n";
++                // The vertex index, which shaders use directly.
++                out += "float4(iVertexId, 0.0, 0.0, 0.0);\n";
+             }
+-        #endif
+             else
+             {
+                 out += "0.0;\n";
+@@ -1515,6 +1575,8 @@ void ShaderRecompiler::recompile(const uint8_t* shaderData, const std::string_vi
+ 
+     out += "\tint a0 = 0;\n";
+     out += "\tint aL = 0;\n";
++    out += "\tfloat texLod = 0.0;\n";
++    out += "//@MEMORY_EXPORT_DECLARATIONS\n";
+     out += "\tbool p0 = false;\n";
+     out += "\tfloat ps = 0.0;\n";
+     if (isPixelShader)
+@@ -1649,6 +1711,15 @@ void ShaderRecompiler::recompile(const uint8_t* shaderData, const std::string_vi
+ 
+             switch (cfInstr.opcode)
+             {
++            case ControlFlowOpcode::Alloc:
++                // A new memory export allocation stores the elements written for the one before.
++                if (cfInstr.alloc.allocType == 3)
++                {
++                    indent();
++                    out += "//@MEMORY_EXPORT_STORE\n";
++                }
++                break;
++
+             case ControlFlowOpcode::Exec:
+             case ControlFlowOpcode::ExecEnd:
+                 address = cfInstr.exec.address;
+@@ -1828,6 +1899,9 @@ void ShaderRecompiler::recompile(const uint8_t* shaderData, const std::string_vi
+ 
+             if (shouldReturn)
+             {
++                indent();
++                out += "//@MEMORY_EXPORT_STORE\n";
++
+                 if (isPixelShader)
+                 {
+                     specConstantsMask |= SPEC_CONSTANT_ALPHA_TEST;
+@@ -1866,6 +1940,8 @@ void ShaderRecompiler::recompile(const uint8_t* shaderData, const std::string_vi
+                     if (!hasMtxProjection)
+                 #endif
+                     {
++                        // Vertices in window coordinates (PA_CL_VTE_CNTL) are put back through the viewport transform.
++                        out += "\toPos.xyz = oPos.xyz * g_ScreenMul + g_ScreenAdd * oPos.w;\n";
+                         out += "\toPos.xy += g_HalfPixelOffset * oPos.w;\n";
+                     }
+                 }
+@@ -1919,4 +1995,13 @@ void ShaderRecompiler::recompile(const uint8_t* shaderData, const std::string_vi
+ #endif
+ 
+     out += "}";
++
++    // Shaders without memory export carry none of it.
++    const auto replaceAll = [&](const std::string& marker, const std::string& text)
++    {
++        for (size_t at = out.find(marker); at != std::string::npos; at = out.find(marker, at + text.size()))
++            out.replace(at, marker.size(), text);
++    };
++    replaceAll("//@MEMORY_EXPORT_DECLARATIONS", usesMemoryExport ? "\tfloat4 eA = 0.0;\n\tfloat4 eM0 = 0.0, eM1 = 0.0, eM2 = 0.0, eM3 = 0.0, eM4 = 0.0;\n\tuint eMw = 0;" : "");
++    replaceAll("//@MEMORY_EXPORT_STORE", usesMemoryExport ? "if (eMw != 0) { memExport(eA, eM0, eM1, eM2, eM3, eM4, eMw); eMw = 0; }" : "");
+ }
+diff --git a/XenosRecomp/shader_recompiler.h b/XenosRecomp/shader_recompiler.h
+index 1cec90c..d258bdf 100644
+--- a/XenosRecomp/shader_recompiler.h
++++ b/XenosRecomp/shader_recompiler.h
+@@ -27,6 +27,7 @@ struct ShaderRecompiler : StringBuffer
+ {
+     uint32_t indentation = 0;
+     bool isPixelShader = false;
++    bool usesMemoryExport = false;
+     const uint8_t* constantTableData = nullptr;
+     std::unordered_map<uint32_t, VertexElement> vertexElements;
+     std::unordered_map<uint32_t, std::string> interpolators;
+-- 
+2.56.0
+

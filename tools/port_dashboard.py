@@ -30,9 +30,10 @@ import zlib
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 TOOLS = os.path.join(ROOT, "tools")
 TEMPLATE = os.path.join(TOOLS, "templates", "dashboard")
-REXGLUE = os.path.join(ROOT, "sdk", "bin", "rexglue")
+SDK = os.path.join(ROOT, "sdk")            # préfixe d'installation du SDK (--sdk-prefix pour en essayer un autre)
+REXGLUE = os.path.join(SDK, "bin", "rexglue")
+BUILD_DIR_NAME = PRESET = "linux-amd64-relwithdebinfo"
 XEXINFO = os.path.join(TOOLS, "xexinfo", "build", "xexinfo")
-PRESET = "linux-amd64-relwithdebinfo"
 STAGES = ["extract", "assets", "pe", "scaffold", "codegen", "build", "smoke", "compare"]
 
 # Polices : nom canonique dans la flash console (XeBuilds les fournit en minuscules)
@@ -467,14 +468,19 @@ def stage_codegen(a, ctx):
 # --------------------------------------------------------------------------------------------------
 def stage_build(a, ctx):
     dest = ctx["dest"]
-    bdir = os.path.join(dest, "out", "build", PRESET)
+    bdir = os.path.join(dest, "out", "build", BUILD_DIR_NAME)
     if not os.path.exists(os.path.join(bdir, "build.ninja")):
-        run(["cmake", "--preset", PRESET, f"-DCMAKE_PREFIX_PATH={os.path.join(ROOT, 'sdk')}"], cwd=dest,
-            log_path=os.path.join(ctx["work"], "cmake_configure.log"))
+        if BUILD_DIR_NAME == PRESET:
+            run(["cmake", "--preset", PRESET, f"-DCMAKE_PREFIX_PATH={SDK}"], cwd=dest,
+                log_path=os.path.join(ctx["work"], "cmake_configure.log"))
+        else:  # SDK alternatif : dossier de compilation à part, mêmes variables que le préréglage
+            run(["cmake", "-S", dest, "-B", bdir, "-G", "Ninja", "-DCMAKE_C_COMPILER=clang",
+                 "-DCMAKE_CXX_COMPILER=clang++", "-DCMAKE_BUILD_TYPE=RelWithDebInfo", f"-DCMAKE_PREFIX_PATH={SDK}"],
+                cwd=dest, log_path=os.path.join(ctx["work"], "cmake_configure.log"))
     for attempt in (1, 2):
         lp = os.path.join(ctx["work"], f"build{attempt}.log")
         t0 = time.time()
-        rc, out = run(["cmake", "--build", "--preset", PRESET, "-j", str(a.jobs)], cwd=dest, log_path=lp,
+        rc, out = run(["cmake", "--build", bdir, "-j", str(a.jobs)], cwd=dest, log_path=lp,
                       check=False)
         log(f"compilation #{attempt} : code {rc} ({time.time() - t0:.0f} s) -> {os.path.relpath(lp, ROOT)}")
         if rc == 0:
@@ -495,7 +501,7 @@ def stage_build(a, ctx):
         raise StageError("compilation en échec :\n" + "\n".join(out.splitlines()[-30:]))
     link = os.path.join(bdir, "librexgpu-xenos.so")
     if not os.path.lexists(link):
-        os.symlink(os.path.join(ROOT, "sdk", "lib", "librexgpu-xenos.so"), link)
+        os.symlink(os.path.join(SDK, "lib", "librexgpu-xenos.so"), link)
     if not os.path.exists(os.path.join(bdir, "dash")):
         raise StageError("l'exécutable dash n'a pas été produit")
 
@@ -547,7 +553,7 @@ def png_diff(p1, p2):
 
 def stage_smoke(a, ctx):
     dest = ctx["dest"]
-    exe = os.path.join(dest, "out", "build", PRESET, "dash")
+    exe = os.path.join(dest, "out", "build", BUILD_DIR_NAME, "dash")
     if not os.path.exists(exe):
         raise StageError("exécutable absent (étape build)")
     runs = os.path.join(dest, "runs")
@@ -555,7 +561,7 @@ def stage_smoke(a, ctx):
     fb = os.path.join(runs, name + ".fb")
     shutil.rmtree(fb, ignore_errors=True)
     os.makedirs(fb)
-    logdir = os.path.join(dest, "out", "build", PRESET, "logs")
+    logdir = os.path.join(dest, "out", "build", BUILD_DIR_NAME, "logs")
     before = set(glob.glob(os.path.join(logdir, "*.log")))
     disp = free_display()
     xvfb = subprocess.Popen(["Xvfb", f":{disp}", "-screen", "0", "1280x720x24", "-fbdir", fb],
@@ -569,7 +575,7 @@ def stage_smoke(a, ctx):
             raise StageError("Xvfb n'a pas démarré")
         env = dict(os.environ, DISPLAY=f":{disp}", DASH_AUDIO="nop", MESA_VK_WSI_PRESENT_MODE="immediate",
                    VK_ICD_FILENAMES=os.environ.get("VK_ICD_FILENAMES", "/usr/share/vulkan/icd.d/lvp_icd.json"),
-                   LD_LIBRARY_PATH=os.path.join(ROOT, "sdk", "lib"))
+                   LD_LIBRARY_PATH=os.path.join(SDK, "lib"))
         with open(out_path, "w") as fo:
             dash = subprocess.Popen([exe, f"--game_data_root={os.path.join(dest, 'assets')}", "--gpu_plugin=xenos",
                                      "--log_flush_interval=1"], env=env, stdout=fo, stderr=subprocess.STDOUT,
@@ -667,11 +673,19 @@ def main():
     ap.add_argument("--compare-with", help="projet de référence à comparer (tables de fonctions, overrides)")
     ap.add_argument("--reference-png", help="capture de référence à comparer au test de fumée")
     ap.add_argument("--max-diff", type=float, default=4.0, help="écart moyen toléré avec --reference-png, sur 255 (défaut 4)")
+    ap.add_argument("--sdk-prefix", help="préfixe d'installation d'un autre SDK (défaut : sdk/) ; la compilation se fait alors dans "
+                                         "out/build/linux-amd64-relwithdebinfo-<nom du préfixe>, sans toucher à la compilation habituelle")
     ap.add_argument("--smoke-seconds", type=int, default=40)
     ap.add_argument("--smoke-name", default="smoke")
     ap.add_argument("--max-iter", type=int, default=12, help="itérations maximales de la boucle codegen")
     ap.add_argument("-j", "--jobs", type=int, default=os.cpu_count() or 4)
     a = ap.parse_args()
+    if a.sdk_prefix:
+        global SDK, REXGLUE, BUILD_DIR_NAME
+        SDK = os.path.abspath(a.sdk_prefix)
+        REXGLUE = os.path.join(SDK, "bin", "rexglue")
+        if os.path.realpath(SDK) != os.path.realpath(os.path.join(ROOT, "sdk")):
+            BUILD_DIR_NAME = f"{PRESET}-{os.path.basename(SDK.rstrip('/'))}"
 
     for tool, hint in ((REXGLUE, "SDK installé (cmake --build ... --target install)"),
                        (XEXINFO, "tools/xexinfo (voir README)")):

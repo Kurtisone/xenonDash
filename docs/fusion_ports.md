@@ -409,3 +409,87 @@ Jalons : « SDK unifié construit » vers 10 j ; « Skate rendu par le noyau com
 `TrialsReVolution` : `README.md`, `BUILDING.md`, `THIRD_PARTY_NOTICES.md`, `docs/{native_port,linux_android}.md`, `build-linux.sh`, `tools/setup_sdk.sh`,
 `sdk-patches/**`, `games/**` (hors `generated/`), `src/*`, `tools/native/xenosrecomp.patch`, `tools/linux/Containerfile`.
 XenonDash : `PLAN.md` (P7/P8), `README.md`, `docs/rendu_natif.md`, `native_gpu/`, `patches/`, historique de `third_party/rexglue-sdk`.
+
+## 8. Avancement : SDK unifié et XenosRecomp unifié (P8, étapes 2 et 2b, 2026-11-12)
+
+### 8.1 SDK unifié : branche `unified` du fork (`third_party/rexglue-sdk`)
+
+Branche `unified` partant de `xenondash` (`4af94a8`, non réécrite), poussée sur le remote `xenondash`. 11 commits, un par correctif
+d'origine (auteur d'origine conservé : tous de Kurtisone) :
+
+| Commit | Source | Contenu |
+|---|---|---|
+| `e28335b` | Trials `linux-android/0001` (= travail de Skate1Native), partie plateforme | cmake, audio SDL/XMA, entrées, UI, noyau/XAM, codegen, système, tests PPC |
+| `688fc58` | idem, partie crochet de rendu natif | `native_guest_renderer`, `native_rhi{,_vulkan}`, `gpu_skip_guest_draws`, télémétrie d'horloge, profil NVIDIA |
+| `e45dbc2` | idem, partie graphique restante | processeur de commandes, caches, traducteurs de shaders, Vulkan (émulation, **conservée**, cf. §4.3) |
+| `95f3ab9` | Trials `0002` | correctifs de rendu Trials du traducteur SPIR-V/Vulkan |
+| `a1f7b2b` | Trials `0003` | nom du dossier d'application Android (option de build) |
+| `00d4775` | Trials `0004` | `rexglue.cmake` garde les soulignés du nom de projet |
+| `de4cb85` | Trials `0005` | jointure unique d'un fil terminé |
+| `b9e3d23` | Trials `0006` | envois Vulkan rapides sur Qualcomm |
+| `e2bb408` | Trials `0007` | contrôles flottants Vulkan désactivables |
+| `b973c1f` | Trials `0008` | *native command sink* (inactif tant qu'aucun jeu n'enregistre de crochet) ; patch d'origine sans en-tête d'auteur |
+| `091e6d3` | XenonDash (compatibilité) | alias `PPCImageConfig`/`PPCFuncMappings` dans le pch généré, voir ci-dessous |
+
+Les six commits XenonDash (`ff47726`..`4af94a8`) sont le socle : fonction table dans le tas, DPC, HMAC-SHA1, arguments u64, imports sans
+thunk, `libXXX.so`. Ils ne faisaient pas doublon : le SDK de Skate/Trials ne contient ni `KeInsertQueueDpc` fonctionnel ni la lecture u64
+(`4af94a8` est conservé tel quel). Le SDK vendorisé de Skate (comparé fichier par fichier) n'apporte **rien** de plus que
+`linux-android/0001..0008` : Trials en est un sur-ensemble.
+
+**Écartés (non appliqués)**
+- Tous les fichiers D3D12 de `0001` (`src/graphics/d3d12/*`, `include/rex/graphics/d3d12/*`, `src/ui/d3d12/*`, bytecodes D3D12 5.1,
+  `native_rhi_d3d12`) : émulation GPU D3D12 de Windows, inutile sous Linux/Vulkan (le build Linux affiche `D3D12=OFF`). Windows/D3D12 n'est
+  donc pas garanti sur `unified`.
+- `sdk-patches/0001..0021` de Trials (D3D12, mémoire partagée, présentateur FSR/NIS, journal de paquets) : déjà fusionnés dans
+  `linux-android/0001/0002` pour Linux, ou D3D12 pur.
+- Non fait (reste) : l'isolation `REX_GPU_EMULATION=OFF` (§4.3) ; les options d'émulation de Skate (`depth_float24_*`, `readback_*`,
+  `clear_memory_page_state`) sont encore compilées, désactivées par défaut.
+
+**Conflits résolus**
+1. `mnk_input_driver.{h,cpp}` (XenonDash `5d18a61` « touches synthétisées » contre Skate) : les deux comportements sont gardés. La file de
+   touches liées de Skate (`RefreshBoundKeystrokesLocked`) est servie d'abord ; la synthèse à partir de l'état manette émulé reste le repli
+   (le Dashboard ne lit que `XamInputGetKeystrokeEx`) ; la mémoire de la synthèse est alignée sur chaque événement servi de la file, pour
+   ne pas doubler les appuis, la répétition automatique est conservée ; `key_latched_` et `RefreshBoundKeystrokesLocked` sont remis à zéro
+   à la perte du focus. Les autres fichiers communs (`kernel_state`, `xmemory`, `phase_register`, `xboxkrnl_threading`) fusionnent seuls.
+2. **Rupture d'API de génération** trouvée à la validation : `0001` préfixe les symboles générés par le projet (`dash_PPCImageConfig`) ; les
+   `app.h` des Dashboards utilisent `PPCImageConfig`. Le commit `091e6d3` ajoute des alias dans le pch généré (projets à une seule image
+   inchangés ; les projets multi-images utilisent les noms préfixés).
+
+**Validation** (build du SDK dans le préfixe séparé `sdk-unified/`, puis `tools/port_dashboard.py --sdk-prefix sdk-unified --stages
+codegen,build,smoke` sur une copie des projets, `work/unified-test/`, pour ne pas toucher aux projets de l'autre agent) :
+
+| Dashboard | codegen + build | smoke (Xvfb + lavapipe, 40 s, aucun FATAL) |
+|---|---|---|
+| 2.0.6770.0 | OK | OK |
+| 2.0.6717.0 | OK | OK |
+| 2.0.13604.0 | OK | OK |
+| 2.0.17559.0 | OK | OK |
+
+Non rejoués : `tools/test_appimage.sh`, `DASH_NATIVE_GPU=ON`, Skate et Fusion (non disponibles ici), test clavier interactif de la fusion de
+`mnk_input_driver` (le smoke ne l'exerce pas). Piège rencontré : l'étape de build de CMake relance `rexglue codegen` quand le SDK change ;
+lancer la validation directement dans `dashboards/<version>` réécrit leurs `generated/` (régénérés ensuite avec `sdk/`, sans perte) :
+d'où `--dest` sur une copie.
+
+**Bascule** : le sous-module `third_party/rexglue-sdk` du superprojet pointe sur `unified` ; `sdk/` est réinstallé depuis `unified`
+(`sdk/bin/rexglue --version` : `0.10.0.19-dev.g091e6d3`). L'ancien `sdk/` est sauvegardé dans `work/sdk-xenondash-backup/` (non versionné).
+Les projets de Dashboard déjà construits régénèrent leur code au prochain build (le binaire `rexglue` a changé).
+`patches/rexglue-sdk-000{1,2,3}-*.patch` restent valables comme historique mais ne sont plus à appliquer.
+
+### 8.2 XenosRecomp unifié : `patches/xenosrecomp/` + `tools/build_xenosrecomp.sh`
+
+Aucun dépôt créé : une série de 4 correctifs sur l'amont `hedge-dev/XenosRecomp` (`990d03b`), appliquée par `tools/build_xenosrecomp.sh`
+dans `work/XenosRecomp-unified` (clone de l'amont, application des correctifs avec empreinte de la série, compilation ; ≈ 30 s).
+
+| Correctif | Source | Comportement |
+|---|---|---|
+| `0001-skate1native-*` | copie vendorisée de Skate | `XENOS_RECOMP_MICROCODE_KEY=1` (clé = XXH3 du microcode), `XENOS_RECOMP_NO_ZSTD=1`, `SPEC_CONSTANT_HALF_NORMAL`, registres non nommés `xr_cN` |
+| `0002-xenondash-*` | `patches/xenosrecomp-dash360.patch` rebasé | table de constantes absente, assertion retirée, échantillonneurs non nommés (le volet « registres non nommés » est remplacé par `xr_cN`, même effet) |
+| `0003-trials-*` | `tools/native/xenosrecomp.patch` de Trials, tel quel | export mémoire, LOD, biais/exposant, `cube`, pixels invités, boucles |
+| `0004-trials-extensions-*` | nouveau | extensions de Trials **seulement avec `XENOS_RECOMP_TRIALS=1`** (sortie `#define XENOS_TRIALS_EXT`) : elles lisent des constantes partagées (décalages 276..412) que `native_gpu/` ne fournit pas |
+
+Vérification : `tools/xenos_batch.py work/shaders6770/ui <sortie> work/XenosRecomp-unified` : **70/70 shaders UI traduits** (52 PS + 18 VS) ;
+les 70 SPIR-V sont **octet pour octet identiques** à ceux de l'ancien XenosRecomp patché (`work/shaders_out`). Avec
+`XENOS_RECOMP_TRIALS=1` et avec `MICROCODE_KEY`+`NO_ZSTD`, 70/70 également. Les clés de cache doivent inclure l'empreinte de la série et ces
+variables (§4.4). `patches/xenosrecomp-dash360.patch` est conservé comme historique, remplacé par la série.
+Reste : tester la série sur des shaders de Skate et de Trials (non disponibles ici) ; brancher `tools/xenos_batch.py` par défaut sur
+`work/XenosRecomp-unified`.

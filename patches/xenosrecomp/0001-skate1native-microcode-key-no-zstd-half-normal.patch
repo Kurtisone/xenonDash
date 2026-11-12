@@ -1,0 +1,184 @@
+From 1db1551ffaa731a5ee8cada023c5ea21193b103c Mon Sep 17 00:00:00 2001
+From: Kurtisone <104103601+Kurtisone@users.noreply.github.com>
+Date: Sun, 8 Nov 2026 11:01:48 +0100
+Subject: [PATCH 1/4] =?UTF-8?q?Skate1Native=20:=20cl=C3=A9s=20de=20cache?=
+ =?UTF-8?q?=20par=20microcode,=20SPIR-V=20non=20compress=C3=A9,=20normales?=
+ =?UTF-8?q?=20demi-flottantes,=20registres=20non=20nomm=C3=A9s?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Source : Skate1Recompiled, third_party/XenosRecomp (copie vendorisée sur 990d03b, MIT).
+- XENOS_RECOMP_MICROCODE_KEY=1 : la clé de cache est le hachage XXH3 du microcode (les conteneurs sont
+  modifiés en place par D3D) ;
+- XENOS_RECOMP_NO_ZSTD=1 : cache SPIR-V stocké sans compression ;
+- SPEC_CONSTANT_HALF_NORMAL (bit 5) : normales/tangentes en demi-flottants ;
+- registres lus mais absents de la table de constantes : xr_cN (chargements bruts), définitions littérales
+  gardées en locales.
+---
+ XenosRecomp/main.cpp              | 40 +++++++++++++++++++++++++++----
+ XenosRecomp/shader_common.h       |  6 +++++
+ XenosRecomp/shader_recompiler.cpp | 21 +++++++++++++++-
+ XenosRecomp/shader_recompiler.h   |  4 ++++
+ 4 files changed, 65 insertions(+), 6 deletions(-)
+
+diff --git a/XenosRecomp/main.cpp b/XenosRecomp/main.cpp
+index d015145..ebf194d 100644
+--- a/XenosRecomp/main.cpp
++++ b/XenosRecomp/main.cpp
+@@ -90,10 +90,30 @@ int main(int argc, char** argv)
+ 
+                 if ((shaderContainer->flags & 0xFFFFFF00) == 0x102A1100 &&
+                     dataSize <= (fileSize - i) &&
+-                    shaderContainer->field1C == 0 &&
+-                    shaderContainer->field20 == 0)
++                    ((shaderContainer->field1C == 0 && shaderContainer->field20 == 0) ||
++                     getenv("XENOS_RECOMP_MICROCODE_KEY") != nullptr))
+                 {
+-                    XXH64_hash_t hash = XXH3_64bits(shaderContainer, dataSize);
++                    // XENOS_RECOMP_MICROCODE_KEY: key shaders by their microcode
++                    // (shader->size bytes at virtualSize + physicalOffset)
++                    // instead of the whole container, for games whose
++                    // containers are patched in memory after loading.
++                    XXH64_hash_t hash;
++                    if (getenv("XENOS_RECOMP_MICROCODE_KEY") != nullptr)
++                    {
++                        auto shaderInfo = reinterpret_cast<const Shader*>(fileData.get() + i + shaderContainer->shaderOffset);
++                        size_t microcodeOffset = size_t(shaderContainer->virtualSize) + shaderInfo->physicalOffset;
++                        if (shaderContainer->shaderOffset + sizeof(Shader) > shaderContainer->virtualSize ||
++                            microcodeOffset + shaderInfo->size > dataSize)
++                        {
++                            i += sizeof(uint32_t);
++                            continue;
++                        }
++                        hash = XXH3_64bits(fileData.get() + i + microcodeOffset, shaderInfo->size);
++                    }
++                    else
++                    {
++                        hash = XXH3_64bits(shaderContainer, dataSize);
++                    }
+                     auto shader = shaders.try_emplace(hash);
+                     if (shader.second)
+                     {
+@@ -191,8 +211,18 @@ int main(int argc, char** argv)
+ 
+         fmt::println("Compressing SPIRV cache...");
+ 
+-        std::vector<uint8_t> spirvCompressed(ZSTD_compressBound(spirv.size()));
+-        spirvCompressed.resize(ZSTD_compress(spirvCompressed.data(), spirvCompressed.size(), spirv.data(), spirv.size(), level));
++        // XENOS_RECOMP_NO_ZSTD: store the SPIR-V cache as is (equal compressed
++        // and decompressed sizes), for hosts without zstd.
++        std::vector<uint8_t> spirvCompressed;
++        if (getenv("XENOS_RECOMP_NO_ZSTD") != nullptr)
++        {
++            spirvCompressed = spirv;
++        }
++        else
++        {
++            spirvCompressed.resize(ZSTD_compressBound(spirv.size()));
++            spirvCompressed.resize(ZSTD_compress(spirvCompressed.data(), spirvCompressed.size(), spirv.data(), spirv.size(), level));
++        }
+ 
+         f.print("const uint8_t g_compressedSpirvCache[] = {{");
+ 
+diff --git a/XenosRecomp/shader_common.h b/XenosRecomp/shader_common.h
+index 1c74034..5b39c94 100644
+--- a/XenosRecomp/shader_common.h
++++ b/XenosRecomp/shader_common.h
+@@ -3,6 +3,8 @@
+ 
+ #define SPEC_CONSTANT_R11G11B10_NORMAL  (1 << 0)
+ #define SPEC_CONSTANT_ALPHA_TEST        (1 << 1)
++// Normals, tangents and binormals fetched as half floats (raw 16-bit values).
++#define SPEC_CONSTANT_HALF_NORMAL       (1 << 5)
+ 
+ #ifdef UNLEASHED_RECOMP
+     #define SPEC_CONSTANT_BICUBIC_GI_FILTER (1 << 2)
+@@ -169,6 +171,10 @@ float4 tfetchR11G11B10(uint4 value)
+             (value.x & 0x80000000 ? -1.0 : 0.0) + (((value.x >> 22) & 0x1FF) / 512.0),
+             0.0);
+     }
++    else if (g_SpecConstants() & SPEC_CONSTANT_HALF_NORMAL)
++    {
++        return f16tof32(value);
++    }
+     else
+     {
+         return asfloat(value);
+diff --git a/XenosRecomp/shader_recompiler.cpp b/XenosRecomp/shader_recompiler.cpp
+index 698a418..399b050 100644
+--- a/XenosRecomp/shader_recompiler.cpp
++++ b/XenosRecomp/shader_recompiler.cpp
+@@ -483,7 +483,9 @@ void ShaderRecompiler::recompile(const AluInstruction& instr)
+                 else
+                 {
+                     assert(!instr.const0Relative && !instr.const1Relative);
+-                    regFormatted = fmt::format("c{}", reg);
++                    // Literal definitions are locals; other registers no
++                    // constant table entry names are read from the buffer.
++                    regFormatted = fmt::format(float4Definitions.count(reg) ? "c{}" : "xr_c{}", reg);
+                 }
+             }
+ 
+@@ -1187,6 +1189,16 @@ void ShaderRecompiler::recompile(const uint8_t* shaderData, const std::string_vi
+         }
+     }
+ 
++    // Registers the code reads that no constant table entry covers (EA's
++    // shaders use raw registers next to named constants): plain loads.
++    const uint32_t float4RegisterCount = isPixelShader ? 224 : 256;
++    for (uint32_t i = 0; i < float4RegisterCount; i++)
++    {
++        if (float4Constants.count(i) == 0)
++            println("#define xr_c{} vk::RawBufferLoad<float4>(g_PushConstants.{}ShaderConstants + {}, 0x10)",
++                i, isPixelShader ? "Pixel" : "Vertex", i * 16);
++    }
++
+     out += "\n#else\n\n";
+ 
+     println("cbuffer {}ShaderConstants : register(b{}, space4)", isPixelShader ? "Pixel" : "Vertex", isPixelShader ? 1 : 0);
+@@ -1216,6 +1228,12 @@ void ShaderRecompiler::recompile(const uint8_t* shaderData, const std::string_vi
+         }
+     }
+ 
++    for (uint32_t i = 0; i < float4RegisterCount; i++)
++    {
++        if (float4Constants.count(i) == 0)
++            println("\tfloat4 xr_c{0} : packoffset(c{0});", i);
++    }
++
+     out += "};\n\n";
+ 
+     out += "cbuffer SharedConstants : register(b2, space4)\n";
+@@ -1381,6 +1399,7 @@ void ShaderRecompiler::recompile(const uint8_t* shaderData, const std::string_vi
+             auto value = reinterpret_cast<const be<uint32_t>*>(shaderData + shaderContainer->virtualSize + definition->physicalOffset);
+             for (uint16_t i = 0; i < (definition->count + 3) / 4; i++)
+             {
++                float4Definitions.insert(definition->registerIndex + i - (isPixelShader ? 256 : 0));
+                 println("\tfloat4 c{} = asfloat(uint4(0x{:X}, 0x{:X}, 0x{:X}, 0x{:X}));",
+                     definition->registerIndex + i - (isPixelShader ? 256 : 0), value[0].get(), value[1].get(), value[2].get(), value[3].get());
+ 
+diff --git a/XenosRecomp/shader_recompiler.h b/XenosRecomp/shader_recompiler.h
+index b2e317d..1cec90c 100644
+--- a/XenosRecomp/shader_recompiler.h
++++ b/XenosRecomp/shader_recompiler.h
+@@ -1,5 +1,7 @@
+ #pragma once
+ 
++#include <unordered_set>
++
+ #include "shader.h"
+ #include "shader_code.h"
+ 
+@@ -29,6 +31,8 @@ struct ShaderRecompiler : StringBuffer
+     std::unordered_map<uint32_t, VertexElement> vertexElements;
+     std::unordered_map<uint32_t, std::string> interpolators;
+     std::unordered_map<uint32_t, const ConstantInfo*> float4Constants;
++    // Registers given literal values by the definition table (local cN).
++    std::unordered_set<uint32_t> float4Definitions;
+     std::unordered_map<uint32_t, const char*> boolConstants;
+     std::unordered_map<uint32_t, const char*> samplers;
+     std::unordered_map<uint32_t, uint32_t> ifEndLabels;
+-- 
+2.56.0
+
