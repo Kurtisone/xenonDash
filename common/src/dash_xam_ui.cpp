@@ -42,6 +42,10 @@ struct TitleView {
 TitleView GetTitleView(uint32_t title_id);
 }  // namespace dash::achievements
 
+namespace dash::achievements {
+void Reload();
+}
+
 namespace dash::xamui {
 
 using namespace rex;
@@ -265,31 +269,71 @@ void OpenLauncher() {
 
 // Écran de progression de la construction d'un jeu par le moteur de recettes (dash_launch.cpp, tools/recipe_build.py) :
 // fenêtre en bas de l'écran tant que la construction est active (ou a échoué : Échap la ferme). Le Dashboard reste utilisable.
+std::string FormatDuration(double s) {
+  int t = int(s + 0.5);
+  if (t >= 3600) return fmt::format("{} h {:02} min", t / 3600, (t % 3600) / 60);
+  if (t >= 60) return fmt::format("{} min {:02} s", t / 60, t % 60);
+  return fmt::format("{} s", t);
+}
+
 void DrawBuildProgress(ImGuiIO& io) {
-  static std::string dismissed;  // construction échouée déjà fermée par l'utilisateur
+  static std::string dismissed;  // refus/échec déjà fermé par l'utilisateur
   const launch::BuildStatus st = launch::GetBuildStatus();
   if (!st.active && !st.failed) return;
-  if (st.failed && dismissed == st.error + st.name) return;
+  const std::string key = st.error + st.name;
+  if (st.failed && dismissed == key) return;
+  const float w = std::min(900.0f, io.DisplaySize.x - 40.0f);
   ImGui::SetNextWindowPos(ImVec2(io.DisplaySize.x * 0.5f, io.DisplaySize.y - 24.0f), ImGuiCond_Always, ImVec2(0.5f, 1.0f));
-  ImGui::SetNextWindowSize(ImVec2(std::min(760.0f, io.DisplaySize.x - 40.0f), 0.0f), ImGuiCond_Always);
-  ImGui::SetNextWindowBgAlpha(0.92f);
+  ImGui::SetNextWindowSize(ImVec2(w, 0.0f), ImGuiCond_Always);
+  ImGui::SetNextWindowBgAlpha(0.94f);
   if (ImGui::Begin("Construction du jeu##dash_build", nullptr,
                    ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove |
                        ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoFocusOnAppearing |
                        ImGuiWindowFlags_AlwaysAutoResize)) {
     if (st.active) {
-      ImGui::Text("Construction de %s (recompilation native, première exécution)", st.name.c_str());
+      ImGui::Text("Recompilation de %s en natif (première exécution)", st.name.c_str());
       ImGui::ProgressBar(float(st.percent / 100.0), ImVec2(-1.0f, 0.0f), fmt::format("{:.0f} %", st.percent).c_str());
-      ImGui::TextWrapped("%s : %s", st.stage.c_str(), st.message.c_str());
-      ImGui::TextDisabled("%.0f s écoulées (estimation de la recette : %.0f s). Journal : %s", st.elapsed, st.estimate,
-                          st.log_path.c_str());
-      ImGui::TextDisabled("Le jeu se lancera tout seul à la fin (échec : retour au Dashboard).");
+      ImGui::PushTextWrapPos(w - 20.0f);
+      if (st.total > 0) ImGui::Text("Étape %d / %d : %s", st.index, st.total, st.stage.c_str());
+      else ImGui::Text("Étape : %s", st.stage.c_str());
+      ImGui::TextDisabled("%s", st.message.c_str());
+      std::string left;
+      if (st.estimate > st.elapsed) left = fmt::format(", reste environ {}", FormatDuration(st.estimate - st.elapsed));
+      ImGui::Text("Écoulé : %s sur environ %s%s", FormatDuration(st.elapsed).c_str(), FormatDuration(st.estimate).c_str(),
+                  left.c_str());
+      ImGui::TextDisabled("Journal : %s", st.log_path.c_str());
+      ImGui::TextDisabled("Le jeu se lancera tout seul à la fin ; le Dashboard reste utilisable.");
+      ImGui::PopTextWrapPos();
     } else {
-      ImGui::TextColored(ImVec4(1.0f, 0.45f, 0.35f, 1.0f), "Construction de %s échouée", st.name.c_str());
+      ImGui::TextColored(ImVec4(1.0f, 0.45f, 0.35f, 1.0f), "%s : impossible de lancer le jeu", st.name.c_str());
+      ImGui::PushTextWrapPos(w - 20.0f);
       ImGui::TextWrapped("%s", st.error.c_str());
-      ImGui::TextDisabled("Retour au Dashboard dans quelques secondes. Journal : %s", st.log_path.c_str());
-      if (ImGui::IsKeyPressed(ImGuiKey_Escape) || ImGui::IsKeyPressed(ImGuiKey_GamepadFaceRight)) dismissed = st.error + st.name;
+      if (!st.log_path.empty()) ImGui::TextDisabled("Journal : %s", st.log_path.c_str());
+      ImGui::TextDisabled("Échap / B pour fermer ce message.");
+      ImGui::PopTextWrapPos();
+      if (ImGui::IsKeyPressed(ImGuiKey_Escape) || ImGui::IsKeyPressed(ImGuiKey_GamepadFaceRight)) dismissed = key;
     }
+  }
+  ImGui::End();
+}
+
+// État de la bibliothèque de jeux (scan au démarrage ou F6) : petite fenêtre en haut à gauche pendant le scan, puis 4 s.
+void DrawLibraryStatus(ImGuiIO& io) {
+  const auto st = launch::GetLibraryStatus();
+  double now = std::chrono::duration<double>(std::chrono::steady_clock::now().time_since_epoch()).count();
+  static bool seen_scan = false;
+  if (st.scanning) seen_scan = true;
+  if (!st.scanning && (!seen_scan || now - st.done_at > 4.0)) return;
+  ImGui::SetNextWindowPos(ImVec2(20.0f, 20.0f), ImGuiCond_Always);
+  ImGui::SetNextWindowBgAlpha(0.85f);
+  if (ImGui::Begin("Bibliothèque##dash_library", nullptr,
+                   ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove |
+                       ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoFocusOnAppearing |
+                       ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoInputs)) {
+    if (st.scanning) ImGui::Text("Bibliothèque de jeux : recherche en cours...");
+    else ImGui::Text("Bibliothèque de jeux : %d jeu(x) (%s)", st.count, st.message.c_str());
+    if (!st.games_dir.empty()) ImGui::TextDisabled("Dossier : %s", st.games_dir.c_str());
+    ImGui::TextDisabled("F5 : liste des jeux    F6 : rechercher à nouveau");
   }
   ImGui::End();
 }
@@ -302,6 +346,16 @@ class HotkeyDialog : public ui::ImGuiDialog {
  protected:
   void OnDraw(ImGuiIO& io) override {
     DrawBuildProgress(io);
+    DrawLibraryStatus(io);
+    static bool rescanned = true;
+    if (ImGui::IsKeyPressed(ImGuiKey_F6, false)) {
+      launch::RescanLibrary(false);
+      rescanned = true;
+    }
+    if (rescanned && !launch::GetLibraryStatus().scanning) {  // fin du scan : relire les GPD (jeux joués, icônes)
+      rescanned = false;
+      achievements::Reload();
+    }
     if (g_open.load()) return;
     if (ImGui::IsKeyPressed(ImGuiKey_F5, false) ||
         (ImGui::IsKeyDown(ImGuiKey_GamepadBack) && ImGui::IsKeyPressed(ImGuiKey_GamepadFaceUp, false))) {

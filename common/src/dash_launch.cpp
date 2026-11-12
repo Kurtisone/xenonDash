@@ -27,6 +27,7 @@
 #include <ctime>
 #include <filesystem>
 #include <fstream>
+#include <csignal>
 #include <mutex>
 #include <string>
 #include <thread>
@@ -60,7 +61,24 @@ REXCVAR_DEFINE_STRING(dash_disc, "", "Dash",
                       "TitleID (hexadécimal) d'un jeu de games.toml présenté comme disque inséré (équivaut à `disc = true`)");
 REXCVAR_DEFINE_INT32(dash_launch_delay, 5, "Dash", "Délai (s) avant le lancement demandé par --dash_launch");
 
+REXCVAR_DEFINE_STRING(dash_library_toml, "", "Dash",
+                      "games.auto.toml de la bibliothèque (défaut : $XENONDASH_LIBRARY_TOML, sinon "
+                      "${XDG_DATA_HOME:-~/.local/share}/xenondash/library/games.auto.toml)");
+
+REXCVAR_DEFINE_BOOL(dash_library_scan, false, "Dash",
+                    "Crée le dossier de jeux et scanne la bibliothèque au démarrage (tools/game_library.py ; "
+                    "toujours actif sous AppImage)");
+
+REXCVAR_DEFINE_BOOL(dash_auto_disc, true, "Dash",
+                    "Sans `disc = true`, le dernier jeu lancé de la bibliothèque est présenté comme disque inséré "
+                    "(le hub NXE ne liste que ce jeu)");
+
 REXCVAR_DECLARE(std::string, game_data_root);
+
+namespace dash::achievements {
+void MarkPlayed(uint32_t title_id, uint64_t filetime);
+uint64_t LastPlayed(uint32_t title_id);
+}
 
 namespace dash::launch {
 
@@ -102,16 +120,33 @@ std::string Q(const std::string& s) {
 
 }  // namespace
 
-std::vector<Game> Games() {
-  std::vector<Game> out;
+namespace {
+
+// Chemin du registre automatique de la bibliothèque (tools/game_library.py scan) : --dash_library_toml, variable
+// XENONDASH_LIBRARY_TOML, sinon ${XDG_DATA_HOME:-~/.local/share}/xenondash/library/games.auto.toml.
+fs::path LibraryDir() {
+  if (const char* e = std::getenv("XENONDASH_LIBRARY_DIR"); e && *e) return e;
+  const char* x = std::getenv("XDG_DATA_HOME");
+  fs::path base = (x && *x) ? fs::path(x) : fs::path(std::getenv("HOME") ? std::getenv("HOME") : ".") / ".local" / "share";
+  return base / "xenondash" / "library";
+}
+
+fs::path AutoRegistryPath() {
+  if (!REXCVAR_GET(dash_library_toml).empty()) return REXCVAR_GET(dash_library_toml);
+  if (const char* e = std::getenv("XENONDASH_LIBRARY_TOML"); e && *e) return e;
+  return LibraryDir() / "games.auto.toml";
+}
+
+// Ajoute les jeux d'un fichier de registre (les TitleID déjà présents l'emportent : games.toml manuel prioritaire).
+void ParseRegistry(const fs::path& path, bool automatic, const std::string& xenia_default, std::vector<Game>& out) {
   toml::table root;
   try {
-    root = toml::parse_file(RegistryPath().string());
+    root = toml::parse_file(path.string());
   } catch (const toml::parse_error& e) {
-    if (fs::exists(RegistryPath())) REXLOG_WARN("[dash] games.toml illisible : {}", e.description());
-    return out;
+    if (fs::exists(path)) REXLOG_WARN("[dash] {} illisible : {}", path.string(), e.description());
+    return;
   }
-  std::string xenia_cmd = XeniaCommand(root);
+  std::string xenia_cmd = automatic ? xenia_default : XeniaCommand(root);
   auto* games = root["game"].as_table();
   if (!games) games = &root;  // tolère [45410813] au niveau racine
   for (auto&& [key, node] : *games) {
@@ -122,6 +157,7 @@ std::vector<Game> Games() {
     Game g;
     g.title_id = ParseHex(k);
     if (!g.title_id) continue;
+    if (std::any_of(out.begin(), out.end(), [&](const Game& o) { return o.title_id == g.title_id; })) continue;
     g.name = (*t)["name"].value_or(k);
     g.cwd = (*t)["cwd"].value_or(std::string());
     g.keep_ld = (*t)["keep_ld_library_path"].value_or(false);
@@ -134,18 +170,43 @@ std::vector<Game> Games() {
       g.command = xenia_cmd + " " + Q(*x);
       g.kind = "xenia";
     } else {
-      REXLOG_WARN("[dash] games.toml : {} n'a ni `native`, `recipe` ni `xenia`", k);
+      REXLOG_WARN("[dash] {} : {} n'a ni `native`, `recipe` ni `xenia`", path.string(), k);
       continue;
     }
     g.recipe = (*t)["recipe"].value_or(std::string());
-    g.disc = (*t)["disc"].value_or(false);
+    g.disc = !automatic && (*t)["disc"].value_or(false);
     g.icon = (*t)["icon"].value_or(std::string());
     g.spa = (*t)["spa"].value_or(std::string());
+    g.from_library = automatic;
     if (auto ty = (*t)["type"].value<std::string>()) g.content_type = TypeFromName(*ty);
     else if (auto ti = (*t)["type"].value<int64_t>()) g.content_type = uint32_t(*ti);
     out.push_back(std::move(g));
   }
-  return out;
+}
+
+}  // namespace
+
+// games.toml (manuel) puis games.auto.toml de la bibliothèque. Relus seulement si le fichier a changé (date, taille).
+std::vector<Game> Games() {
+  static std::mutex m;
+  static std::vector<Game> cache;
+  static std::string key;
+  auto stamp = [](const fs::path& p) {
+    std::error_code ec;
+    auto t = fs::last_write_time(p, ec);
+    auto sz = fs::file_size(p, ec);
+    return p.string() + ":" + std::to_string(ec ? 0 : t.time_since_epoch().count()) + ":" + std::to_string(ec ? 0 : sz);
+  };
+  const fs::path manual = RegistryPath(), automatic = AutoRegistryPath();
+  std::lock_guard lock(m);
+  std::string k = stamp(manual) + "|" + stamp(automatic);
+  if (k == key) return cache;
+  key = k;
+  cache.clear();
+  std::string xenia_default = "xenia_canary";
+  ParseRegistry(manual, false, xenia_default, cache);
+  ParseRegistry(automatic, true, xenia_default, cache);
+  return cache;
 }
 
 std::optional<Game> Find(uint32_t title_id) {
@@ -156,6 +217,8 @@ std::optional<Game> Find(uint32_t title_id) {
 
 // `library = true` à la racine de games.toml : les jeux apparaissent aussi comme contenu installé (voir README).
 bool LibraryEnabled() {
+  std::error_code ec;
+  if (fs::exists(AutoRegistryPath(), ec)) return true;  // bibliothèque automatique : toujours listée
   try {
     return toml::parse_file(RegistryPath().string())["library"].value_or(false);
   } catch (...) {
@@ -181,12 +244,41 @@ std::optional<Game> InsertedDisc() {
     if (auto d = root["disc"].value<std::string>()) return Find(ParseHex(*d));
   } catch (...) {
   }
+  // Bibliothèque automatique : le hub NXE ne liste (Recent Games, tuile « Play ») que le jeu « dans le plateau » (voir
+  // docs/nxe_jeux.md) ; on y met le dernier jeu lancé de la bibliothèque, sinon le premier par ordre alphabétique.
+  if (REXCVAR_GET(dash_auto_disc)) {
+    std::optional<Game> best;
+    uint64_t best_t = 0;
+    for (auto& g : Games()) {
+      if (!g.from_library) continue;
+      uint64_t t = achievements::LastPlayed(g.title_id);
+      if (!best || t > best_t || (t == best_t && g.name < best->name)) best = g, best_t = t;
+    }
+    return best;
+  }
   return std::nullopt;
 }
 
 namespace {
 
 std::atomic<bool> g_launching{false};
+
+// Commande qui relance le Dashboard après un jeu. Sous AppImage, /proc/self/exe est dans un montage qui disparaît dès que le
+// Dashboard quitte : on relance l'AppImage ($APPIMAGE), dont AppRun redonne ses propres options (celles de l'utilisateur
+// ne sont pas rejouées).
+std::string RelaunchCommand(const std::string& exe, const std::vector<std::string>& args) {
+  if (const char* ai = std::getenv("APPIMAGE"); ai && *ai && fs::exists(ai)) return "exec " + Q(ai);
+  std::string relaunch = "exec " + Q(exe);
+  for (size_t i = 1; i < args.size(); i++) {
+    // --dash_launch(=...) / --dash_launch_delay : lancement de test, à ne pas rejouer au retour (boucle sans fin).
+    if (args[i].rfind("--dash_launch", 0) == 0) {
+      if (args[i].find('=') == std::string::npos && i + 1 < args.size()) i++;
+      continue;
+    }
+    relaunch += " " + Q(args[i]);
+  }
+  return relaunch;
+}
 
 std::string SelfExe() {
   char buf[4096];
@@ -220,10 +312,16 @@ void TouchLastPlayed(uint32_t title_id) {
   for (auto& d : fs::directory_iterator(profiles, ec)) {
     auto path = d.path() / "FFFE07D1.gpd";
     gpd::File f;
-    if (!d.is_directory() || !fs::exists(path, ec) || !f.Load(path)) continue;
+    if (!d.is_directory()) continue;
+    if (!fs::exists(path, ec) || !f.Load(path)) {  // profil neuf : pas de GPD du Dashboard
+      achievements::MarkPlayed(title_id, ft);
+      continue;
+    }
     auto loc = f.Locate(gpd::kTitle, title_id);
     if (!loc || loc->second < 0x28) {
-      REXLOG_INFO("[dash] {:08X} absent de {} : date de dernier lancement non mise à jour", title_id, path.string());
+      // Jeu jamais joué (absent du GPD du Dashboard) : date gardée à part, lue par la liste des jeux joués.
+      achievements::MarkPlayed(title_id, ft);
+      REXLOG_INFO("[dash] {:08X} absent de {} : dernier lancement noté dans library_played.txt", title_id, path.string());
       continue;
     }
     auto& b = f.Bytes();
@@ -231,6 +329,135 @@ void TouchLastPlayed(uint32_t title_id) {
     std::ofstream o(path, std::ios::binary | std::ios::trunc);
     o.write(reinterpret_cast<const char*>(b.data()), std::streamsize(b.size()));
     REXLOG_INFO("[dash] {:08X} : dernier lancement mis à jour dans {}", title_id, path.string());
+  }
+}
+
+// ---- Bibliothèque de jeux : init + scan au démarrage (tools/game_library.py) ------------------------------------------
+// Le dossier de jeux est créé au premier lancement (`init`), puis `scan` met à jour games.auto.toml (cache incrémental : une
+// fraction de seconde si rien n'a changé). Au démarrage on attend au plus quelques secondes ; au-delà le scan continue en
+// arrière-plan et le registre est relu à sa fin (Games() surveille la date du fichier). F6 relance un scan.
+namespace {
+
+std::string JsonFieldFwd(const std::string& j, const std::string& key);
+std::string ToolsRootStr();
+
+std::mutex g_lib_mutex;
+LibraryStatus g_lib;
+
+// Exécute une commande sans shell ; arrête-la après timeout_s secondes (0 = pas de limite). Renvoie vrai si elle a fini
+// avant le délai, code de retour dans *rc, sortie standard (tronquée) dans *out.
+bool RunWithTimeout(const std::vector<std::string>& argv, int timeout_s, int* rc, std::string* out = nullptr) {
+  int fds[2];
+  if (pipe(fds) != 0) return false;
+  pid_t pid = fork();
+  if (pid < 0) return false;
+  if (pid == 0) {
+    setsid();
+    dup2(fds[1], 1);
+    int devnull = open("/dev/null", O_WRONLY);
+    dup2(devnull, 2);
+    close(fds[0]);
+    close(fds[1]);
+    std::vector<char*> a;
+    for (auto& s : argv) a.push_back(const_cast<char*>(s.c_str()));
+    a.push_back(nullptr);
+    execvp(a[0], a.data());
+    _exit(127);
+  }
+  close(fds[1]);
+  fcntl(fds[0], F_SETFL, fcntl(fds[0], F_GETFL) | O_NONBLOCK);
+  auto t0 = std::chrono::steady_clock::now();
+  std::string buf;
+  int st = 0;
+  bool done = false;
+  for (;;) {
+    char tmp[4096];
+    ssize_t n;
+    while ((n = read(fds[0], tmp, sizeof(tmp))) > 0) buf.append(tmp, size_t(n));
+    pid_t r = waitpid(pid, &st, WNOHANG);
+    if (r == pid) {
+      done = true;
+      while ((n = read(fds[0], tmp, sizeof(tmp))) > 0) buf.append(tmp, size_t(n));
+      break;
+    }
+    if (timeout_s > 0 && std::chrono::steady_clock::now() - t0 > std::chrono::seconds(timeout_s)) {
+      kill(-pid, SIGKILL);
+      waitpid(pid, &st, 0);
+      break;
+    }
+    std::this_thread::sleep_for(std::chrono::milliseconds(50));
+  }
+  close(fds[0]);
+  if (rc) *rc = done && WIFEXITED(st) ? WEXITSTATUS(st) : -1;
+  if (out) *out = buf;
+  return done;
+}
+
+int CountLibraryGames() {
+  int n = 0;
+  for (auto& g : Games())
+    if (g.from_library) n++;
+  return n;
+}
+
+void ScanWorker(int timeout_s, bool init_first) {
+  const std::string tool = (fs::path(ToolsRootStr()) / "tools" / "game_library.py").string();
+  const std::string out_dir = AutoRegistryPath().parent_path().string();
+  int rc = 0;
+  std::string out;
+  if (init_first) {
+    RunWithTimeout({"python3", "-I", tool, "init", "--json"}, 10, &rc, &out);
+    std::string dir = JsonFieldFwd(out, "games_dir");
+    if (!dir.empty()) {
+      std::lock_guard lock(g_lib_mutex);
+      g_lib.games_dir = dir;
+    }
+  }
+  bool done = RunWithTimeout({"python3", "-I", tool, "scan", "--out", out_dir}, timeout_s, &rc);
+  std::lock_guard lock(g_lib_mutex);
+  g_lib.scanning = false;
+  g_lib.done_at = std::chrono::duration<double>(std::chrono::steady_clock::now().time_since_epoch()).count();
+  g_lib.count = CountLibraryGames();
+  g_lib.message = !done ? "délai dépassé" : rc != 0 ? "échec du scan (code " + std::to_string(rc) + ")" : "terminé";
+  REXLOG_INFO("[dash] bibliothèque : scan {} ({} jeux, dossier {})", g_lib.message, g_lib.count, g_lib.games_dir);
+}
+
+}  // namespace
+
+LibraryStatus GetLibraryStatus() {
+  std::lock_guard lock(g_lib_mutex);
+  return g_lib;
+}
+
+void RescanLibrary(bool wait, int timeout_s) {
+  {
+    std::lock_guard lock(g_lib_mutex);
+    if (g_lib.scanning) return;
+    g_lib.scanning = true;
+    g_lib.message = "scan en cours";
+  }
+  if (!fs::exists(fs::path(ToolsRootStr()) / "tools" / "game_library.py")) {
+    std::lock_guard lock(g_lib_mutex);
+    g_lib.scanning = false;
+    g_lib.message = "game_library.py introuvable (XENONDASH_ROOT)";
+    REXLOG_WARN("[dash] bibliothèque : {}", g_lib.message);
+    return;
+  }
+  const bool first = g_lib.games_dir.empty();
+  if (wait) {
+    // Démarrage : délai court ; au-delà, le scan se termine en arrière-plan sans limite.
+    std::thread([first, timeout_s] {
+      ScanWorker(timeout_s, first);
+    }).join();
+    {
+      std::lock_guard lock(g_lib_mutex);
+      if (g_lib.message == "délai dépassé") {
+        g_lib.scanning = true;
+        std::thread([] { ScanWorker(0, false); }).detach();
+      }
+    }
+  } else {
+    std::thread([first] { ScanWorker(0, first); }).detach();
   }
 }
 
@@ -253,36 +480,9 @@ std::string ToolsRoot() {
 #endif
 }
 
-std::string RecipeTool() { return (fs::path(ToolsRoot()) / "tools" / "recipe_build.py").string(); }
+std::string ToolsRootStr() { return ToolsRoot(); }
 
-// Sortie standard d'une commande (sans shell : fork/exec), code de retour dans *rc.
-std::string RunCapture(const std::vector<std::string>& argv, int* rc) {
-  int fds[2];
-  if (pipe(fds) != 0) return {};
-  pid_t pid = fork();
-  if (pid == 0) {
-    dup2(fds[1], 1);
-    int devnull = open("/dev/null", O_WRONLY);
-    dup2(devnull, 2);
-    close(fds[0]);
-    close(fds[1]);
-    std::vector<char*> a;
-    for (auto& s : argv) a.push_back(const_cast<char*>(s.c_str()));
-    a.push_back(nullptr);
-    execvp(a[0], a.data());
-    _exit(127);
-  }
-  close(fds[1]);
-  std::string out;
-  char buf[4096];
-  ssize_t n;
-  while ((n = read(fds[0], buf, sizeof(buf))) > 0) out.append(buf, size_t(n));
-  close(fds[0]);
-  int st = 0;
-  waitpid(pid, &st, 0);
-  if (rc) *rc = WIFEXITED(st) ? WEXITSTATUS(st) : -1;
-  return out;
-}
+std::string RecipeTool() { return (fs::path(ToolsRoot()) / "tools" / "recipe_build.py").string(); }
 
 // Champ d'un JSON plat produit par recipe_build.py (chaîne, nombre ou booléen) ; vide s'il est absent.
 std::string JsonField(const std::string& j, const std::string& key) {
@@ -309,6 +509,8 @@ std::string JsonField(const std::string& j, const std::string& key) {
   return j.substr(p, e - p);
 }
 
+std::string JsonFieldFwd(const std::string& j, const std::string& key) { return JsonField(j, key); }
+
 void Notify(const std::string& title, const std::string& body) {
   REXLOG_INFO("[dash] {} : {}", title, body);
   // notify-send s'il existe (sans shell : arguments séparés) ; échec silencieux
@@ -323,23 +525,40 @@ void Notify(const std::string& title, const std::string& body) {
   }
 }
 
-// Relance le Dashboard à l'identique (échec d'une construction : le Dashboard invité est resté dans l'état « lancement d'un
-// titre », écran noir) : superviseur détaché puis sortie, comme pour un lancement de jeu mais sans jeu.
-void RestartDashboard() {
+// Pendant une construction (ou après un refus) le hub NXE reste noir : il a pris l'appel de lancement pour un lancement réel (il
+// n'attend pas de retour). Le Dashboard est donc relancé tout de suite ; l'état est passé à la nouvelle instance par
+// <données>/current_build.json (construction en cours : pid, cache ; ou message d'échec à afficher une fois).
+fs::path BuildStatePath() { return AutoRegistryPath().parent_path().parent_path() / "current_build.json"; }
+
+std::string JsonEsc(const std::string& s) {
+  std::string o;
+  for (char c : s) {
+    if (c == '"' || c == '\\') { o += '\\'; o += c; }
+    else if (c == '\n') o += "\\n";
+    else o += c;
+  }
+  return o;
+}
+
+void SaveBuildState(const std::string& state, const Game& g, long pid, const std::string& cache, const std::string& text,
+                    const std::string& log_path) {
+  std::error_code ec;
+  fs::create_directories(BuildStatePath().parent_path(), ec);
+  std::ofstream f(BuildStatePath(), std::ios::trunc);
+  f << "{\"state\": \"" << state << "\", \"title_id\": \"" << fmt::format("{:08X}", g.title_id) << "\", \"name\": \""
+    << JsonEsc(g.name) << "\", \"recipe\": \"" << JsonEsc(g.recipe) << "\", \"cache\": \"" << JsonEsc(cache)
+    << "\", \"pid\": " << pid << ", \"error\": \"" << JsonEsc(text) << "\", \"log\": \"" << JsonEsc(log_path) << "\"}\n";
+}
+
+// Relance le Dashboard à l'identique (superviseur détaché puis sortie), sans jeu.
+void RestartDashboard(const char* why) {
   std::string exe = SelfExe();
   auto args = SelfArgs();
   if (exe.empty() || args.empty()) return;
   std::string cwd0 = fs::current_path().string();
-  std::string relaunch = "exec " + Q(exe);
-  for (size_t i = 1; i < args.size(); i++) {
-    if (args[i].rfind("--dash_launch", 0) == 0) {
-      if (args[i].find('=') == std::string::npos && i + 1 < args.size()) i++;
-      continue;
-    }
-    relaunch += " " + Q(args[i]);
-  }
-  std::string script = "sleep 1; cd " + Q(cwd0) + "; DASH_RETURNED_FROM=build_failed; export DASH_RETURNED_FROM; " + relaunch;
-  REXLOG_INFO("[dash] relance du Dashboard après l'échec de la construction");
+  std::string script = "sleep 1; cd " + Q(cwd0) + "; DASH_RETURNED_FROM=" + why + "; export DASH_RETURNED_FROM; " +
+                       RelaunchCommand(exe, args);
+  REXLOG_INFO("[dash] relance du Dashboard ({})", why);
   rex::FlushLogging();
   if (fork() == 0) {
     setsid();
@@ -353,12 +572,62 @@ void RestartDashboard() {
   std::_Exit(0);
 }
 
-void BuildMonitor(Game g, pid_t pid, std::string cache) {
+thread_local bool tl_hub_call = false;  // vrai pendant un appel de lancement venu du hub (écran noir ensuite)
+
+// Refus ou échec : message à l'écran (fenêtre de progression, Échap la ferme), le Dashboard reste utilisable (les fonctions de
+// lancement renvoient une erreur au Dashboard).
+void FailBuild(const Game& g, const std::string& msg, const std::string& log_path, bool restart = true) {
+  REXLOG_WARN("[dash] {} : {}", g.name, msg);
+  {
+    std::lock_guard<std::mutex> lock(g_build_mutex);
+    g_build = BuildStatus{};
+    g_build.failed = true;
+    g_build.title_id = g.title_id;
+    g_build.name = g.name;
+    g_build.error = msg;
+    g_build.log_path = log_path;
+  }
+  if (restart) {  // le hub est resté noir : nouvelle instance, qui affiche ce message
+    SaveBuildState("failed", g, 0, "", msg, log_path);
+    RestartDashboard("build_failed");
+  } else {
+    std::error_code ec;
+    fs::remove(BuildStatePath(), ec);
+  }
+}
+
+// Outils de compilation de l'hôte absents (clang, cmake, ninja) : noms des paquets à installer.
+std::string MissingToolchain() {
+  auto have = [](const char* exe) {
+    const char* path = std::getenv("PATH");
+    std::string p = path ? path : "/usr/bin";
+    size_t i = 0;
+    while (i <= p.size()) {
+      size_t e = p.find(':', i);
+      if (e == std::string::npos) e = p.size();
+      fs::path c = fs::path(p.substr(i, e - i)) / exe;
+      if (access(c.c_str(), X_OK) == 0) return true;
+      i = e + 1;
+    }
+    return false;
+  };
+  std::string missing;
+  for (const char* t : {"clang", "cmake", "ninja"})
+    if (!have(t)) missing += std::string(missing.empty() ? "" : ", ") + t;
+  if (missing.empty()) return {};
+  return "Outils de compilation manquants : " + missing +
+         ". Installer : Arch : pacman -S clang cmake ninja | Debian/Ubuntu : apt install clang cmake ninja-build | "
+         "Fedora : dnf install clang cmake ninja-build.";
+}
+
+// Suit la construction (processus enfant de ce Dashboard, ou orphelin repris après une relance) jusqu'à sa fin.
+void BuildMonitor(Game g, long pid, std::string cache, bool restart_on_fail) {
   const fs::path progress = fs::path(cache) / "progress.json";
   auto last_log = std::chrono::steady_clock::now() - std::chrono::seconds(10);
-  int status = 0;
   for (;;) {
-    pid_t r = waitpid(pid, &status, WNOHANG);
+    int st = 0;
+    pid_t r = waitpid(pid_t(pid), &st, WNOHANG);  // enfant : le récolte ; sinon -1
+    const bool alive = r == 0 || (r < 0 && kill(pid_t(pid), 0) == 0);
     std::string j;
     {
       std::ifstream f(progress);
@@ -371,6 +640,8 @@ void BuildMonitor(Game g, pid_t pid, std::string cache) {
       g_build.percent = std::atof(JsonField(j, "percent").c_str());
       g_build.elapsed = std::atof(JsonField(j, "elapsed_s").c_str());
       g_build.estimate = std::atof(JsonField(j, "estimate_s").c_str());
+      g_build.index = std::atoi(JsonField(j, "index").c_str());
+      g_build.total = std::atoi(JsonField(j, "total").c_str());
     }
     auto now = std::chrono::steady_clock::now();
     if (now - last_log >= std::chrono::seconds(5)) {
@@ -378,40 +649,35 @@ void BuildMonitor(Game g, pid_t pid, std::string cache) {
       REXLOG_INFO("[dash] construction de {} : {:.0f} %  [{}] {}  ({:.0f} s)", g.name, g_build.percent, g_build.stage,
                   g_build.message, g_build.elapsed);
     }
-    if (r == pid) break;
-    if (r < 0) {
-      status = -1;
-      break;
-    }
+    if (!alive) break;
     std::this_thread::sleep_for(std::chrono::seconds(1));
   }
-  std::string err;
+  std::string j;
   {
     std::ifstream f(progress);
-    std::string j((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
-    err = JsonField(j, "error");
+    j.assign(std::istreambuf_iterator<char>(f), std::istreambuf_iterator<char>());
   }
-  const bool ok = WIFEXITED(status) && WEXITSTATUS(status) == 0;
+  std::string err = JsonField(j, "error");
+  const bool ok = JsonField(j, "done") == "true" && err.empty();
+  if (!ok) {
+    if (err.empty()) err = "la construction s'est arrêtée avant la fin ; voir le journal";
+    Notify("Construction de " + g.name + " échouée", err);
+    FailBuild(g, err, cache + "/build.log", restart_on_fail);
+    return;
+  }
   {
     std::lock_guard<std::mutex> lock(g_build_mutex);
     g_build.active = false;
-    g_build.failed = !ok;
-    g_build.error = err;
-    if (ok) g_build.percent = 100.0;
+    g_build.percent = 100.0;
   }
-  if (!ok) {
-    Notify("Construction de " + g.name + " échouée", err.empty() ? "voir le journal " + cache + "/build.log" : err);
-    // l'erreur reste affichée 12 s (écran de progression), puis le Dashboard est relancé
-    std::this_thread::sleep_for(std::chrono::seconds(12));
-    RestartDashboard();
-    return;
-  }
+  std::error_code ec;
+  fs::remove(BuildStatePath(), ec);
   Notify(g.name + " est prêt", "lancement du jeu");
   LaunchGame(g);  // le cache est construit : lancement normal (le Dashboard cède la place, puis revient)
 }
 
 // Prépare un jeu à recette : renvoie vrai si son binaire est prêt (g.command/g.cwd remplis), faux si une construction a
-// été lancée (ou échoue : le Dashboard continue).
+// été lancée (ou refusée/échouée : message à l'écran, le Dashboard continue).
 bool PrepareRecipeGame(Game& g) {
   {
     std::lock_guard<std::mutex> lock(g_build_mutex);
@@ -422,17 +688,15 @@ bool PrepareRecipeGame(Game& g) {
   }
   int rc = 0;
   const std::string tool = RecipeTool();
-  std::string info = RunCapture({"python3", "-I", tool, "launch-info", g.recipe}, &rc);
-  if (rc != 0 || info.empty()) {
-    Notify("Recette de " + g.name, "source ou recette inutilisable (" + g.recipe + ") : voir recipe_build.py identify");
-    std::lock_guard<std::mutex> lock(g_build_mutex);
-    g_build.failed = true;
-    g_build.name = g.name;
-    g_build.error = "source ou recette inutilisable : " + g.recipe;
-    std::thread([] {
-      std::this_thread::sleep_for(std::chrono::seconds(12));
-      RestartDashboard();
-    }).detach();
+  std::string info;
+  RunWithTimeout({"python3", "-I", tool, "launch-info", g.recipe}, 120, &rc, &info);
+  const std::string supported = JsonField(info, "supported");
+  if (rc != 0 || info.empty() || supported == "false") {
+    std::string reason = JsonField(info, "reason");
+    if (reason.empty()) reason = "source ou recette inutilisable (" + g.recipe + ")";
+    else if (supported == "false") reason = "Ce jeu n'est pas pris en charge : " + reason;
+    Notify("Impossible de lancer " + g.name, reason);
+    FailBuild(g, reason, "", tl_hub_call);
     return false;
   }
   const std::string cache = JsonField(info, "cache");
@@ -442,6 +706,11 @@ bool PrepareRecipeGame(Game& g) {
     g.kind = "native";
     REXLOG_INFO("[dash] {} : binaire du cache {}", g.name, g.cwd);
     return true;
+  }
+  if (std::string miss = MissingToolchain(); !miss.empty()) {
+    Notify("Impossible de recompiler " + g.name, miss);
+    FailBuild(g, miss, "", tl_hub_call);
+    return false;
   }
   REXLOG_INFO("[dash] {} : pas de binaire en cache, construction (recette) : {}", g.name, cache);
   std::error_code ec;
@@ -469,9 +738,16 @@ bool PrepareRecipeGame(Game& g) {
     g_build.name = g.name;
     g_build.log_path = log_path;
     g_build.message = "démarrage";
+    g_build.stage = "identify";
   }
   Notify("Construction de " + g.name, "première exécution : recompilation du jeu en natif (plusieurs dizaines de minutes)");
-  std::thread(BuildMonitor, g, pid, cache).detach();
+  SaveBuildState("running", g, pid, cache, "", log_path);
+  if (tl_hub_call) {
+    // Le hub est noir : nouvelle instance du Dashboard, qui reprend le suivi de la construction (ResumeBuild).
+    std::this_thread::sleep_for(std::chrono::milliseconds(500));
+    RestartDashboard("build_started");
+  }
+  std::thread(BuildMonitor, g, long(pid), cache, false).detach();
   return false;
 }
 
@@ -495,16 +771,7 @@ bool LaunchGame(const Game& g0) {
     return false;
   }
   std::string cwd0 = fs::current_path().string();
-  // Une seule ligne de commande pour le Dashboard relancé : l'exécutable réel + arguments d'origine.
-  std::string relaunch = "exec " + Q(exe);
-  for (size_t i = 1; i < args.size(); i++) {
-    // --dash_launch(=...) / --dash_launch_delay : lancement de test, à ne pas rejouer au retour (boucle sans fin).
-    if (args[i].rfind("--dash_launch", 0) == 0) {
-      if (args[i].find('=') == std::string::npos && i + 1 < args.size()) i++;
-      continue;
-    }
-    relaunch += " " + Q(args[i]);
-  }
+  std::string relaunch = RelaunchCommand(exe, args);
   std::string game_cwd = g.cwd.empty() ? cwd0 : g.cwd;
   // Le jeu s'exécute dans un sous-shell (son environnement, son répertoire) ; le Dashboard est relancé
   // ensuite avec l'environnement d'origine (LD_LIBRARY_PATH compris).
@@ -574,22 +841,67 @@ void LogLaunchData() {
   REXLOG_INFO("[dash] données de lancement ({} octets) : {}", ld.launch_data.size(), HexDump(ld.launch_data));
 }
 
-void OnLaunchRequest(const char* who, const std::string& path, uint32_t flags) {
+bool OnLaunchRequest(const char* who, const std::string& path, uint32_t flags) {
   REXLOG_INFO("[dash] {}(chemin='{}', indicateurs={:#x})", who, path, flags);
   LogLaunchData();
   auto g = Resolve(path);
   if (!g) {
-    REXLOG_WARN("[dash] {} : aucun jeu correspondant dans games.toml, lancement ignoré", who);
-    return;
+    REXLOG_WARN("[dash] {} : aucun jeu correspondant dans la bibliothèque, lancement ignoré", who);
+    return false;
   }
-  LaunchGame(*g);
+  tl_hub_call = true;
+  LaunchGame(*g);  // ne revient pas si le jeu est lancé ; sinon (construction, refus) le Dashboard reçoit une erreur
+  tl_hub_call = false;
+  return false;
 }
 
 }  // namespace
 
+// Reprise après la relance du Dashboard (hub noir pendant une construction, ou refus à afficher) : relit current_build.json.
+void ResumeBuild() {
+  std::string j;
+  {
+    std::ifstream f(BuildStatePath());
+    if (!f) return;
+    j.assign(std::istreambuf_iterator<char>(f), std::istreambuf_iterator<char>());
+  }
+  Game g;
+  g.title_id = ParseHex(JsonField(j, "title_id"));
+  g.name = JsonField(j, "name");
+  g.recipe = JsonField(j, "recipe");
+  g.kind = "recipe";
+  for (auto& x : Games())
+    if (x.title_id == g.title_id) g = x;  // champs complets du registre (icône, type...)
+  const std::string state = JsonField(j, "state"), cache = JsonField(j, "cache");
+  const long pid = std::atol(JsonField(j, "pid").c_str());
+  std::error_code ec;
+  if (state == "failed") {
+    FailBuild(g, JsonField(j, "error"), JsonField(j, "log"), false);  // supprime le fichier : message affiché une fois
+  } else if (state == "running" && pid > 0 && kill(pid_t(pid), 0) == 0) {
+    {
+      std::lock_guard<std::mutex> lock(g_build_mutex);
+      g_build = BuildStatus{};
+      g_build.active = true;
+      g_build.title_id = g.title_id;
+      g_build.name = g.name;
+      g_build.log_path = cache + "/build.log";
+      g_build.message = "reprise du suivi";
+    }
+    REXLOG_INFO("[dash] reprise du suivi de la construction de {} (pid {})", g.name, pid);
+    std::thread(BuildMonitor, g, pid, cache, false).detach();
+  } else {
+    fs::remove(BuildStatePath(), ec);  // construction terminée ou disparue : le lancement normal se charge du reste
+  }
+}
+
 void Init() {
+  ResumeBuild();
   if (const char* r = std::getenv("DASH_RETURNED_FROM"))
     REXLOG_INFO("[dash] retour au Dashboard après le jeu {}", r);
+  // Bibliothèque : actif sous AppImage (XENONDASH_AUTOSCAN=1, posé par AppRun) ou avec --dash_library_scan ; sans cela un
+  // lancement de développement ne crée ni dossier de jeux ni données utilisateur.
+  const char* as = std::getenv("XENONDASH_AUTOSCAN");
+  if (REXCVAR_GET(dash_library_scan) || (as && std::string(as) == "1")) RescanLibrary(true, 4);
   std::string t = REXCVAR_GET(dash_launch);
   if (t.empty()) return;
   uint32_t tid = ParseHex(t);
@@ -607,12 +919,14 @@ void Init() {
 REX_HOOK_RAW(__imp__XamLoaderLaunchTitle) {
   uint32_t path = ctx.r3.u32;
   dash::launch::OnLaunchRequest("XamLoaderLaunchTitle", dash::launch::GuestStr(base, path), ctx.r4.u32);
+  ctx.r3.u64 = 0x80004005u;  // E_FAIL : le jeu n'a pas été lancé (construction en cours, refus ou jeu inconnu)
 }
 
 REX_HOOK_RAW(__imp__XamLoaderLaunchTitleEx) {
   REXLOG_INFO("[dash] XamLoaderLaunchTitleEx(r3={:#x} r4={:#x} r5={:#x} r6={:#x})", ctx.r3.u64, ctx.r4.u64,
               ctx.r5.u64, ctx.r6.u64);
   dash::launch::OnLaunchRequest("XamLoaderLaunchTitleEx", dash::launch::GuestStr(base, ctx.r3.u32), ctx.r6.u32);
+  ctx.r3.u64 = 0x80004005u;  // E_FAIL : le jeu n'a pas été lancé (construction en cours, refus ou jeu inconnu)
 }
 
 // NXE (13604) / Metro (17559) : « Play Game » du disque passe par XamLoaderLaunchTitleForReason(chemin ou NULL, raison...)
@@ -621,6 +935,7 @@ REX_HOOK_RAW(__imp__XamLoaderLaunchTitleForReason) {
   REXLOG_INFO("[dash] XamLoaderLaunchTitleForReason(r3={:#x} r4={:#x} r5={:#x} r6={:#x})", ctx.r3.u64, ctx.r4.u64,
               ctx.r5.u64, ctx.r6.u64);
   dash::launch::OnLaunchRequest("XamLoaderLaunchTitleForReason", dash::launch::GuestStr(base, ctx.r3.u32), ctx.r4.u32);
+  ctx.r3.u64 = 0x80004005u;  // E_FAIL : le jeu n'a pas été lancé (construction en cours, refus ou jeu inconnu)
 }
 
 // XamLoaderGetMediaInfo(&type, &titre) : type de média (0 aucun, 1 disque de jeu Xbox 360, 2 Xbox d'origine...) et
@@ -634,5 +949,19 @@ REX_HOOK_RAW(__imp__XamLoaderGetMediaInfo) {
   put(ctx.r3.u32, type);
   put(ctx.r4.u32, title);
   REXLOG_INFO("[dash] XamLoaderGetMediaInfo -> type={} titre={:08X}", type, title);
+  ctx.r3.u64 = 0;
+}
+
+// NXE : XamLoaderGetMediaInfoEx(&a, &b, &c) était un stub (sorties laissées à la valeur de la pile). Le hub l'interroge avant
+// toute action sur le disque (tuile « Play », A, Eject) : la 3e sortie est comparée à 0 et -2 (« pas de média »). Ici : média
+// présent (a = 1 : disque de jeu Xbox 360, b = TitleID du disque) et c = 0 (prêt) ; sans disque a = b = 0 (c = 0 aussi : 0xFFFFFFFE faisait traiter la Games Library comme vide).
+REX_HOOK_RAW(__imp__XamLoaderGetMediaInfoEx) {
+  auto d = dash::launch::InsertedDisc();
+  auto put = [&](uint32_t addr, uint32_t v) {
+    if (addr) *reinterpret_cast<uint32_t*>(base + addr) = __builtin_bswap32(v);
+  };
+  put(ctx.r3.u32, d ? 1 : 0);
+  put(ctx.r4.u32, d ? d->title_id : 0);
+  put(ctx.r5.u32, 0);
   ctx.r3.u64 = 0;
 }

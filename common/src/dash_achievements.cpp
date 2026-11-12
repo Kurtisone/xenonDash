@@ -23,6 +23,8 @@
 #include <fmt/format.h>
 
 #include <rex/cvar.h>
+#include "dash_launch.h"
+
 #include <rex/hook.h>
 #include <rex/logging.h>
 #include <rex/runtime.h>
@@ -39,6 +41,10 @@ std::filesystem::path ProfileDir(uint64_t xuid);
 uint64_t LocalXuid();
 std::vector<uint8_t> LoadGamerPic(uint64_t xuid, bool small);
 }  // namespace dash::profile
+
+namespace dash::disc {
+std::vector<uint8_t> IconFor(const launch::Game& g);
+}
 
 namespace dash::achievements {
 
@@ -71,6 +77,57 @@ ProfileData& Data() {
     }
   }
   return g_data;
+}
+
+// Jeux de la bibliothèque jamais joués : pas d'entrée dans FFFE07D1.gpd (profil neuf, ou jeu ajouté depuis). Ils sont ajoutés
+// en mémoire à la liste des jeux joués (nom, icône du registre ; 0 succès) pour apparaître dans Recent Games et les
+// collections de la Games Library. La date de dernier lancement vient de <profil>/library_played.txt (« TitleID FILETIME »).
+std::map<uint32_t, uint64_t> ReadPlayed(const std::filesystem::path& dir) {
+  std::map<uint32_t, uint64_t> m;
+  FILE* f = std::fopen((dir / "library_played.txt").string().c_str(), "r");
+  if (!f) return m;
+  unsigned id;
+  unsigned long long ft;
+  while (std::fscanf(f, "%x %llu", &id, &ft) == 2) m[id] = ft;
+  std::fclose(f);
+  return m;
+}
+
+std::u16string Utf8ToUtf16(const std::string& s) {
+  std::u16string u;
+  for (size_t i = 0; i < s.size();) {
+    uint32_t c = uint8_t(s[i]);
+    int n = c < 0x80 ? 0 : c < 0xE0 ? 1 : c < 0xF0 ? 2 : 3;
+    c = n == 0 ? c : (c & (0x3F >> n));
+    for (int k = 0; k < n && i + 1 + k < s.size(); k++) c = (c << 6) | (uint8_t(s[i + 1 + k]) & 0x3F);
+    i += 1 + n;
+    if (c >= 0x10000) {
+      c -= 0x10000;
+      u += char16_t(0xD800 + (c >> 10));
+      u += char16_t(0xDC00 + (c & 0x3FF));
+    } else {
+      u += char16_t(c);
+    }
+  }
+  return u;
+}
+
+std::vector<gpd::TitlePlayed> AllTitles() {
+  auto titles = Data().dash.Titles();
+  auto played = ReadPlayed(profile::ProfileDir(profile::LocalXuid()));
+  for (auto& g : launch::Games()) {
+    auto it = std::find_if(titles.begin(), titles.end(), [&](auto& t) { return t.title_id == g.title_id; });
+    if (it != titles.end()) {
+      if (played.count(g.title_id) && played[g.title_id] > it->last_played) it->last_played = played[g.title_id];
+      continue;
+    }
+    gpd::TitlePlayed t;
+    t.title_id = g.title_id;
+    t.last_played = played.count(g.title_id) ? played[g.title_id] : 0;
+    t.name = Utf8ToUtf16(g.name);
+    titles.push_back(std::move(t));
+  }
+  return titles;
 }
 
 const gpd::File* TitleGpd(uint32_t title_id) {
@@ -110,7 +167,7 @@ u32 XamUserCreateTitlesPlayedEnumerator_entry(u32 title_id, u32 user_index, u64 
   if (!count || !buffer_size || !handle) return X_ERROR_INVALID_PARAMETER;
   if (user_index >= 4) return X_ERROR_INVALID_PARAMETER;
   std::lock_guard lock(g_mutex);
-  auto titles = Data().dash.Titles();
+  auto titles = AllTitles();
   // Les plus récents d'abord, comme sur la console.
   std::sort(titles.begin(), titles.end(),
             [](auto& a, auto& b) { return a.last_played > b.last_played; });
@@ -244,6 +301,7 @@ std::vector<uint8_t> FindTile(uint32_t type, uint32_t title_id, uint64_t tile_id
   }
   if (type == kTileGameIcon) {  // icône aussi stockée dans le GPD du Dashboard (id = TitleID)
     if (auto img = Data().dash.Get(gpd::kImage, title_id)) return *img;
+    if (auto g = launch::Find(title_id)) return dash::disc::IconFor(*g);  // jeu de la bibliothèque (PNG du scan)
   }
   return {};
 }
@@ -302,7 +360,7 @@ struct TitleView {
 TitleView GetTitleView(uint32_t title_id) {
   std::lock_guard lock(g_mutex);
   TitleView view;
-  for (auto& t : Data().dash.Titles()) {
+  for (auto& t : AllTitles()) {
     if (t.title_id == title_id) view.name = t.name;
   }
   if (auto* f = TitleGpd(title_id)) {
@@ -318,6 +376,36 @@ TitleView GetTitleView(uint32_t title_id) {
     }
   }
   return view;
+}
+
+// Date « dernier joué » d'un jeu absent du GPD du Dashboard (écrite au lancement, voir dash_launch.cpp).
+void MarkPlayed(uint32_t title_id, uint64_t filetime) {
+  auto path = profile::ProfileDir(profile::LocalXuid()) / "library_played.txt";
+  auto m = ReadPlayed(path.parent_path());
+  m[title_id] = filetime;
+  std::error_code ec;
+  std::filesystem::create_directories(path.parent_path(), ec);
+  FILE* f = std::fopen(path.string().c_str(), "w");
+  if (!f) return;
+  for (auto& [id, ft] : m) std::fprintf(f, "%08X %llu\n", id, static_cast<unsigned long long>(ft));
+  std::fclose(f);
+}
+
+// Date « dernier joué » (FILETIME) d'un jeu : GPD du Dashboard ou library_played.txt ; 0 si jamais joué.
+uint64_t LastPlayed(uint32_t title_id) {
+  std::lock_guard lock(g_mutex);
+  uint64_t t = 0;
+  for (auto& x : Data().dash.Titles())
+    if (x.title_id == title_id) t = x.last_played;
+  auto m = ReadPlayed(profile::ProfileDir(profile::LocalXuid()));
+  if (m.count(title_id) && m[title_id] > t) t = m[title_id];
+  return t;
+}
+
+// Relit les GPD au prochain accès (après un nouveau scan de la bibliothèque).
+void Reload() {
+  std::lock_guard lock(g_mutex);
+  g_data = ProfileData{};
 }
 
 // Gamerscore obtenu, d'après les GPD (0 sans données).

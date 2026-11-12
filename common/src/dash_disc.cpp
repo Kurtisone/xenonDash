@@ -253,13 +253,15 @@ std::atomic<uint64_t> g_generation{0};
 std::atomic<bool> g_sent{false};
 
 void ScheduleMediaNotification() {
-  if (!g_game || g_sent.load()) return;
+  if (g_sent.load()) return;
   uint64_t gen = ++g_generation;
   std::thread([gen] {
     std::this_thread::sleep_for(std::chrono::milliseconds(1500));
     if (gen != g_generation.load() || g_sent.exchange(true)) return;  // un écouteur plus récent reprogramme
-    REXLOG_INFO("[dash] notification de média inséré (0x{:08X}, type {})", kXnMediaChanged, kMediaGame360);
-    rex::system::kernel_state()->BroadcastNotification(rex::system::XNotificationID(kXnMediaChanged), kMediaGame360);
+    uint32_t id = kXnMediaChanged, param = g_game ? kMediaGame360 : 0;
+    if (const char* e = std::getenv("DASH_MEDIA_NOTIFY")) std::sscanf(e, "%x:%u", &id, &param);  // essais : id:param
+    REXLOG_INFO("[dash] notification de média (0x{:08X}, paramètre {})", id, param);
+    rex::system::kernel_state()->BroadcastNotification(rex::system::XNotificationID(id), param);
   }).detach();
 }
 
@@ -271,7 +273,7 @@ uint32_t TitleInfo(uint8_t* base, uint32_t buffer_ptr, uint32_t buffer_length) {
 
 void Init() {
   g_game = launch::InsertedDisc();
-  if (!g_game) return;
+  if (!g_game) return;  // sans disque : seule la notification « aucun média » est diffusée (ScheduleMediaNotification)
   g_disc_dir = fs::temp_directory_path() / fmt::format("xenondash-cdrom0-{}", getuid());
   std::error_code ec;
   fs::create_directories(g_disc_dir, ec);

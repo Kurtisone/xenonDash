@@ -17,6 +17,7 @@ Données : $DATA
   --modules <dossier>          modules/polices complets de la version (archive XeBuilds), avec --import
   --shrdres-xam <xam.xex>      xam.xex complet d'une mise à jour récente (ex. 17559) pour shrdres.xzp, avec --import
   --reimport                   refait l'import (profils et games.toml conservés)
+  --games-dir                  affiche le dossier de jeux (défaut ~/XenonDash/Games, \$XENONDASH_GAMES_DIR) et quitte
   --data-dir                   affiche le dossier de données et quitte
   --help                       cette aide
 Les autres options sont transmises au Dashboard (ex. --log_level=trace). Python 3 système requis pour l'import.
@@ -24,7 +25,7 @@ Sans option et sans données, une fenêtre (zenity/kdialog) ou la console demand
 USG
 }
 
-UPDATE= MODULES= XAM= REIMPORT=0
+UPDATE= MODULES= XAM= REIMPORT=0 GAMES_ONLY=0
 while [ $# -gt 0 ]; do
   case $1 in
     --help|-h) usage; exit 0;;
@@ -36,6 +37,7 @@ while [ $# -gt 0 ]; do
     --shrdres-xam) XAM=$2; shift 2;;
     --shrdres-xam=*) XAM=${1#*=}; shift;;
     --reimport) REIMPORT=1; shift;;
+    --games-dir) GAMES_ONLY=1; shift;;
     *) break;;
   esac
 done
@@ -74,6 +76,31 @@ if [ "$REIMPORT" = 1 ] || [ -n "$UPDATE" ] || ! ready; then
   fi
   [ -d "$XAM" ] && for c in "$XAM/\$flash_xam.xex" "$XAM/xam.xex"; do [ -f "$c" ] && XAM=$c && break; done
   do_import "$DATA" "$UPDATE" "$MODULES" "$XAM" || { echo "Import en échec (voir ci-dessus)." >&2; exit 1; }
+fi
+
+# Dossier de jeux : créé au premier lancement (outils Python de l'AppImage, lecture seule : tout ce qui s'écrit va dans
+# ~/.local/share/xenondash et le dossier de jeux). Le Dashboard le scanne à chaque démarrage (F6 : nouveau scan).
+GAMES_DIR=${XENONDASH_GAMES_DIR:-$HOME/XenonDash/Games}
+if [ ! -d "$GAMES_DIR" ]; then
+  if python3 -I "$SHARE/tools/game_library.py" init >/dev/null 2>&1; then
+    MSG="XenonDash : dossier de jeux créé : $GAMES_DIR
+Déposez-y vos jeux (ISO, dossiers extraits avec default.xex, paquets XBLA, GOD...) puis relancez ou appuyez sur F6 dans le Dashboard."
+    echo "$MSG" >&2
+    if [ -n "${DISPLAY:-}${WAYLAND_DISPLAY:-}" ] && command -v notify-send >/dev/null 2>&1; then notify-send -a XenonDash "Dossier de jeux créé" "$GAMES_DIR" 2>/dev/null; fi
+  fi
+fi
+if [ "$GAMES_ONLY" = 1 ]; then echo "$GAMES_DIR"; exit 0; fi
+
+# Racine des outils de recompilation : l'AppImage est montée en lecture seule à un chemin qui change à chaque lancement ;
+# un lien stable (par version) sert de racine, pour que les projets compilés gardent des chemins valides entre deux lancements.
+LINK=${XENONDASH_DATA:-${XDG_DATA_HOME:-$HOME/.local/share}/xenondash}/runtime-$VERSION
+mkdir -p "$(dirname "$LINK")" 2>/dev/null
+ln -sfn "$SHARE" "$LINK"
+export XENONDASH_ROOT=$LINK XD_SDK=$LINK/sdk XENONDASH_AUTOSCAN=1 XENONDASH_GAMES_DIR=$GAMES_DIR
+XRE=$LINK/work/XenosRecomp-unified/build/XenosRecomp
+if [ -x "$XRE/XenosRecomp" ]; then
+  export XD_XENOSRECOMP=$XRE/XenosRecomp
+  LD_LIBRARY_PATH=$XRE${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}; export LD_LIBRARY_PATH
 fi
 
 if ! ready; then echo "Données absentes : $DATA (utiliser --import)" >&2; exit 1; fi

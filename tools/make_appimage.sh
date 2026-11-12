@@ -1,12 +1,18 @@
 #!/bin/sh
 # Construit out/appimage/XenonDash-<version>-x86_64.AppImage (phase P6 ; voir README, « AppImage »).
-# usage: tools/make_appimage.sh <version> [--no-strip]
+# usage: tools/make_appimage.sh <version> [--no-strip] [--no-build-tools]
+# --no-build-tools : sans les outils de recompilation de jeux (SDK, ngpu_core, XenosRecomp...) : AppImage légère, sans « Play Game »
+# pour les jeux à recompiler.
 # Le binaire dash (déjà compilé : preset linux-amd64-relwithdebinfo) et les bibliothèques du SDK sont embarqués ;
 # AUCUN fichier Microsoft (dash.xex, polices, modules, shrdres) : import au premier lancement.
 # Usage personnel : le binaire contient une traduction du code Microsoft, l'AppImage n'est pas redistribuable.
 set -eu
 V=${1:?usage: tools/make_appimage.sh <version> [--no-strip]}
-STRIP=1; [ "${2:-}" = "--no-strip" ] && STRIP=0
+STRIP=1; BUILD_TOOLS=1
+for a in "${2:-}" "${3:-}"; do
+  [ "$a" = "--no-strip" ] && STRIP=0
+  [ "$a" = "--no-build-tools" ] && BUILD_TOOLS=0
+done
 R=$(cd "$(dirname "$0")/.." && pwd)
 BIN=$R/dashboards/$V/out/build/linux-amd64-relwithdebinfo/dash
 [ -x "$BIN" ] || { echo "binaire absent : $BIN (compiler d'abord le projet)" >&2; exit 1; }
@@ -37,6 +43,28 @@ S=$A/usr/share/xenondash
 echo "$V" > "$S/version"
 cp "$R/games.example.toml" "$S/"
 for f in port_dashboard.py stfs.py xex_resource.py xex_rekey.py xzp_alias.py; do cp "$R/tools/$f" "$S/tools/"; done
+# --- Outils de recompilation de jeux (recipe_build.py, bibliothèque de jeux) : la liste ci-dessous est faite pour être étendue
+# (tout ce que le moteur de recettes appelle sous tools/ doit y figurer : tous les *.py, les dossiers de données, le gabarit).
+TOOLS_DIRS="d3d_signatures templates"          # dossiers de tools/ copiés en entier
+ROOT_DIRS="games ngpu_core native_gpu patches" # dossiers du dépôt copiés en entier (recettes, rendu natif, correctifs XenosRecomp)
+if [ $BUILD_TOOLS = 1 ]; then
+  for need in sdk/bin/rexglue sdk/include sdk/lib work/XenosRecomp-unified/build/XenosRecomp/XenosRecomp; do
+    [ -e "$R/$need" ] || { echo "manquant : $need (voir tools/build_xenosrecomp.sh et le SDK installé dans sdk/) ; --no-build-tools pour s'en passer" >&2; exit 1; }
+  done
+  cp "$R"/tools/*.py "$S/tools/"
+  for d in $TOOLS_DIRS; do cp -a "$R/tools/$d" "$S/tools/"; done
+  for d in $ROOT_DIRS; do cp -a "$R/$d" "$S/"; done
+  find "$S" -name __pycache__ -type d -prune -exec rm -rf {} + 2>/dev/null
+  rm -rf "$S/games/"*/tests            # tests des recettes : inutiles à l'exécution
+  cp -a "$R/sdk" "$S/sdk"              # binaire rexglue, en-têtes, bibliothèques statiques, cmake : le projet d'un jeu s'y lie
+  XR=work/XenosRecomp-unified
+  mkdir -p "$S/$XR/build/XenosRecomp"
+  cp "$R/$XR/build/XenosRecomp/XenosRecomp" "$S/$XR/build/XenosRecomp/"
+  cp "$R/$XR/thirdparty/dxc-bin/lib/x64/libdxcompiler.so" "$R/$XR/thirdparty/dxc-bin/lib/x64/libdxil.so" "$S/$XR/build/XenosRecomp/"
+  mkdir -p "$S/$XR/XenosRecomp"; cp "$R/$XR/XenosRecomp/shader_common.h" "$S/$XR/XenosRecomp/"   # lu par XenosRecomp à l'exécution (3e argument)
+  if [ $STRIP = 1 ]; then strip --strip-unneeded "$S/$XR/build/XenosRecomp/XenosRecomp" "$S/sdk/bin/rexglue" 2>/dev/null || true; fi
+  echo "outils de recompilation embarqués : $(du -sh "$S" | cut -f1) (non compressé)"
+fi
 cp "$R/tools/appimage/xenondash_import.py" "$S/tools/"
 mkdir -p "$S/tools/xexinfo/build"; cp "$R/tools/xexinfo/build/xexinfo" "$S/tools/xexinfo/build/"
 cp "$R/tools/appimage/AppRun" "$A/AppRun"; chmod +x "$A/AppRun"

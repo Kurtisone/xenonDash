@@ -35,6 +35,10 @@
 #include <rex/system/xtypes.h>
 #include <rex/types.h>
 
+namespace dash::achievements {
+std::u16string Utf8ToUtf16(const std::string& s);
+}
+
 namespace dash::profile {
 std::filesystem::path ProfileDir(uint64_t xuid);
 uint64_t LocalXuid();
@@ -158,7 +162,7 @@ std::vector<Item> List(uint32_t title_id, uint32_t type) {
       v.title_id = g.title_id;
       v.type = g.content_type;
       v.file_name = fmt::format("{:08X}", g.title_id);
-      v.name = std::u16string(g.name.begin(), g.name.end());
+      v.name = achievements::Utf8ToUtf16(g.name);
       all.push_back(std::move(v));
     }
   }
