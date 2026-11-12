@@ -360,6 +360,14 @@ REX_HOOK_RAW(__imp__XamLoaderLaunchTitleEx) {
   dash::launch::OnLaunchRequest("XamLoaderLaunchTitleEx", dash::launch::GuestStr(base, ctx.r3.u32), ctx.r6.u32);
 }
 
+// NXE (13604) / Metro (17559) : « Play Game » du disque passe par XamLoaderLaunchTitleForReason(chemin ou NULL, raison...)
+// (NULL = lancer le disque). Même traitement que XamLoaderLaunchTitle.
+REX_HOOK_RAW(__imp__XamLoaderLaunchTitleForReason) {
+  REXLOG_INFO("[dash] XamLoaderLaunchTitleForReason(r3={:#x} r4={:#x} r5={:#x} r6={:#x})", ctx.r3.u64, ctx.r4.u64,
+              ctx.r5.u64, ctx.r6.u64);
+  dash::launch::OnLaunchRequest("XamLoaderLaunchTitleForReason", dash::launch::GuestStr(base, ctx.r3.u32), ctx.r4.u32);
+}
+
 // XamLoaderGetMediaInfo(&type, &titre) : type de média (0 aucun, 1 disque de jeu Xbox 360, 2 Xbox d'origine...) et
 // TitleID du disque (le Dashboard l'appelle en démarrant et pour remplir le bouton de disque).
 REX_HOOK_RAW(__imp__XamLoaderGetMediaInfo) {

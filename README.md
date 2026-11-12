@@ -178,14 +178,28 @@ et `p6_2.0.13604.0.png` (AppImage).
 **AppImage** : `tools/make_appimage.sh 2.0.13604.0` (19 Mo) ; `TEST_DISPLAY=84 tools/test_appimage.sh 2.0.13604.0 xebuild-6770`
 (l'import prend le `$flash_xam.xex` de la mise à jour, polices de `xebuild-6770`) : Dashboard affiché, aucun `FATAL`.
 
-**Reste** : (1) Game Library > Recent Games reste sur l'indicateur d'attente (aucun appel
-`XamUserCreateTitlesPlayedEnumerator`/énumérateur de contenu constaté ; 3 fils de travail attendent dans `sub_9283F658` ;
-cause non identifiée, probablement une tâche Live/profil ; Achievements et Played Games non atteints) ; (2) le profil
-local n'est pas reconnu dans le hub (tuile « Sign In / 1 Profile Found », sondage toutes les 5 s de
-`XamUserGetUserTenure`/`XamUserGetSubscriptionType` (stubs), paramètres de profil `0x63E80044/0x7008004F/0x61180050`,
-`XLIVEBASE 0x58003`, `XamProfileFindAccount`, `XamUserGetIndexFromXUID`) ; (3) glyphe manquant (carré) en haut à droite
-(icône Ⓖ des polices) ; (4) `DASHUSER:\` absent (`ThematicSkin`, `VisionEffect`) ; (5) XAM 13604 non recompilé : le
-XEX se décode maintenant, la chaîne `tools/codegen_module.py` du palier 2 17559 est à rejouer.
+**Profil, Recent Games, jeux (phase P4b, fait)** :
+- *Cause du « Sign In / 1 Profile Found » et de l'attente de Recent Games* : le hub sonde toutes les 5 s une requête de
+  réglages de profil (`0x63E80044` binaire 0x3E8 octets, `0x7008004F` date, `0x61180050` binaire 0x118 octets) que le SDK
+  fait échouer en bloc quand un réglage est inconnu, puis `XamUserGetUserTenure` / `XamUserGetSubscriptionType`
+  (stubs qui renvoient r3 = valeur aléatoire), `XamProfileFindAccount` et `XamUserGetIndexFromXUID` (stubs). Sans profil
+  « reconnu », la Games Library n'énumérait pas (les 3 fils qui attendaient dans `sub_9283F658` attendaient ce profil).
+- *Correctifs* (`common/`) : `dash_profile.cpp` déclare les trois réglages (valeurs vides) ; nouveau `dash_user.cpp`
+  (`XamUserGetUserTenure`, `XamUserGetSubscriptionType`, `XamProfileFindAccount`, `XamUserGetIndexFromXUID`,
+  `GetMembershipTierFromXUID`, `GetOnlineCountry/LanguageFromXUID`, `GetAge/AgeGroup`, `IsParentalControlled`, `IsPartial`,
+  `IsUnsafeProgrammingAllowed`, `FlushLogonQueue` : profil local hors ligne, `xuid_online = 0`, succès) ;
+  `XamLoaderLaunchTitleForReason` et `XamContentLaunchImageInternalEx` (variantes NXE/Metro du lancement) ajoutées.
+- *Résultat 13604* : « Joueur / 155 » (Gamerscore) en haut à droite, tuile du profil (gamertag, Gamerscore, « Latest Games »
+  avec l'icône de Skate, avatar par défaut) dans My Xbox ; bouton de disque « Play Skate » (icône) avec `games.toml`
+  (`disc = true`) ; **Game Library > Recent Games** affiche « Skate, Xbox 360 Game, 70/1000 » (avec `library = true`) et les
+  collections All Games / Full Games / Xbox 360 Games ; page du jeu (Gamerscore 70/1000, 5/44 succès et leurs images),
+  **Achievements > View All** (écran natif du Dashboard) ; lancement de Skate (`--dash_launch=45410813`) puis retour au
+  Dashboard avec le profil intact (superviseur P5). Captures : `dashboards/2.0.13604.0/runs/preuves/profil_13604_*.png`.
+- *Non résolu* : le bouton « Play Game » de la page du jeu (et A sur le disque) n'appelle aucune fonction XAM journalisée
+  (aucun `XamLoaderLaunchTitle*`/`XamContentLaunchImageInternal*`) : décision côté Lua du hub non identifiée ; utiliser F5
+  ou `--dash_launch`. L'automatisation clavier sous lavapipe est instable (répétition de touches : une touche peut faire
+  défiler plusieurs lames), exécuter sous gdb (`DASH_GDB=1`) et vérifier chaque écran.
+- Restent : glyphe Ⓖ manquant (carré), `DASHUSER:\ThematicSkin`/`VisionEffect` absents, XAM 13604 non recompilé.
 
 ## Dashboard 2.0.17559 et XAM recompilé (phase P4)
 
@@ -236,10 +250,14 @@ est correct (la framebuffer invitée contenait bien l'interface). Pour piloter l
 `XKEYS_HOLD=0.8` (le Dashboard rendu par lavapipe n'interroge les entrées qu'à quelques images par seconde ; avec 0,15 s les
 premières touches sont perdues).
 
-**Reste (palier 1)** : le profil n'apparaît pas dans le hub (tuile « Sign In » / Live absent : `XamUserGetSigninState`, paramètres
-de profil `0x63E80044/0x7008004F/0x61180050`, `XamUserGetUserTenure`/`SubscriptionType`, messages `XLIVEBASE 0xFC/0x58003`
-appelés en boucle) ; la police `SegoeXbox-Light.xtt` est utilisée pour toutes les langues ; `DASHUSER:\ThematicSkin`,
-`VisionEffect` absents ; Games/My Games et lancement de jeux non testés sur cette version.
+**Profil et jeux (phase P4b)** : mêmes correctifs que la 13604 (`common/src/dash_user.cpp`, réglages `0x63E80044`...). Le hub
+Metro affiche le gamertag « Joueur » en haut à droite, le bouton de disque « Play Skate » (icône, avec `games.toml`) et le
+lancement de Skate (`--dash_launch`) puis le retour au Dashboard fonctionnent (captures `dashboards/2.0.17559.0/runs/preuves/
+profil_17559_*.png`). Essayé et **écarté** : répondre « succès » au message `XLIVEBASE 0xFC/0x58003` (appelé en boucle, échec
+journalisé) via `XMsgInProcessCall`/`XMsgSystemProcessCall` : le hub reste alors sur un fond vide ; l'échec est donc conservé.
+Reste : A sur « Play Skate » ouvre une scène vide qui sonde `XamGetCountry`/`XamContentGetLocalizedDeviceData` (stubs) toutes
+les 5 s ; onglets games/My Games/Achievements du hub Metro non vérifiés ; la police `SegoeXbox-Light.xtt` sert à toutes les
+langues ; `DASHUSER:\ThematicSkin`, `VisionEffect` absents.
 
 ### Palier 2 : XAM 17559 recompilé comme module ReXGlue (`dashboards/2.0.17559.0-xam/`)
 

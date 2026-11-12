@@ -104,6 +104,15 @@ std::string Gamertag() {
   return g;
 }
 
+// Remplit un compte X_XAMACCOUNTINFO (0x17C octets) pour le profil local (hors ligne : xuid_online = 0).
+bool FillLocalAccount(uint8_t* account) {
+  auto* a = reinterpret_cast<XamAccountInfo*>(account);
+  std::memset(a, 0, sizeof(*a));
+  auto name = Gamertag();
+  for (size_t i = 0; i < name.size(); i++) a->gamertag[i] = uint8_t(name[i]);
+  return true;
+}
+
 uint64_t LocalXuid() { return system::kernel_state()->user_profile()->xuid(); }
 
 std::filesystem::path ProfileDir(uint64_t xuid) {
@@ -339,6 +348,12 @@ void ApplyProfileSettings() {
   for (uint32_t id : {kGamerType, kUnknown3A}) {
     if (!profile->GetSetting(id)) profile->AddSetting(std::make_unique<Profile::Int32Setting>(id, 0));
   }
+  // Réglages lus toutes les 5 s par le hub NXE/Metro pour décider si le profil est connecté (sans eux le SDK fait
+  // échouer toute la requête : « Sign In / 1 Profile Found ») : 0x63E80044 (binaire, 0x3E8 octets), 0x7008004F (date),
+  // 0x61180050 (binaire, 0x118 octets). Valeurs « vides » (profil sans données Live).
+  profile->AddSetting(std::make_unique<Profile::BinarySetting>(0x63E80044, std::vector<uint8_t>(0x3E8, 0)));
+  profile->AddSetting(std::make_unique<Profile::DateTimeSetting>(0x7008004F, 0));
+  profile->AddSetting(std::make_unique<Profile::BinarySetting>(0x61180050, std::vector<uint8_t>(0x118, 0)));
   int32_t gamerscore = REXCVAR_GET(dash_gamerscore);
   if (gamerscore < 0) gamerscore = achievements::GpdGamerscore();
   profile->AddSetting(std::make_unique<Profile::Int32Setting>(kGamercardCred, gamerscore));

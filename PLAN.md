@@ -106,7 +106,7 @@ l'utilisateur au premier lancement.
   dispatchait pas (le D3D 17559 soumet ses tampons imbriqués par une DPC) ; correctif SDK `8eb253f`. Autres correctifs :
   `setjmp`/`longjmp` du CRT déclarés (Lua), stubs XAM qui renvoyaient leur 1er argument (langue, contexte de Dashboard,
   Kinect...), ressources XZP embarquées dans `dash.xex` extraites par l'outil (`langpack://` -> `media:\<nom>.xzp`),
-  `XeCryptHmacSha*`. Reste côté HLE : profil/Live dans le hub (tuile « Sign In »), `XLIVEBASE 0x58003`.
+  `XeCryptHmacSha*`. Profil du hub résolu en P4b (`common/src/dash_user.cpp`) ; reste `XLIVEBASE 0x58003` (échec conservé, voir README).
 - **Bloqué (palier 2)** : le premier thread système de XAM lit un singleton nul (périphériques `Harddisk0\Partition1`...
   absents) ; la redirection des imports du Dashboard vers les exports de XAM n'est pas écrite.
 - **Suite chiffrée** (détail et risques dans le README, « Dashboard 2.0.17559 et XAM recompilé ») : 2) XAM vivant
@@ -114,8 +114,8 @@ l'utilisateur au premier lancement.
   3-5 j ; 5) rendu XUI de XAM + manette, 2-4 j ; 6) retrait d'ImGui, captures, AppImage, 1 j. À court terme : profil et
   Games/My Games du 17559 en HLE (comme 6770), puis AppImage Metro.
 - **NXE 2.0.13604 (HLE, FAIT en partie, 2026-11-06)** : interface NXE affichée et pilotée au clavier, AppImage OK
-  (`tools/xex_rekey.py` : le `xam.xex` 13604 est chiffré avec la clé XEX1 ; polices 6770 en substitution) ; reste « Recent
-  Games »/profil (sign-in local non reconnu dans le hub), puis recompilation de XAM 13604 (XEX désormais décodable).
+  (`tools/xex_rekey.py` : le `xam.xex` 13604 est chiffré avec la clé XEX1 ; polices 6770 en substitution) ; profil, Recent Games, Achievements, disque et
+  lancement/retour de Skate **faits** (P4b, 2026-11-12 ; reste le bouton Play Game du hub, non câblé), puis recompilation de XAM 13604 (XEX désormais décodable).
   Détail : README, « Dashboard NXE 2.0.13604 ». **Découverte** : les `xam_*.xex` Blades de XeBuilds (6717, 7258...) se
   déchiffrent aussi avec la clé XEX1 : XAM Blades recompilable (à explorer ; 6770 reste base 1888 + delta).
 - Ensuite : autres mises à jour complètes NXE/Metro.

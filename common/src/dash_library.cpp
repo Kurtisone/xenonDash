@@ -202,3 +202,17 @@ REX_HOOK_RAW(__imp__XamContentLaunchImageInternal) {
   }
   ctx.r3.u64 = 0x80004005u;  // E_FAIL
 }
+
+// NXE/Metro : variante Ex (contenu, indicateurs, masque) de « Play Game » ; même traitement.
+REX_HOOK_RAW(__imp__XamContentLaunchImageInternalEx) {
+  uint32_t content = ctx.r3.u32;
+  REXLOG_INFO("[dash] XamContentLaunchImageInternalEx(contenu={:#x}, indicateurs={:#x}, {:#x})", content, ctx.r4.u32,
+              ctx.r5.u32);
+  if (content) {
+    uint32_t title = __builtin_bswap32(*reinterpret_cast<uint32_t*>(base + content + 0x140));
+    if (auto g = dash::launch::Find(title)) {
+      dash::launch::LaunchGame(*g);
+    }
+  }
+  ctx.r3.u64 = 0x80004005u;  // E_FAIL
+}

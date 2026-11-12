@@ -8,6 +8,7 @@
 add_library(xenondash_common OBJECT
     src/dash_app_base.cpp
     src/dash_profile.cpp
+    src/dash_user.cpp
     src/dash_achievements.cpp
     src/dash_content.cpp
     src/dash_disc.cpp
