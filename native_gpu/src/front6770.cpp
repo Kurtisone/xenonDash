@@ -22,6 +22,7 @@
 #include <array>
 #include <atomic>
 #include <chrono>
+#include <cmath>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -180,6 +181,22 @@ bool EnsureCore() {
   }
   NGPU_LOG("noyau ngpu_core sur '%s'", core->device_name().c_str());
   std::fprintf(stderr, "[ngpu] noyau ngpu_core sur '%s'\n", core->device_name().c_str());
+  // Rampe d'affichage : le D3D du Dashboard regle l'ecran en gamma BT.709 (VdGetCurrentDisplayGamma, type 2) et ecrit une rampe PWL
+  // dans les registres DC_LUT, que l'oracle applique a la presentation. Ces ecritures partent dans le tampon de commandes (non lu
+  // ici) : approximation par une puissance (mesuree contre l'oracle : sortie = entree^1.16 entre 20 % et 95 %). DASH_NGPU_GAMMA=<p>
+  // change l'exposant, 1 = pas de rampe.
+  {
+    double power = 1.16;
+    if (const char* e = std::getenv("DASH_NGPU_GAMMA")) power = std::atof(e);
+    if (power > 0.0 && power != 1.0) {
+      uint32_t ramp[256];
+      for (int i = 0; i < 256; ++i) {
+        const uint32_t v = uint32_t(std::lround(1023.0 * std::pow(i / 255.0, power)));
+        ramp[i] = v << 20 | v << 10 | v;
+      }
+      core->renderer().SetGammaRamp(ramp);
+    }
+  }
   g.core = std::move(core);
   return true;
 }
