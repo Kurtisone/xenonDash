@@ -195,6 +195,17 @@ TrialsReVolution : Trials HD/Evolution/Fusion) sont fusionnés dans XenonDash.
 - Étapes : (1) inventaire des correctifs des trois projets et de leurs licences ; (2) SDK unifié ; (3) extraction du rendu
   natif de Skate en bibliothèque, Dashboard 6770 dessus (FAIT, voir ci-dessus) ; (4) format de recette + Skate porté en recette, compilé et lancé
   depuis le Dashboard (FAIT) ; (5) Trials ; (6) recompilation générique.
+- **Bibliothèque de jeux, recompilation générique et NXE (2026-11-13, étape 6 en partie)** :
+  - *Bibliothèque* (FAIT) : dossier de jeux `~/XenonDash/Games` (ou `$XENONDASH_GAMES_DIR`) créé au premier lancement de l'AppImage ; `tools/xcontainer.py` lit dossier extrait, XEX nu,
+    ISO XDVDFS, paquets STFS (XBLA) et GOD/SVOD ; `tools/game_library.py` inventorie (nom, icône, `games.auto.toml`). ISO et GOD validés sur fichiers synthétiques seulement. Détail : [docs/bibliotheque.md](docs/bibliotheque.md).
+  - *Recompilateur générique* (FAIT pour la XDK 5632) : jeu sans recette -> découverte statique des fonctions (`tools/func_discover.py`), fonctions D3D et disposition du périphérique retrouvées par motif
+    (`tools/d3d_match.py`), façade `games/_generic/`. **Skate sans recette ni liste manuelle atteint son écran-titre en natif** (1 031 s). **Trials Fusion (XDK 21256) : construit mais image noire** (shaders liés hors
+    de `Set*Shader`) : famille marquée expérimentale, jeu refusé avec motif. Dashboards 13604/17559 : 9 rôles D3D sur 11. Détail : [docs/recompilateur_generique.md](docs/recompilateur_generique.md).
+  - *NXE 13604* (FAIT en grande partie) : registre fusionné (`games.toml` + `games.auto.toml`), scan au démarrage (F6), **Game Library listant tous les jeux sans disque** (éléments d'énumération de 512 octets),
+    Play Game câblé (`XamLoaderGetMediaInfoEx`), progression de construction à l'écran, AppImage embarquant la chaîne de recompilation (49,9 Mo ; clang, cmake, ninja et python 3.11+ de l'hôte). Bout en bout vérifié
+    avec Skate en recette (`dashboards/2.0.13604.0/e2e_jeux.sh`). Détail : [docs/nxe_jeux.md](docs/nxe_jeux.md).
+  - *Reste* : XDK tardives (chargement des shaders de Trials Fusion, références manquantes pour 20158/17559), autres XDK jamais essayées (un seul jeu validé en générique), ISO/GOD réels, lancement générique de bout en bout
+    depuis la Game Library à plusieurs jeux, étiquette « Arcade Game » des jeux disque, dialogue « Can't launch » résiduel après un refus, shaders des archives compressées (boucle « jouer -> reconstruire »).
 
 ## Risques connus
 - Rendu logiciel (lavapipe/Xvfb) qui se fige sur certaines transitions : tests sur vrai GPU requis.

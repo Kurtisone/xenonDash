@@ -485,6 +485,29 @@ Prérequis : SDK installé dans `sdk/` (branche `unified`), `tools/build_xenosre
 Au premier lancement le Dashboard lance la construction (processus détaché, il reste utilisable, fenêtre de progression, journal `<cache>/build.log`) puis lance le jeu ; ensuite
 le binaire du cache est lancé directement (retour au Dashboard à la fin du jeu).
 
+## Bibliothèque de jeux et recompilateur générique (NXE)
+
+Parcours visé, depuis le Dashboard NXE 2.0.13604 et son AppImage, sans ligne de commande :
+
+1. Au premier lancement, l'AppImage crée `~/XenonDash/Games` (`$XENONDASH_GAMES_DIR` ou `--games-dir` pour un autre dossier).
+2. On y dépose ses jeux : dossier extrait (`default.xex`), XEX nu, ISO, paquet XBLA (STFS, y compris l'arborescence `<TitleID>/000D0000/<paquet>`), Games on Demand. Rien n'est copié ni modifié.
+3. Le Dashboard scanne le dossier au démarrage (F6 pour rescanner) ; les jeux apparaissent dans **Game Library** avec nom et icône.
+4. A puis **Play Game** : au premier lancement le jeu est recompilé en natif (barre de progression dans le Dashboard, 12 à 25 min), puis lancé ; on revient au Dashboard en quittant.
+
+Prérequis sur la machine : `python3` (3.11+), `clang`, `cmake`, `ninja`, un GPU Vulkan. Aucune émulation : un jeu dont le rendu natif n'est pas possible est refusé avec un motif.
+
+État réel (2026-11-13) :
+
+| Élément | État |
+|---|---|
+| Formats | dossier, XEX, paquet XBLA : validés sur fichiers réels ; ISO et GOD : sur fichiers synthétiques seulement ([docs/bibliotheque.md](docs/bibliotheque.md)) |
+| Game Library NXE | tous les jeux listés sans disque ; A/Play Game transmet le bon TitleID ; tous étiquetés « Arcade Game » ([docs/nxe_jeux.md](docs/nxe_jeux.md)) |
+| Jeu avec recette (Skate) | bout en bout vérifié sous AppImage : dépôt, Game Library, construction, jeu natif, retour |
+| Jeu sans recette, XDK 5632 (Skate en mode générique) | écran-titre natif atteint sans aucune aide manuelle ; seul jeu validé à ce jour |
+| Jeu sans recette, XDK tardive (Trials Fusion, 21256) | refusé (« signatures expérimentales ») : la construction aboutit mais l'image est noire |
+
+Diagnostic d'un jeu : `tools/recipe_build.py identify <source>` (mode, XDK, fonctions D3D trouvées, `supported`, `reason`). Détail : [docs/recompilateur_generique.md](docs/recompilateur_generique.md).
+
 ## Contrôles
 
 **Manette** : toute manette reconnue par SDL (Xbox, DualShock/DualSense, etc.) fonctionne directement.
