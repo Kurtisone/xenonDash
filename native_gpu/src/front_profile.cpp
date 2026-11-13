@@ -45,6 +45,8 @@
 #include NGPU_PROFILE_HEADER
 
 namespace ngpu {
+// Superposition de l'overlay du HUD de XAM (hud_front.cpp, palier N2) : symbole faible, absent des builds sans HUD recompile.
+bool HudComposite(uint32_t* pixels, uint32_t w, uint32_t h) __attribute__((weak));
 void NullGpuAttach(uint32_t dev);
 void NullGpuCompleteNow(uint8_t* base, uint32_t dev);
 void NextFrame();
@@ -777,6 +779,11 @@ NGPU_HOOK(NGP_Swap) {
       g.in_frame = false;
       g.frames++;
       if (const uint32_t* pixels = renderer.presented()) {
+        static std::vector<uint32_t> composed;
+        if (ngpu::HudComposite) {  // le HUD de XAM (boite de message...) est superpose a l'image du Dashboard
+          composed.assign(pixels, pixels + size_t(renderer.presented_width()) * renderer.presented_height());
+          if (ngpu::HudComposite(composed.data(), renderer.presented_width(), renderer.presented_height())) pixels = composed.data();
+        }
         if (const char* dm = std::getenv("DASH_NGPU_DUMP")) {  // "<image>:<fichier.ppm>" : image presentee par le noyau
           char* colon = nullptr;
           const unsigned long want = std::strtoul(dm, &colon, 10);

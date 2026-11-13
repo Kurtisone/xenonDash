@@ -697,7 +697,7 @@ l'application 254) : `XexLoadImage(hud.xex)` → entrée du module (`XamRegister
 
 Classement, avec preuves :
 
-1. **Rendu : le HUD est créé mais rien n'est dessiné.** Le rendu XUI se fait dans XAM recompilé (le HUD n'importe aucun `XuiRender*` dans cette
+1. **Rendu : le HUD est créé mais rien n'est dessiné.** *(Correction du palier N2 : les tampons n'étaient pas à zéro. Le descripteur de `VdSetSystemCommandBuffer` donne une adresse **physique**, lue ici par la vue virtuelle ; le HUD dessinait bien, voir « Palier N2 ».)* Le rendu XUI se fait dans XAM recompilé (le HUD n'importe aucun `XuiRender*` dans cette
    séquence), qui soumet ses commandes par `VdSetSystemCommandBuffer(descripteur)` : le SDK en fait un stub (`REX_EXPORT_STUB`), appelé
    ~3000 fois par seconde par un fil de XAM sans cadence (57 000 appels en 18 s). Descripteur observé (`DASH_TRACE_VD=<n>`) : 14 mots,
    `{ 0x1FC65000, 0xB58, 0xFF49D000, 6, 0, 0x354, 0x1E0, ... }` (852 × 480), l'adresse tournant sur trois tampons (`0x1FC65000`,
@@ -812,3 +812,109 @@ Deux causes, établies par gdb (relances jusqu'à reproduction, `ulimit -c 0`) :
 Nouveaux : `common/src/kernel_xinputd.cpp`, `common/src/kernel_event_guard.cpp`. Modifiés : `common/CMakeLists.txt`, `common/src/kernel_ob.cpp`,
 `common/src/dash_xam_redirect.cpp`, ce document. SDK : aucun fichier.
 Limites : ReadState lit toujours le port 0 ; pas de retrait de manette ; le rendu de la boîte reste à faire.
+
+## Palier N2 : rendu natif du HUD de XAM (boîte de message Xbox par-dessus le Dashboard, sans plugin GPU ni lecteur PM4)
+
+**Atteint** : avec `DASH_TEST_MSGBOX=<s>` (et `DASH_XAM_REDIRECT=XGetVideoMode,XamShowMessageBoxUI`), la vraie boîte de message du HUD de XAM (`hud.xex`
+recompilé) s'affiche par-dessus le hub : fond du Dashboard atténué, panneau, barre de titre, texte, boutons OK / Annuler, légende « A Select / B Back ». La
+flèche bas déplace la sélection, Entrée ferme la boîte (journal : `TERMINÉ … bouton choisi=0`, ou 1 après « bas »), le hub n'est pas touché par l'appui.
+Le Dashboard est lui aussi rendu nativement (`-DDASH_NATIVE_GPU=ON`, aucun plugin `xenos`). Captures regardées (scratchpad, non versionnées) : `n24_0.png`
+(boîte), `n24_1.png` (après Entrée), `n11_1.png` (sélection sur Annuler). Aucune commande PM4 n'est exécutée : les fonctions D3D statiques de XAM sont
+crochetées et rendues par un second noyau `ngpu_core` ; l'image est superposée à celle du Dashboard à la présentation.
+
+### Étape 1 : comment le HUD dessine réellement
+
+- **(a) Bibliothèque D3D.** `xam.xex` embarque sa **propre** copie de D3D9 **2.0.2099.16** (XDK de 2005 ; bibliothèques statiques lues dans l'en-tête XEX : `D3D9
+  2.0.2099.16`, `XGRAPHC 2.0.2099.3`, `XUIRNDR 13604`), très différente de celle du Dashboard (2.0.20158) : décalages du périphérique (groupes de registres + 1088 octets,
+  objets shader à +12944/+12948), objets shader et conteneurs d'un ancien format. `hud.xex` n'a ni D3D ni `XUIRNDR` : il appelle les exports XUI de XAM, qui dessinent. Le
+  matcheur `tools/d3d_match.py analyze work/xam13604.pe` ne les retrouve qu'à confiance faible (0,2 à 0,9 selon le rôle : la famille `dash-13604` ne vaut pas pour D3D 2099) : les
+  adresses ci-dessous viennent du désassemblage (`tools/ppc_dis.py`) et de traces d'appels, validées par le rendu.
+- **(b) Qui soumet, et quand.** La fonction d'image du HUD est `sub_818A1368` (appelée par `sub_818A1B58` ← `sub_818A2500`) : boucle **libre**, ≈ 2400 images/s sans vsync, **à chaque image**,
+  qu'une interface soit affichée ou non (au repos : 3 dessins + un resolve ; avec la boîte : 20 dessins + un resolve). Séquence d'une image : changement de tampon (`819CC428`),
+  cible de rendu et fenêtre (`819C3E18`, `819C16D8`, six écritures de registres `819C43C0`), rendu de la scène XUI (`sub_8186F398`), `Resolve` (`819CA3E0`), puis `sub_819CC490` qui appelle
+  `VdSetSystemCommandBuffer(descripteur)`. Le HUD n'existe que depuis la demande de boîte (la boucle démarre avec `XamShowMessageBoxUI`).
+- **(c) Contenu réel des tampons.** Le descripteur (14 mots : adresse **physique** du tampon, taille en mots, texture de sortie `0xFF4A2000`, format 6 = 8888, 852 × 480…) désigne trois tampons
+  tournants. L'analyse du palier G les croyait vides : erreur de lecture (vue virtuelle au lieu de `TranslatePhysical`). Ils contiennent du PM4 : au repos 2904 mots (3 `DRAW_INDX`, un `DRAW_INDX_2`
+  de resolve), avec la boîte 4412 mots (20 `DRAW_INDX`) ; chaque image réécrit tout l'état (écritures de registres `0x2000`…`0x2380`, constantes `0x4000`/`0x4400`, `IM_LOAD` du microcode, sommets
+  en ligne). Diagnostics : `DASH_TRACE_VD_SCAN=<n>` (compte et premiers mots, au plus n lignes `[vdscan]`), `DASH_TRACE_VD_DUMP=<dossier>` (fichiers binaires), analyse de structure **sans exécution**
+  par un script jetable (hors dépôt). Le PM4 n'est jamais exécuté.
+- **(d) Fonctions D3D utilisées par le HUD** (adresses invitées de XAM, `native_gpu/profiles/hud_xam13604.h`) : `BeginVertices 819C8E38` (dev, prim, nombre, pas → pointeur d'écriture **dans le tampon de commandes**),
+  `EndVertices 819C90B8`, `DrawVerticesUP 819C90D8` (Begin + copie + End fondu), `SetTexture 819C8C60`, `SetVertexShader 819C6BE8`, `SetPixelShader 819C69D0`, `Resolve 819CA3E0`, soumission `819CC490`. Ni indexé, ni
+  `DrawVertices`, ni `Clear` n'apparaissent. Périphérique unique (`0x40870700` dans les essais). Primitives : quads (13), éventails (5), bandes (6), listes (4).
+
+Périphérique de XAM (vérifié en comparant sa mémoire aux écritures de registres du PM4) : fetch constants à `+0x480`, constantes de sommets `+0x780`, de pixels `+0x1780` (identiques au canonique) ; **groupes de registres
+décalés de 1088 octets** (`0x2000` à 11456, `0x2100` à 11532, `0x2280` à 11684…) ; pixel shader courant à `+12944`, vertex shader à `+12948`. Les constantes `def` des shaders sont copiées dans le périphérique
+par `SetPixelShader`/`SetVertexShader` (liste de patchs du conteneur) : elles se lisent donc dans l'ombre.
+
+### Étape 2 : crochets D3D de XAM et façade
+
+- `dashboards/2.0.13604.0-xam/src_xam_d3d/xam_d3d_hooks.cpp` (+ `xam_d3d_entries.inc`, 1347 adresses : 819B0000-819F0000 et quelques fonctions de la boucle d'image) : une définition **forte** de chaque `sub_<adresse>` dans `dash_xam`
+  prend le pas sur l'alias faible du code généré (pour les appels directs comme pour la table de fonctions) et appelle `hudd3d_call(adresse, ctx, base, original)`, définie dans l'exécutable. Aucun recodage
+  du code généré, pas de nouvelle génération (`rexglue codegen`).
+- `native_gpu/src/hud_front.cpp` (+ `profiles/hud_xam13604.h`) : la façade. Même principe que `front_profile.cpp` : ombre = `xenos::Canonicalize` du périphérique (`DeviceLayout` de XAM : groupes + 1088, shaders 12944/12948),
+  dessin ouvert à `BeginVertices` (état figé, microcode du vertex shader **tel que D3D l'a patché**), clos au prochain appel suivi, quads/éventails développés en triangles, `Resolve` → `ResolveCall` (destination
+  `RB_COPY_DEST_BASE`), soumission → `EndFrame` du noyau. Le HUD a son **propre noyau** `ngpu_core` (second périphérique Vulkan, ses propres EDRAM et textures) : `ngpu_core` n'est **pas modifié**, deux instances coexistent
+  sans conflit (essais sous lavapipe). Surveillance d'écriture : une instance de `PhysicalWriteWatcher` par noyau.
+- **Effacement de l'overlay** : D3D ne vide jamais la cible (aucun `Clear`, `Resolve` sans drapeau de remise à zéro) mais la scène XUI est redessinée entièrement sur une surface transparente à chaque image ; sans
+  effacement les images s'empilent (traces de l'animation de fermeture, constatées). La façade efface la cible (0,0,0,0) avant le premier dessin de chaque image. **Hypothèse** (non établie : comment le matériel s'y prend).
+- Cadence : la soumission est limitée à 60 Hz (`sleep_until`) ; une image au repos (overlay précédent vide) n'est rendue qu'une fois sur quatre. Le HUD n'attend rien du GPU (pas de « GPU nul » à fournir).
+- Projet : `cmake --preset linux-amd64-relwithdebinfo -DDASH_NATIVE_GPU=ON` dans `dashboards/2.0.13604.0-xam` (option du `CMakeLists.txt`, qui active aussi `NGPU_HUD` de `native_gpu/CMakeLists.txt`) ; `app.h` vide
+  `gpu_plugin`. `run_headless.sh` accepte `DASH_GPU_ARG=` (vide : aucun plugin). Sans l'option, le comportement est celui du palier H (crochets présents mais sans effet, `src/hud_d3d_trace.cpp` ne fait que des diagnostics).
+
+### Étape 3 : superposition
+
+L'image 852 × 480 que le HUD résout (`RB_COPY_DEST_BASE`, 8888) est relue par `Renderer::ReadResolved` à la soumission (RGBA8, alpha compris), publiée sous verrou, puis `ngpu::HudComposite` (appelée par
+`front_profile.cpp` à la présentation du Dashboard : symbole faible, sans effet dans les builds sans HUD) l'interpole (bilinéaire) vers 1280 × 720 et la compose avec **alpha prémultiplié** (la cible reçoit `SrcAlpha / InvSrcAlpha` sur du
+transparent : `rgb = c·a`). `ngpu::HudActive()` (vrai quand l'overlay a au moins 16 pixels d'alpha ≥ 8) sert de drapeau « HUD actif » :
+- **entrées** (`common/src/dash_xam_redirect.cpp`) : tant qu'il est vrai, puis jusqu'au relâchement de tous les boutons, `XamInputGetState` / `XamInputGetKeystrokeEx` du Dashboard ne renvoient plus rien (sinon l'appui qui ferme
+  la boîte déclenchait aussi « A » dans le hub : constaté) ; le HUD lit les mêmes touches par `XInputd*` (palier H) ;
+- notification système `XN_SYS_UI` (9) diffusée au noyau du SDK à l'ouverture et à la fermeture (aucun effet visible mesuré sur le hub).
+
+**Fond atténué.** Le premier dessin de chaque image du HUD est un quad plein écran (sommets en pixels, `vs 509E…`, `ps 4D19…`) qui échantillonne une texture et la multiplie par `ColorFactor` = gris 0,22, alpha opaque : l'image du titre,
+assombrie, sous la boîte. Sa texture n'est pas l'image du Dashboard (copie GPU du titre, que le noyau natif garde hors de la mémoire invitée) : la façade ne rend pas ce dessin, **retient son facteur** et `HudComposite` multiplie l'image du
+Dashboard par ce facteur avant de superposer l'overlay. Cette lecture est **déduite** (forme du dessin, shader, constante) ; au repos le dessin existe aussi mais l'overlay est alors vide : pas d'atténuation (visible requise).
+Ce quad avait des sommets **NaN** tant que XAM ne recevait pas les notifications graphiques du noyau : `common/src/kernel_video.cpp` implémente maintenant `VdRegisterXamGraphicsNotification` (mémorise le rappel `sub_818A04F8`
+de XAM, lui envoie le message 2 = `X_DISPLAY_INFO` de `VdGetCurrentDisplayInformation`, puis le message 1) et `VdCallGraphicsNotificationRoutines` (le D3D du Dashboard annonce `BufferScaling` 1280 × 720 : transmis à XAM, ou gardé pour un
+rappel enregistré plus tard). `DASH_XAM_GFXNOTIFY=0` supprime les notifications (retour aux sommets NaN : pas d'atténuation, le reste est inchangé).
+
+### Étape 4 : shaders du HUD
+
+`tools/hud_shaders.py` (`extract` / `translate`, mêmes dépendances que `tools/dash_shaders.py` : `build_xenosrecomp.sh`) : 34 conteneurs `0x102A0E0x` dans l'image de XAM (29 PS, 5 VS), ancien en-tête de 6 mots (magie, tailles virtuelle et physique, table de définitions, table de
+constantes, structure du shader) et structure du shader de 2 mots de plus que celle de `0x102A11xx`. Conversion vers le format de XenosRecomp (en-tête de 9 mots, structure reconstruite : `physicalOffset = 0`, `size` = taille physique,
+champs repris, mots en trop retirés ; table de définitions omise car les `def` sont dans l'ombre), booléens de pixel shader renumérotés (le microcode lit `b128` + n, la table de constantes donne n : décalage corrigé dans la table, retiré du HLSL),
+puis traduction XenosRecomp + dxc : **33 / 34** (échec : le VS `817F9550`, sans vfetch ; jamais demandé dans les essais). Nom du fichier = clé XXH3-64 du microcode, **instructions vfetch des vertex shaders mises à zéro** (D3D les remplit à
+l'exécution : la façade calcule la même clé sur la mémoire de l'objet) ; `<clé>.spv` et `<clé>.cont` (conteneur converti, lu par le noyau pour les éléments de sommets). Rien de cela n'est versionné ; variable `DASH_HUD_SHADERS=<dossier>`
+(les shaders du Dashboard : `DASH_NGPU_SHADERS`, `tools/dash_shaders.py`). Aucun shader du HUD manquant dans les essais (boucle « jouer → reconstruire » non nécessaire).
+
+### Reproduire
+
+```sh
+python3 -I tools/hud_shaders.py extract work/xam13604.pe <dossier>/bins && python3 -I tools/hud_shaders.py translate <dossier>/bins <dossier>/keys
+python3 -I tools/dash_shaders.py extract <dash 13604 décodé .bin> <d>/bins && python3 -I tools/dash_shaders.py translate <d>/bins <d>/keys      # Dashboard
+cd dashboards/2.0.13604.0-xam && cmake --preset linux-amd64-relwithdebinfo -DDASH_NATIVE_GPU=ON && cmake --build out/build/linux-amd64-relwithdebinfo -j 6
+DASH_GPU_ARG= DASH_NGPU_SHADERS=<d>/keys DASH_HUD_SHADERS=<dossier>/keys DASH_XAM_MODULE=2 \
+DASH_ENV="DASH_XAM_REDIRECT=XGetVideoMode,XamShowMessageBoxUI DASH_TEST_MSGBOX=8" ./run_headless.sh 25 essai        # Xvfb + lavapipe ; touches : tools/xkeys.py (XKEYS_HOLD=0.8)
+```
+Diagnostics (variables d'environnement) : `DASH_HUD_EVLOG=<image>` (dessins, textures, sommets d'une image ; 0 = 60 premiers dessins), `DASH_HUD_DUMP=<image>:<f.ppm>` (overlay sur gris, alpha dans `<f>.a.pgm`), `DASH_HUD_STATS=1`, `DASH_HUD_DRAWRANGE=a:b`,
+`DASH_HUD_TEXDUMP=<préfixe>` (textures 8 bits), `DASH_HUD_NODRAW`, `DASH_HUD_NOIDLE` (rend toutes les images), `DASH_HUD_NONOTIFY`, `DASH_HUD_NODIM_SKIP` (rend le quad d'atténuation tel quel : opaque), `DASH_HUD_DISABLE`,
+`DASH_HUD_D3D_TRACE|SEQ|SEQT|DEVDUMP|PROBE` (`src/hud_d3d_trace.cpp` : cadence des appels, séquence d'une image, mémoire du périphérique, objets shader).
+
+### Limites et blocages restants, classés
+
+1. **Autres fenêtres du HUD** (clavier virtuel, connexion, création de profil, sélecteur de périphérique) : non essayées. Leurs XEX (`vk`, `signin`, `createprofile`, `deviceselector`, `gamerprofile`) ne sont pas des `[[modules]]` recompilés (palier G, « Suite » 4 : `signin`,
+   `createprofile` et `gamerprofile` ont la même base `0x90100000`). Le rendu, lui, est générique (mêmes fonctions D3D de XAM) : les shaders qu'elles demanderaient et qui manqueraient seraient signalés par `[ngpu] ERREUR HUD : shader …`.
+2. **Fond atténué déduit, non vérifié sur console** (voir ci-dessus) ; le facteur 0,22 est celui du shader. L'image du titre servant de fond sur la console (copie de son tampon d'image) n'existe pas ici (le noyau natif ne l'écrit pas dans la mémoire invitée) : on assombrit l'image présentée.
+3. **Constantes booléennes de pixel shader** : le noyau lit les booléens aux emplacements canoniques (`+0x2780` / `+0x2790`) ; l'emplacement dans le périphérique de XAM n'a pas été établi. Les deux shaders `CopyAlpha` (`817E59F0`, `817E5B70`) en dépendent (alpha forcé à 1 ou copié) : non vérifiés. Le premier dessin de chaque image
+   (booléen à faux dans le PM4 observé) est le cas rencontré.
+4. **Effacement de l'overlay** (hypothèse), **gamma** (rampe d'affichage 1,16 du Dashboard non appliquée à l'overlay), pas de MSAA, plans de coupe utilisateur et lecture de texture en vertex shader non pris en charge.
+5. **Cadence** : ≈ 34 images/s du HUD avec la boîte sous lavapipe (relecture `ReadResolved` avec `WaitIdle` à chaque image) ; deux fils système de XAM (« XThread ») tournent à ≈ 100 % d'un cœur (boucles d'attente, antérieures à ce palier : palier D, 5). Le HUD devrait attendre un vsync
+   (`VdCallGraphicsNotificationRoutines` message 5, `VdSwap`) au lieu de dormir 16,7 ms.
+6. **Entrées partagées** : le HUD et le Dashboard lisent le même `InputSystem` (port 0) ; l'exclusivité est faite côté Dashboard (ci-dessus), pas par XAM.
+7. Les builds `2.0.6770.0` et `2.0.13604.0` (natif et par défaut) compilent avec les modifications de `common/` et de `front_profile.cpp` ; SDK inchangé.
+
+### Fichiers
+
+Nouveaux : `native_gpu/src/hud_front.cpp`, `native_gpu/profiles/hud_xam13604.h`, `dashboards/2.0.13604.0-xam/src_xam_d3d/{xam_d3d_hooks.cpp,xam_d3d_entries.inc}`, `dashboards/2.0.13604.0-xam/src/hud_d3d_trace.cpp`, `tools/hud_shaders.py`.
+Modifiés : `native_gpu/CMakeLists.txt` (`NGPU_HUD`), `native_gpu/src/front_profile.cpp` (superposition à la présentation, symbole faible), `dashboards/2.0.13604.0-xam/{CMakeLists.txt,run_headless.sh,src/app.h}`,
+`common/src/kernel_video.cpp` (diagnostics du tampon système, notifications graphiques), `common/src/dash_xam_redirect.cpp` (exclusivité des entrées), ce document. `ngpu_core/` et le SDK : inchangés.
+

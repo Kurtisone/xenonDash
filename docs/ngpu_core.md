@@ -240,3 +240,19 @@ cmake -S dashboards/2.0.13604.0 -B dashboards/2.0.13604.0/out/build/native -G Ni
 DASH_NGPU_SHADERS=work/shaders13604_keys dashboards/2.0.13604.0/out/build/native/dash --game_data_root=<assets>      # natif
 python3 -I tools/d3d_match.py analyze dashboards/2.0.13604.0/assets/dash.xex | head                                      # supported: true
 ```
+
+
+## 9. HUD de XAM (palier N2, 2026-11-14) : un second noyau, D3D 2099
+
+Le HUD de XAM (boîtes de message, clavier, connexion) dessine avec la **copie de D3D9 2.0.2099.16 liée dans `xam.xex`** (celle du Dashboard est 2.0.20158) ; ses fonctions D3D recompilées sont crochetées
+(`dashboards/2.0.13604.0-xam/src_xam_d3d/`) et rendues par `native_gpu/src/hud_front.cpp` sur une **seconde instance de `ngpu_core`** (second périphérique Vulkan, EDRAM et textures propres) : le noyau n'a pas été modifié, `Core`,
+`Renderer` et `DeviceLayout` suffisent. Récapitulatif et résultats : [xam_recompile.md](xam_recompile.md), « Palier N2 ».
+
+- **Disposition du périphérique** (`xenos::DeviceLayout` de XAM, `native_gpu/profiles/hud_xam13604.h`) : fetch constants, constantes de sommets et de pixels canoniques ; groupes de registres canoniques + 1088 ; objets shader courants
+  à `+12944` (pixel) et `+12948` (vertex). Vérifié en comparant la mémoire du périphérique aux écritures de registres du tampon de commandes (analyse seulement).
+- **Objets shader** : le conteneur de l'ancien format (`0x102A0E0x`) est copié dans l'objet (`+592` vertex, `+52` pixel) ; pointeur du microcode à `+0x28` / `+0x0C`. Clé du noyau = XXH3-64 du microcode avec les `vfetch` des
+  vertex shaders mis à zéro (D3D les remplit) ; conteneurs convertis au format de XenosRecomp par `tools/hud_shaders.py` (`<clé>.spv`, `<clé>.cont`). Les `def` de constantes sont déjà dans le périphérique (copiés par D3D).
+- **Sortie** : l'image résolue (852 × 480, 8888, alpha) est relue par `Renderer::ReadResolved` (existant) et superposée à l'image présentée du Dashboard (`ngpu::HudComposite`, appelée par `front_profile.cpp`, alpha prémultiplié,
+  interpolation bilinéaire). Deux noyaux dans un processus (Dashboard 13604 + HUD) tournent ensemble sous lavapipe.
+- **Remarque sur le noyau** : `ReadResolved` fait un `WaitIdle` et crée un tampon de relecture à chaque appel ; adapté à ≈ 30 images/s, à remplacer par une relecture asynchrone si le HUD devient la voie principale (comme la présentation par copie CPU, §5).
+

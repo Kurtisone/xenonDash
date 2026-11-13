@@ -29,6 +29,12 @@
 #include <rex/system/xthread.h>
 #include <rex/types.h>
 
+namespace ngpu {
+// Vrai tant que le HUD de XAM (boite de message, clavier...) a quelque chose a montrer (native_gpu/src/hud_front.cpp, palier N2) ;
+// symbole faible : absent des executables sans rendu natif du HUD.
+bool HudActive() __attribute__((weak));
+}  // namespace ngpu
+
 namespace dash::xamredir {
 namespace {
 
@@ -69,9 +75,40 @@ PPCFunc* FindHle(const std::string& sym) {
 #endif
 }
 
+void DispatchImpl(Slot& s, PPCContext& ctx, uint8_t* base);
+
 // Exécute l'import : XAM recompilé si redirigé, sinon le HLE du SDK (même fonction que sans ce fichier).
 // Trace : première exécution de chaque import (voie et compteur), puis tous les 1000 appels.
 void Dispatch(Slot& s, PPCContext& ctx, uint8_t* base) {
+  // Entrees : tant que le HUD est affiche (et jusqu'au relachement de tous les boutons ensuite), le Dashboard ne recoit plus rien, comme un
+  // titre sous une interface systeme (sinon l'appui qui ferme la boite declenche aussi une action du Dashboard).
+  static std::atomic<bool> wait_release{false};
+  const bool is_state = std::string_view(s.name) == "XamInputGetState";
+  const bool is_key = std::string_view(s.name) == "XamInputGetKeystrokeEx";
+  if ((is_state || is_key) && ngpu::HudActive) {
+    const bool hud = ngpu::HudActive();
+    if (hud) wait_release.store(true);
+    if (hud || wait_release.load()) {
+      if (is_key) {
+        ctx.r3.u64 = 0x10D2;  // ERROR_EMPTY
+        return;
+      }
+      const uint32_t out = ctx.r4.u32;
+      DispatchImpl(s, ctx, base);  // le HLE remplit l'etat ; on le garde pour detecter le relachement
+      if (out && ctx.r3.u32 == 0) {
+        uint8_t* st = base + out;
+        bool down = false;
+        down = st[4] || st[5] || st[6] > 30 || st[7] > 30;  // boutons et gachettes (les sticks, qui derivent, ne comptent pas)
+        if (!down && !hud) wait_release.store(false);
+        std::memset(st + 4, 0, 12);
+      }
+      return;
+    }
+  }
+  DispatchImpl(s, ctx, base);
+}
+
+void DispatchImpl(Slot& s, PPCContext& ctx, uint8_t* base) {
   PPCFunc* fn = s.guest.load();
   const uint64_t n = s.calls.fetch_add(1) + 1;
   if (n == 1 || n % 1000 == 0) {
