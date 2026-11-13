@@ -193,8 +193,10 @@ void FillData(T* d, const Item& it) {
 // --- Énumération agrégée (tous les jeux ou un jeu) ---------------------------------
 
 // Élément réel : XCONTENT_AGGREGATE_DATA (0x148 octets) suivi de la taille du paquet (BE64, +0x148),
-// que le Dashboard affiche (« File Size ») ; il copie 512 octets par élément.
-constexpr size_t kAggregateItemSize = 0x150;
+// que le Dashboard affiche (« File Size ») ; il copie 512 octets par élément. Le Dashboard NXE (13604) lit aussi la fin de
+// ces 512 octets (mot de 16 bits à +506 : la Game Library ignore l'élément si ses bits 0 ou 1 sont posés, sub_922ADC88) :
+// l'élément fait donc 512 octets, à zéro au-delà de la taille (un élément plus court laissait lire la pile de l'appelant).
+constexpr size_t kAggregateItemSize = 0x200;
 
 class AggregateEnumerator : public system::XStaticUntypedEnumerator {
  public:
@@ -217,6 +219,7 @@ u32 XamContentAggregateCreateEnumerator_entry(u64 xuid, u32 device_id, u32 conte
       if (xuid && it.xuid && it.xuid != xuid) continue;
       auto* raw = e->AppendItem();
       auto* d = reinterpret_cast<system::xam::XCONTENT_AGGREGATE_DATA*>(raw);
+      std::memset(raw, 0, kAggregateItemSize);
       FillData(d, it);
       d->xuid = it.xuid;
       d->title_id = it.title_id;

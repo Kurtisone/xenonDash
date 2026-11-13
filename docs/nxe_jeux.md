@@ -45,15 +45,15 @@ c = 0 ; retour 0. Résultat vu à l'écran et au journal : A sur « Play Skate �
 `XamLoaderLaunchTitleEx(NULL, 0x12)` (chemin NULL = « lancer le disque » ; r6 = 0x12), que `Resolve()` associe au jeu du disque -> `LaunchGame`.
 Les trois imports de lancement (`XamLoaderLaunchTitle`, `...Ex`, `...ForReason`) renvoient maintenant `E_FAIL` s'ils reviennent (construction en cours, refus).
 
-**Limite non résolue : la Game Library n'énumère que le jeu « dans le plateau »**. Sans disque (`InsertedDisc()` vide), Recent Games affiche
-« You don't have any games in your library » même avec un GPD réel de Skate, des contenus virtuels de types `0xD0000`, `0x4000`, `0x7000` ou `0x1000`, et alors que
-`XamUserCreateTitlesPlayedEnumerator` renvoie le jeu ; avec un disque simulé le jeu apparaît (« Skate, Xbox 360 Game ») et seul ce jeu (deux jeux factices supplémentaires,
-de types différents, ne sont pas listés). Tracé : la différence est la chaîne déclenchée par la notification `0x8000000D` (le hub lit le disque : `XMsgStartIORequest(0xFB,0xB003C)`,
-`XamLoaderSetGameInfo`, `XamLoaderSetSpindleSpeed`, puis `XamContentCreateDeviceEnumerator` -> `XamContentAggregateCreateEnumerator(appareil 1 et 2, tous types)`).
-Diffuser la notification avec le paramètre 0 (sans disque) déclenche bien l'énumération de contenu (`Aggregate ... -> 5 éléments`) mais aucun appel de métadonnées
-(`XamContentGetAttributesInternal`, `XamContentCreateInternal`, `GetMetaDataInternal`) ne suit : la décision de lister est dans le Lua du hub, que je n'ai pas identifiée.
-Ce qui n'a pas été essayé : désassembler les scripts Lua (`dashlua`) du XEX, d'autres types de contenu (`0xA0000`, `0x2000000`), un jeu de métadonnées STFS complet pour
-`XamContentGetMetaDataInternal`.
+**Liste de la Game Library : décidée côté natif (vu, lot C2).** Le hub ne liste un jeu que s'il a un enregistrement de titre, créé par une tâche de
+chargement (`CLoaderTask`) pour chaque contenu de l'énumération agrégée (`XamContentAggregateCreateEnumerator`). Cette tâche n'est lancée que si l'élément passe deux
+contrôles : type de contenu accepté (0x4000, 0x5000, 0x7000, 0x80000, 0xD0000) et bits 0 et 1 du mot à +506 nuls. Le Dashboard lit 512 octets par élément ;
+notre énumérateur n'en écrivait que 0x150, le reste était de la pile non initialisée. `common/src/dash_content.cpp` écrit désormais des éléments de 512 octets,
+remplis à zéro. Résultat vu : sans disque, Recent Games liste les 4 jeux du registre avec nom et icône (`shots/t1_lib.png` du lot C2). Il n'y a pas de script Lua
+en cause : la version précédente de ce paragraphe, qui le supposait, était fausse.
+
+Type affiché : tous les jeux restent « Arcade Game » (0xD0000). Le type 0x7000 pour les jeux disque (« Xbox 360 Game ») a été essayé puis retiré : les icônes de Skate
+disparaissaient, et le journal ne montre plus de montage du contenu (`XamContentCreateInternal`) pour lui (`shots/t3_lib.png`). Cause non établie.
 
 **Repli dans l'interface** (ce qui est livré) :
 - le dernier jeu lancé de la bibliothèque (sinon le premier par ordre alphabétique) est présenté comme **disque inséré** (`dash_auto_disc`, vrai par défaut ;
@@ -98,11 +98,18 @@ hook (`E_FAIL`). Pour un appel venu du hub, `LaunchGame` relance donc le Dashboa
 et lance le jeu seule à la fin. Un lancement par F5 garde le suivi dans le même processus. Vérifié : reprise du suivi puis échec simulé (construction tuée par PID : message, fichier d'état supprimé).
 
 Limites et reste :
-- liste Game Library : un seul jeu (le « disque ») ; les autres via F5 (voir §3) ; non résolu côté Lua ;
+- liste Game Library : sans disque, tous les jeux du registre sont listés (vu) ; tous sont « Arcade Game », jeu disque compris (voir §3) ;
+- lancement non vérifié de bout en bout : A puis Play Game sur Skate (`45410899`) envoie la requête au hook (`XamContentLaunchImageInternalEx`, journal), mais la
+  construction échoue faute d'espace (« 12 Go libres, 40.0 Go necessaires », /tmp en tmpfs de 16 Go) ; le hub affiche « Can't Play Game ». Pas de « LANCEMENT » vu.
+  Le cache de Skate (`45410813`) n'existe pas sur cette machine : pas de test de bout en bout de Skate ;
+- Trials Fusion (`58411401`) : pas de refus `supported=false` (`launch-info` ne renvoie pas ce champ) : la construction tente, puis échoue sur l'espace disque ;
+  message rouge lisible (`shots/t5_after.png`) ; retour au Dashboard pilotable non vérifié (le dialogue XUI reste affiché) ;
+- jeu disque simulé (`dash_auto_disc`, vrai par défaut) : pas de doublon dans Recent Games (Trials une fois) ; la tuile de My Xbox et « All Games » ne sont pas vérifiées ;
+- les autres jeux via F5 (voir §3) ;
 - pourcentage et estimation (44 min) viennent de `recipe_build.py` (pas de ma compétence) ; le pourcentage saute à 51 % au début du codegen ;
 - relance par `$APPIMAGE` : les options données à l'AppImage (hors `AppRun`) ne sont pas rejouées ; sous `APPIMAGE_EXTRACT_AND_RUN=1` l'extraction est conservée tant que l'AppImage tourne ;
 - jeux GOD, ISO, STFS : reconnus par le scan (lot A, fichiers synthétiques) mais seule la source « dossier » a été recompilée ici ; ISO/GOD/STFS passent par `xcontainer.py extract` dans `recipe_build.py` (lot B), non testés de bout en bout ;
 - `XamLoaderGetMediaInfoEx` : la sémantique des trois sorties est déduite des comparaisons du hub (0 / -2), non documentée ; sans disque, a = b = c = 0 (la valeur -2 faisait afficher « aucun jeu ») ;
-- notification de média sans disque (paramètre 0) diffusée aussi ; 6770 compilé et son smoke repasse (Games : 1 jeu, aucun FATAL) ; 6717/17559 non recompilés ici ;
+- notification de média sans disque (paramètre 0) diffusée aussi ; 13604 et 6770 recompilés ; smoke 6770 repassé (0 FATAL, Skate dans Games) ; 6717/17559 non recompilés ici ;
 - clang/cmake/ninja non embarqués ; ImGui du Dashboard en police par défaut (pas de fenêtre XUI d'origine) ;
 - l'AppImage de test écrit son cache dans le HOME de test ; `e2e_jeux.sh` demande un disque (la tmpfs de 16 Go est refusée par la vérification des 40 Go de la recette).
