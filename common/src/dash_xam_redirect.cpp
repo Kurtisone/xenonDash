@@ -193,6 +193,24 @@ void RunMessageBoxTest(rex::system::KernelState* ks) {
   REXLOG_INFO("[xamredir] test XamShowMessageBoxUI : retour r3=0x{:08X}, résultat={}",
               static_cast<uint32_t>(ctx.r3.u64),
               __builtin_bswap32(*reinterpret_cast<uint32_t*>(base + result)));
+  if (static_cast<uint32_t>(ctx.r3.u64) != 0x3E5) return;
+
+  // Attente de la réponse (XOVERLAPPED : InternalLow à +0 vaut 0x3E5 tant que la requête est en cours ; dwExtendedError
+  // à +0x18). La boîte reçoit ses touches de XamInputGetKeystrokeHud ; DASH_TEST_MSGBOX_WAIT = durée en secondes (60).
+  const char* w = std::getenv("DASH_TEST_MSGBOX_WAIT");
+  const int wait_ms = (w && *w ? std::atoi(w) : 60) * 1000;
+  auto word = [&](uint32_t ea) { return __builtin_bswap32(*reinterpret_cast<volatile uint32_t*>(base + ea)); };
+  for (int t = 0; t < wait_ms; t += 50) {
+    if (word(overlapped) != 0x3E5) {
+      REXLOG_INFO("[xamredir] test XamShowMessageBoxUI : TERMINÉ après {} ms, overlapped.InternalLow=0x{:08X}, "
+                  "erreur étendue=0x{:08X}, bouton choisi={} (0xFFFFFFFF = aucun)",
+                  t, word(overlapped), word(overlapped + 0x18), word(result));
+      return;
+    }
+    std::this_thread::sleep_for(std::chrono::milliseconds(50));
+  }
+  REXLOG_WARN("[xamredir] test XamShowMessageBoxUI : NON terminé après {} ms (overlapped.InternalLow=0x{:08X}, bouton={})",
+              wait_ms, word(overlapped), word(result));
 }
 
 }  // namespace
@@ -229,6 +247,18 @@ void CallModuleImport(ModuleImport& imp, PPCContext& ctx, uint8_t* base) {
   if (n == 1) {
     REXLOG_INFO("[xamredir] module : {} (ordinal {}) : appel 1 par {}", imp.name, imp.ordinal,
                 imp.guest.load() ? "XAM recompilé" : "HLE");
+  }
+  // Frappes données au HUD (XamInputGetKeystrokeHud(utilisateur, X_INPUT_KEYSTROKE*)) : journal de chaque réponse non vide.
+  if (std::string_view(imp.name) == "XamInputGetKeystrokeHud") {
+    const uint32_t user = ctx.r3.u32, out = ctx.r4.u32;
+    fn(ctx, base);
+    if (ctx.r3.u32 != 0x10D2 && out) {
+      const uint8_t* k = base + out;
+      REXLOG_INFO("[xamredir] XamInputGetKeystrokeHud(utilisateur {}) = 0x{:X} : VirtualKey=0x{:04X} unicode=0x{:04X} "
+                  "flags=0x{:04X} utilisateur={} hid=0x{:02X}",
+                  user, ctx.r3.u32, (k[0] << 8) | k[1], (k[2] << 8) | k[3], (k[4] << 8) | k[5], k[6], k[7]);
+    }
+    return;
   }
   // DASH_XAM_TRACE_MODULE=<n> : journalise les n premiers appels de module (arguments r3..r6, retour r3), diagnostic.
   static const long trace_max = [] {

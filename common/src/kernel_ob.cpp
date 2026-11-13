@@ -18,6 +18,9 @@
 #include <rex/hook.h>
 #include <rex/logging.h>
 #include <rex/system/kernel_state.h>
+#include <rex/system/xobject.h>
+#include <rex/system/xthread.h>
+#include <rex/thread.h>
 #include <rex/types.h>
 
 #include "kernel_sdk_fn.h"
@@ -92,6 +95,74 @@ REX_HOOK_RAW(__imp__NtClose) {
   if (handle >= kHandleBase + 4 && handle < kHandleBase + 0x01000000u) {
     std::lock_guard lock(g_mutex);
     if (g_handle_to_body.erase(handle)) {
+      ctx.r3.u64 = 0;
+      return;
+    }
+  }
+  sdk(ctx, base);
+}
+
+// ObReferenceObject(objet) : le SDK en fait un stub, alors que ObDereferenceObject libère bien un handle (ReleaseHandle).
+// XAM recompilé appelle ObReferenceObject sur des objets qu'il garde (fils, événements) puis ObDereferenceObject à la fin :
+// sans le +1, le compte de handles tombe à zéro trop tôt, l'objet natif est détruit et un fil encore en cours de démarrage
+// lit son XThread libéré (SIGSEGV dans XThread::Create()::$_0 sur `thread_->set_name`, 1 démarrage sur 6, gdb).
+// Ici : un objet déjà associé à un objet natif (en-tête signé par le SDK) reçoit RetainHandle ; les corps de ce fichier
+// et les mémoires sans objet natif sont laissés tels quels.
+REX_HOOK_RAW(__imp__ObReferenceObject) {
+  const uint32_t ea = ctx.r3.u32;
+  if (!ea) return;
+  {
+    std::lock_guard lock(g_mutex);
+    for (const auto& [h, body] : g_handle_to_body) {
+      if (body == ea) return;
+    }
+  }
+  auto* header = reinterpret_cast<rex::system::X_DISPATCH_HEADER*>(base + ea);
+  auto lock = rex::thread::global_critical_region::AcquireDirect();
+  if (static_cast<uint32_t>(header->wait_list_flink) != rex::system::kXObjSignature) return;
+  auto object = REX_KERNEL_OBJECTS()->LookupObject<rex::system::XObject>(header->wait_list_blink);
+  if (object) object->RetainHandle();
+}
+
+// ExCreateThread avec le drapeau 0x80 : la console rend le POINTEUR de l'objet fil (et non un handle) avec une référence
+// que l'appelant libère par ObDereferenceObject. Le SDK ne prend pas cette référence : l'ObDereferenceObject de XAM
+// libère alors l'auto-référence du fil (RetainHandle dans XThread::Create), l'XThread est détruit pendant que son fil hôte
+// démarre ou se termine (SIGSEGV dans XThread::Create()::$_0 sur `thread_` nul, ou dans Thread::Exit ; 1 démarrage sur 6).
+// Ici : après l'appel du SDK, une référence de handle supplémentaire est prise pour ce cas.
+REX_HOOK_RAW(__imp__ExCreateThread) {
+  static PPCFunc* sdk = dash::SdkFunction("__imp__ExCreateThread");
+  const uint32_t handle_ptr = ctx.r3.u32, flags = ctx.r9.u32;  // 7e argument : r9
+  sdk(ctx, base);
+  if (ctx.r3.u32 != 0 || !handle_ptr) return;
+  const uint32_t out = __builtin_bswap32(*reinterpret_cast<uint32_t*>(base + handle_ptr));
+  rex::system::object_ref<rex::system::XObject> object;
+  if (flags & 0x80) {
+    object = rex::system::XObject::GetNativeObject<rex::system::XObject>(REX_KERNEL_STATE(), base + out);
+  } else {
+    object = REX_KERNEL_OBJECTS()->LookupObject<rex::system::XObject>(out);
+  }
+  if (!object) return;
+  if (flags & 0x80) object->RetainHandle();
+  // Le fil n'est jamais détruit : XThread::Exit du SDK libère le dernier handle puis appelle Thread::Exit sur le
+  // PosixThread que ~XThread vient de supprimer (use-after-free constaté par gdb : ~XThread dans XThread::Exit), et un
+  // NtClose du créateur avant le démarrage du fil hôte le prive de son XThread. Un compte de pointeurs en plus (jamais
+  // rendu) évite les deux ; fuite : quelques centaines d'octets par fil.
+  object->Retain();
+}
+
+// ObDereferenceObject(objet) : un fil qui se libère lui-même (code de démarrage/sortie de fil du Dashboard et de XAM, appelé
+// juste avant ExTerminateThread) libérerait une seconde fois l'auto-référence que XThread::Exit du SDK libère déjà :
+// l'XThread est détruit pendant que son fil hôte démarre ou sort (SIGSEGV sporadique, 1 démarrage sur 6, constaté par gdb :
+// `thread_` nul dans XThread::Create()::$_0, ou Thread::Exit). Un fil qui déréférence son propre objet est ignoré.
+REX_HOOK_RAW(__imp__ObDereferenceObject) {
+  static PPCFunc* sdk = dash::SdkFunction("__imp__ObDereferenceObject");
+  const uint32_t ea = ctx.r3.u32;
+  if (ea && ea != 0xDEADF00D) {
+    if (auto* self = rex::system::XThread::GetCurrentThread(); self && self->guest_object() == ea) {
+      static std::atomic<int> n{0};
+      if (n.fetch_add(1) < 3)
+        REXLOG_INFO("[kernel] ObDereferenceObject(0x{:08X}) par le fil lui-même (lr=0x{:08X}) : ignoré", ea,
+                    static_cast<uint32_t>(ctx.lr));
       ctx.r3.u64 = 0;
       return;
     }

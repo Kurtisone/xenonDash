@@ -760,3 +760,55 @@ DASH_XAM_REDIRECT=XGetVideoMode,XamShowMessageBoxUI DASH_TEST_MSGBOX=12 DASH_XAM
 3. Corriger le SDK (`XeCryptRandom`, `ObReferenceObjectByName`, minuteries invitées, etc.) puis retirer les hooks de `common/`.
 4. Modules `signin`, `vk`, `createprofile`, `deviceselector` : même procédé que `hud.xex`, mais `signin`, `createprofile` et `gamerprofile` ont la même
    base `0x90100000` (relocalisation requise).
+
+## Palier H : entrées du HUD (manette virtuelle) et plantage sporadique
+
+### Étape 1 : comment XAM découvre une manette
+
+- Au démarrage XAM (sub_81872460) enregistre ses rappels noyau : `DrvSetUserBindingCallback(0x818AD898)`, `DrvSetDeviceConfigChangeCallback(0x818AD8C8)`, etc.
+  Le rappel de liaison (r3 = poignée du pilote, r4 = identifiant du périphérique, r5 = type, r6 = retrait si non nul, r7 = &port)
+  appelle `sub_818AD508` : choix du port (octet à `*r7`, `0xFF` = quelconque), écriture dans le tableau `0x81BFD948`
+  (4 ports de 56 octets ; entrée `(port, type)` à `+8 + 8 × (7 × port + type)` : `{présent, identifiant}` ; type 0 = manette,
+  1 = casque, 3/4 = périphériques de texte), puis rappel d'arrivée de XAM (`0x81BE1E10 + 4 × type`) et `XInputdSetRingOfLight`.
+- XAM lit ensuite le périphérique par l'identifiant : `XInputdGetCapabilities(id, X_INPUT_CAPABILITIES*)` (code ≥ 0 = succès),
+  `XInputdReadState(id, uint32_t* paquet, X_INPUT_GAMEPAD*)` (`0xC000009D` = non connecté), `XInputdNotify(id, port | 0x90000000)`.
+  `XamInputGetKeystrokeHud(utilisateur, X_INPUT_KEYSTROKE*)` en dérive les frappes par interrogation de l'état.
+
+### Étape 2 : `common/src/kernel_xinputd.cpp`
+
+- Hook de `DrvSetUserBindingCallback` : mémorise le rappel ; un fil attend que XAM ait posé son rappel d'arrivée (`0x81BE1E10`)
+  puis appelle `0x818AD898(id 0x10000001, id, type 0, arrivée, &port=0xFF)` depuis un fil invité. Journal : `[xinputd] manette virtuelle
+  0x10000001 annoncée à XAM : retour r3=0x00000000, port=0`.
+- `XInputdGetCapabilities` : manette standard (type 1, sous-type 1, boutons `0xF3FF`, gâchettes `0xFF`, sticks `0xFFC0`, vibration `0xFF00`).
+  `XInputdReadState` : `InputSystem::GetState(0)` du SDK, la même source que `XamInputGetState` du Dashboard (clavier/manette réels, mêmes
+  touches pour le Dashboard et le HUD ; pas de drapeau « HUD actif »). `XInputdNotify` : sans effet.
+- Test : `DASH_TEST_MSGBOX=<s>` appelle maintenant `XamShowMessageBoxUI` avec un OVERLAPPED et attend (`DASH_TEST_MSGBOX_WAIT`, 60 s) sa fin ;
+  les frappes données au HUD sont journalisées (`dash_xam_redirect.cpp`, `CallModuleImport`).
+- Preuve (`DASH_XAM_REDIRECT=XGetVideoMode,XamShowMessageBoxUI DASH_TEST_MSGBOX=8`, Return envoyé par `tools/xkeys.py`, `XKEYS_HOLD=0.8`) :
+  `XInputdReadState : boutons 0x1000` ; `XamInputGetKeystrokeHud(utilisateur 0) = 0x0 : VirtualKey=0x5800 unicode=0x0000 flags=0x0001`
+  (VK_PAD_A, appui) ; `test XamShowMessageBoxUI : TERMINÉ après 7400 ms, overlapped.InternalLow=0x00000000, erreur étendue=0x00000000, bouton
+  choisi=0`. Rien n'est dessiné (rendu hors périmètre).
+
+### Étape 3 : plantage sporadique (corrigé dans `common/`, SDK inchangé)
+
+Deux causes, établies par gdb (relances jusqu'à reproduction, `ulimit -c 0`) :
+
+1. **En-tête d'événement périmé** (`KeResetEvent` depuis `sub_81890650`, `XEvent::Reset()` sur un pointeur invalide) : XAM réutilise la mémoire
+   d'objets sans passer par `KeInitializeEvent` ; l'en-tête garde la signature `REX\0` du SDK et un handle recyclé (`0xF80001D0`) pour un objet
+   d'un autre type. `common/src/kernel_event_guard.cpp` efface la signature d'un tel en-tête avant l'appel (appels venant de XAM seulement ;
+   journal `en-tête signé périmé`).
+2. **XThread détruit trop tôt** (SIGSEGV dans `XThread::Create()::$_0` : `thread_` nul sur un XThread déjà libéré ; ou dans `Thread::Exit`) :
+   `ObReferenceObject` est un stub du SDK alors que `ObDereferenceObject` libère un handle ; `ExCreateThread` avec le drapeau `0x80` rend un
+   pointeur dont la référence n'est pas prise ; un fil qui déréférence son propre objet libère deux fois l'auto-référence ; et
+   `XThread::Exit` du SDK libère le dernier handle puis appelle `Thread::Exit` sur le `PosixThread` que `~XThread` vient de supprimer (gdb :
+   `~XThread` appelé depuis `XThread::Exit`). Correctifs dans `common/src/kernel_ob.cpp` : `ObReferenceObject` (RetainHandle pour un objet
+   déjà natif), `ExCreateThread` (référence de handle pour `0x80`, et un compte de pointeurs en plus, jamais rendu : les fils ne sont jamais
+   détruits, fuite de quelques centaines d'octets par fil), `ObDereferenceObject` du fil par lui-même ignoré.
+   Défaut du SDK à corriger : `XThread::Exit` (ordre libération du handle / sortie du fil hôte) et `ObReferenceObject`.
+- Mesure : avant, 4 plantages sur 16 (garde d'événement seule) ; après tous les correctifs, 20 démarrages consécutifs de 10 s sans SIGSEGV.
+
+### Fichiers (palier H)
+
+Nouveaux : `common/src/kernel_xinputd.cpp`, `common/src/kernel_event_guard.cpp`. Modifiés : `common/CMakeLists.txt`, `common/src/kernel_ob.cpp`,
+`common/src/dash_xam_redirect.cpp`, ce document. SDK : aucun fichier.
+Limites : ReadState lit toujours le port 0 ; pas de retrait de manette ; le rendu de la boîte reste à faire.
