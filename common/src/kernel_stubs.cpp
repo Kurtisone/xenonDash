@@ -101,6 +101,12 @@ REX_HOOK_RAW(__imp__XamGetStagingMode) { (void)base; ctx.r3.u64 = 0; }
 // du stockage de XAM (thread système) le rappelle alors sans fin. Il n'y a pas de volume à démonter : STATUS_SUCCESS.
 REX_HOOK_RAW(__imp__IoDismountVolumeByName) { (void)base; ctx.r3.u64 = 0; }
 
+// DrvGetContentStorageNotification(tampon) : le SDK en fait un stub qui laisse r3 inchangé. Le thread de stockage de XAM
+// (sub_8185C5E0) l'appelle en boucle tant que r3 >= 0 : il tournait à 100 % d'un cœur sans jamais signaler la fin de
+// l'énumération initiale, et le fil d'initialisation de XAM (sub_81859780, attente de l'événement 0x81BE0DF8) restait bloqué.
+// Aucun périphérique de stockage USB : échec (STATUS_UNSUCCESSFUL), la boucle se termine et signale l'événement.
+REX_HOOK_RAW(__imp__DrvGetContentStorageNotification) { (void)base; ctx.r3.u64 = 0xC0000001u; }
+
 // ObReferenceObjectByName(PANSI_STRING nom, attributs, type, contexte, *objet) : le SDK prend `nom` pour une chaîne C
 // (l'adresse de l'ANSI_STRING est lue comme du texte : nom vide, recherche toujours en échec). XAM (threads système)
 // appelle ensuite ObDereferenceObject(*objet) sans contrôler le statut : *objet n'est pas écrit et garde une valeur

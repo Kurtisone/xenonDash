@@ -2,6 +2,9 @@
 
 #include "dash_xam_runtime.h"
 
+#include "kernel_sdk_fn.h"
+
+#include <atomic>
 #include <cstdlib>
 #include <functional>
 #include <memory>
@@ -10,8 +13,12 @@
 #include <utility>
 
 #include <rex/filesystem/devices/host_path_device.h>
+#include <rex/hook.h>
+#include <rex/ppc/context.h>
+#include <rex/ppc/function.h>
 #include <rex/filesystem/vfs.h>
 #include <rex/logging.h>
+#include <rex/system/export_resolver.h>
 #include <rex/system/kernel_state.h>
 #include <rex/system/xthread.h>
 
@@ -61,7 +68,16 @@ class SystemHostThread : public rex::system::XThread {
   std::function<int()> fn_;
 };
 
+std::atomic<uint32_t> g_xam_lo{0}, g_xam_hi{0};
+
 }  // namespace
+
+void SetXamImageRange(uint32_t base, uint32_t size) {
+  g_xam_lo.store(base);
+  g_xam_hi.store(base + size);
+}
+
+bool InXamImage(uint32_t addr) { return addr >= g_xam_lo.load() && addr < g_xam_hi.load(); }
 
 void MountFlash(rex::filesystem::VirtualFileSystem* vfs, const fs::path& flash_dir) {
   if (!fs::is_directory(flash_dir)) {
@@ -78,6 +94,27 @@ void MountXamDevices(rex::filesystem::VirtualFileSystem* vfs) {
   Mount(vfs, "\\Device\\MU0", root / "mu0", false);
 }
 
+// UsbdBootEnumerationDoneEvent (xboxkrnl 0x2DB) : le SDK l'initialise signalé avec type = 1, soit
+// EventSynchronizationObject (réarmement automatique) : le premier KeWaitForSingleObject consomme le signal, les suivants
+// bloquent pour toujours (le fil d'initialisation de XAM, sub_81878E10, attend cet événement après un autre fil).
+// Sur la console c'est un événement de notification (type 0) signalé en permanence.
+void FixKernelVariables(rex::system::KernelState* ks, rex::runtime::ExportResolver* resolver) {
+  // XboxHardwareInfo.Flags (xboxkrnl 0x156) : le SDK renvoie 0x20 seul (disque dur présent). L'initialisation du HUD de
+  // XAM (sub_81872230 : sub_818A2F90, qui charge huduiskin.xex et hud.xex) n'est lancée que si le bit 0x200 est posé.
+  if (auto* hw = resolver ? resolver->GetExportByOrdinal("xboxkrnl.exe", 0x0156) : nullptr; hw && hw->variable_ptr) {
+    auto* flags = reinterpret_cast<uint32_t*>(ks->memory()->virtual_membase() + hw->variable_ptr);
+    *flags = __builtin_bswap32(__builtin_bswap32(*flags) | 0x200u);
+    REXLOG_INFO("[dash] XboxHardwareInfo.Flags = 0x{:08X}", __builtin_bswap32(*flags));
+  }
+  auto* e = resolver ? resolver->GetExportByOrdinal("xboxkrnl.exe", 0x02DB) : nullptr;
+  if (!e || !e->variable_ptr) return;
+  uint8_t* hdr = ks->memory()->virtual_membase() + e->variable_ptr;
+  if (hdr[0] == 1) {
+    hdr[0] = 0;  // EventNotificationObject
+    REXLOG_INFO("[dash] UsbdBootEnumerationDoneEvent (0x{:08X}) : événement de notification", e->variable_ptr);
+  }
+}
+
 void RunInSystemProcess(rex::system::KernelState* ks, std::function<int()> fn) {
   rex::system::object_ref<SystemHostThread> t(new SystemHostThread(ks, 256 * 1024, std::move(fn)));
   t->set_name("XAM load");
@@ -86,3 +123,12 @@ void RunInSystemProcess(rex::system::KernelState* ks, std::function<int()> fn) {
 }
 
 }  // namespace dash::xamrt
+
+// KeGetCurrentProcessType : 2 (système) pour le code de XAM recompilé, quel que soit le fil (voir SetXamImageRange). Le
+// code appelant est reconnu par l'adresse de retour (ctx.lr). La fonction du SDK vient de kernel_sdk_fn.h.
+REX_HOOK_RAW(__imp__KeGetCurrentProcessType) {
+  static PPCFunc* fn = dash::SdkFunction("__imp__KeGetCurrentProcessType");
+  const uint32_t lr = static_cast<uint32_t>(ctx.lr);
+  fn(ctx, base);
+  if (dash::xamrt::InXamImage(lr)) ctx.r3.u64 = 2;
+}

@@ -7,6 +7,7 @@
 #if !defined(_WIN32)
 #include <dlfcn.h>
 #endif
+#include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <memory>
@@ -172,6 +173,17 @@ void RunMessageBoxTest(rex::system::KernelState* ks) {
   ctx.r9.u64 = 0;                 // drapeaux
   ctx.r10.u64 = result;
 
+  // DASH_TEST_PEEK=<adresse invitée hexadécimale> : journalise 64 mots de la mémoire invitée avant l'appel (diagnostic).
+  if (const char* d = std::getenv("DASH_TEST_PEEK"); d && *d) {
+    const uint32_t ea = static_cast<uint32_t>(std::strtoul(d, nullptr, 16));
+    std::string line;
+    for (uint32_t k = 0; k < 64; ++k) {
+      char b[16];
+      std::snprintf(b, sizeof b, " %08X", __builtin_bswap32(*reinterpret_cast<uint32_t*>(base + ea + k * 4)));
+      line += b;
+      if (k % 8 == 7) { REXLOG_INFO("[xamredir] peek {:08X}:{}", ea + (k - 7) * 4, line); line.clear(); }
+    }
+  }
   REXLOG_INFO("[xamredir] test XamShowMessageBoxUI : appel");
   Dispatch(*slot, ctx, base);
   REXLOG_INFO("[xamredir] test XamShowMessageBoxUI : retour r3=0x{:08X}, résultat={}",

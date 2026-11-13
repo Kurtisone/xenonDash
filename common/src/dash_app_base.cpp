@@ -89,12 +89,14 @@ void DashAppBase::OnPostSetup() {
     auto* ks = runtime()->kernel_state();
     if (ks->FindRecompiledModule("xam.xex")) {
       dash::xamrt::MountXamDevices(runtime()->file_system());
+      dash::xamrt::FixKernelVariables(ks, runtime()->export_resolver());
       // DASH_XAM_MODULE=1 : chargement seul ; =2 : + point d'entrée (DllMain/DLL_PROCESS_ATTACH) sur un thread invité.
       const bool run_entry = std::string_view(std::getenv("DASH_XAM_MODULE")) == "2";
       auto* resolver = runtime()->export_resolver();
       auto load = [ks, resolver, run_entry]() {
         auto xam = ks->LoadUserModule("game:\\xam.xex", run_entry);
         REXLOG_INFO("[dash] module xam.xex recompilé : {}", xam ? "chargé" : "ÉCHEC");
+        if (xam) dash::xamrt::SetXamImageRange(xam->xex_module()->base_address(), xam->xex_module()->image_size());
         // Palier E : redirection des imports XAM du Dashboard (DASH_XAM_REDIRECT), voir dash_xam_redirect.h.
         dash::xamredir::Configure(ks, resolver, xam.get());
         return 0;
