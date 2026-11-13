@@ -14,4 +14,7 @@ includes = ["../2.0.13604.0/dash_overrides.toml", "../2.0.13604.0/overrides.toml
 file_path = "assets/flash/xam.xex"
 guest_path = "game:\\xam.xex"
 out_directory_path = "generated/xam"
+# Table de dispatch de XAM relocalisée (réglage du SDK) : le défaut (fin de l'image, 0x81D50000)
+# recouvre le début de dash.xex (0x82000000 en adresse physique) ; voir docs/xam_recompile.md, palier B.
+function_table_base = 0x84000000
 includes = ["xam_overrides.toml", "xam_auto_overrides.toml"]

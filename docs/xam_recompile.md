@@ -150,7 +150,7 @@ du jeu) ; `game:\xam.xex` est lu depuis `assets/xam.xex`.
 - Le SDK est restauré à son état d'origine (`sdk/lib/librexruntime.so`, md5 `067250b8…`). Le diff de l'essai est gardé hors
   dépôt.
 
-### Correctif à faire (non appliqué, SDK)
+### Correctif (appliqué : voir « Palier C »)
 
 1. Codegen : remplacer `REX_IMAGE_BASE + REX_IMAGE_SIZE` de `REX_LOOKUP_FUNC` par `REX_TABLE_BASE`, émis par module
    (`resources/templates/codegen/`), et ajouter `table_base` à `PPCImageInfo` (valeur par défaut : fin d'image, donc
@@ -178,3 +178,85 @@ du jeu) ; `game:\xam.xex` est lu depuis `assets/xam.xex`.
 | Pas de `FATAL`, threads système vivants, 60 s stables | atteint pour `m2h` (vivant 90 s, aucun `FATAL`) |
 | Instructions manquantes | fait (`tools/xam_unimpl_patch.py`) |
 | Redirection d'un import vers XAM recompilé | non fait (bloqué : le hub doit d'abord être corrigé) |
+
+## Palier C : table de fonctions relocalisable (SDK)
+
+Le recouvrement de la table de XAM avec dash.xex est corrigé. Le hub reste noir : voir « Résultat » ci-dessous.
+
+### Correctif (`third_party/rexglue-sdk`, non commité)
+
+- **Codegen** : clé optionnelle `function_table_base` (TOML). Placée au niveau racine d'un fichier de configuration, ou dans
+  l'entrée `[[modules]]` du manifeste (lue par `LoadFromTable`). Défaut : fin de l'image (`IMAGE_BASE + IMAGE_SIZE`).
+  Les gabarits n'émettent `REX_TABLE_BASE` et `.table_base` que si la clé est présente.
+- **Sortie inchangée sans la clé** : Dashboard 2.0.13604.0 et 2.0.6770.0 régénérés avec `--ignore-stamp` ; aucun fichier
+  source ne change (seul `codegen.stamp` change, il contient la version du SDK). Le projet XAM a `REX_TABLE_BASE` (2 occurrences).
+- **Runtime** : `PPCImageInfo::table_base` (ajouté en fin de structure). `Memory::InitializeFunctionTable(..., table_base)` et
+  `FunctionDispatcher::InitializeFunctionTable(..., table_base = 0, is_entrypoint = false)`. Les appelants passent la valeur
+  (`runtime.cpp`, `kernel_state.cpp`).
+- **Recouvrement** : les tas `0x8` et `0x9` sont deux vues du même fichier (bit 28 non significatif). `GuestRangesOverlap`
+  (`include/rex/system/xmemory.h`) compare donc en adresses physiques. Le dispatcher contrôle image, table et code de chaque
+  module enregistré ; la mémoire contrôle les tables existantes.
+- **Pages** : `AllocFixed` ne refuse une plage occupée que pour une réservation seule (`Reserve`). Avec `Reserve|Commit`, le
+  contrôle n'existe pas. La table est donc réservée seule (refus si occupée), puis validée. Son alias dans l'autre tas est
+  réservé de la même façon et libéré à la destruction du module.
+- **Image de XAM** : `ReserveImageAlias` (`src/system/kernel_state.cpp`) réserve l'alias de l'image chargée dans l'autre tas
+  (`0x917E0000-0x91D50000` pour XAM). Refuse le chargement si une page est déjà prise.
+
+### Projet XAM
+
+- `dash_manifest.toml`, entrée `[[modules]]` de XAM : `function_table_base = 0x84000000`.
+- Plages (adresses physiques, bit 28 retiré) : dash.xex `0x92000000-0x92EA8000` (tas `0x9`, pages de 4 Ko), table du Dashboard
+  `0x92EA8000-0x93E05B10`, image de XAM `0x817E0000-0x81D50000`, table de XAM `0x84000000-0x84727098` (alias `0x94000000`).
+- Journal du chargement : `Function table initialized for module: code=81850000-81BD384C, image=817E0000-81D50000, table=84000000`.
+
+### Tests et compilation
+
+- `tests/unit/system/function_dispatcher_test.cpp` : 12/12 cas `[dispatcher]` (4 nouveaux : table relocalisée, défaut
+  inchangé, recouvrements direct, par alias et hors tas refusés, alias déjà occupé). Suite complète : 212 cas sur 221 réussis ;
+  les 5 échecs portent sur BitStream, le calendrier et Depfile (modules sans lien ; non vérifiés sur la base d'origine).
+- Compilés (rc 0) : `dashboards/2.0.13604.0-xam`, `dashboards/2.0.13604.0`, `dashboards/2.0.6770.0`.
+
+### Résultat (`DASH_XAM_MODULE=2`, environnement de référence : `VK_ICD_FILENAMES` lavapipe, `HOME` et `XDG_DATA_HOME` de test)
+
+| Run | Réglage | Résultat |
+|---|---|---|
+| `s5base2` | sans module | **hub affiché** à 60 s, rendu continu |
+| `s5c`, `s5e` | module 2, table 0x84000000 | vivant 90 s (`s5c`) et 60 s ; aucun `FATAL`, aucun SIGSEGV ; **écran noir** |
+| `s5a` | module 2, sans l'environnement de référence | SIGSEGV à 20 s (une fois) ; pile : lambda `XThread::Create()::$_0`, décalage `0x4bb581` de `librexruntime.so` ; non reproduit en 3 runs de référence |
+
+Constats sur le run module (le journal est complet avec `DASH_ARGS=--log_flush_interval=1`, sans ce réglage il est tronqué) :
+
+- Le journal s'arrête 0,3 s après le chargement de XAM (`xam.xex recompilé : chargé`). Sans module, le rendu produit des
+  lignes `[gpu]` en continu. Avec module, aucune.
+- À ce moment, neuf threads système sont créés (`[ExCreateThread] Guest is creating a system thread!`, aucun dans le run de référence).
+- `gdb` à 60 s (`gdb/stall60.out`, méthode `interrupt.sh`) : le thread principal du Dashboard est dans `ExCreateThread_entry`,
+  en destruction d'un `XThread` ; les threads de XAM attendent (`KeWaitForSingleObject`).
+- Hypothèse « le Dashboard alloue dans l'alias de l'image XAM » (blocage n° 2 ci-dessous) : **réservation réussie** au
+  chargement (`Module image alias 917E0000-91D50000 ... reserved`), le blocage persiste. Cette cause n'explique donc pas
+  le hub noir à elle seule.
+- Import du Dashboard : aucun `FATAL` (le `m1a` provenait de l'écrasement de `0x92000D64`) ; la table de XAM ne le touche plus.
+
+### Blocages restants
+
+1. **Hub noir avec XAM chargé** : le Dashboard cesse de produire du rendu peu après le chargement de XAM. Cause non établie.
+   Pistes : la boucle de création de threads du thread principal (dont la destruction de `XThread` observée à 60 s) ; les
+   9 threads système créés au chargement ; le `Reset` du tas `0x8` au chargement d'un XEX, qui efface les réservations
+   (y compris celle de l'alias de la table du Dashboard).
+2. **Plantage isolé** (`s5a`) : SIGSEGV dans le lambda de démarrage des `XThread` (`librexruntime.so+0x4bb581`), non reproduit
+   dans l'environnement de référence. Core dump géré par `systemd-coredump` (`/var/lib/systemd/coredump`, lisible par root seulement).
+3. **Redirection des imports** : non faite (bonus, bloquée par le point 1).
+4. Les réservations d'alias ne sont ni sauvegardées (`Save`/`Restore`) ni libérées au déchargement d'un module ; à vérifier.
+
+### Procédure (après modification du SDK)
+
+```sh
+cd third_party/rexglue-sdk && cmake --build out/build/linux-amd64 --config Release --target install -j 6
+cd dashboards/2.0.13604.0-xam && ../../sdk/bin/rexglue codegen --ignore-stamp dash_manifest.toml
+python3 ../../tools/xam_unimpl_patch.py generated/xam
+cmake --preset linux-amd64-relwithdebinfo && cmake --build out/build/linux-amd64-relwithdebinfo -j 6
+DASH_DISPLAY=92 DASH_RUNS=<dossier_hors_depot> DASH_XAM_MODULE=2 DASH_ARGS="--log_flush_interval=1" \
+  DASH_ENV="HOME=<test> XDG_DATA_HOME=<test> VK_ICD_FILENAMES=/usr/share/vulkan/icd.d/lvp_icd.json DASH_XAM_STATE=<test>/xam" \
+  ./run_headless.sh 90 essai
+```
+
+Le correctif `tools/xam_unimpl_patch.py` reste à relancer après chaque `rexglue codegen` du projet XAM.
