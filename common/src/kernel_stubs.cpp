@@ -11,6 +11,8 @@
 #include <rex/hook.h>
 #include <rex/types.h>
 #include <rex/system/kernel_state.h>
+#include <rex/system/util/string_utils.h>
+#include <rex/system/xobject.h>
 
 namespace dash::stubs {
 
@@ -98,6 +100,30 @@ REX_HOOK_RAW(__imp__XamGetStagingMode) { (void)base; ctx.r3.u64 = 0; }
 // IoDismountVolumeByName(nom) : démontage d'un volume. Le stub du SDK renvoie une valeur non nulle ; la machine d'état
 // du stockage de XAM (thread système) le rappelle alors sans fin. Il n'y a pas de volume à démonter : STATUS_SUCCESS.
 REX_HOOK_RAW(__imp__IoDismountVolumeByName) { (void)base; ctx.r3.u64 = 0; }
+
+// ObReferenceObjectByName(PANSI_STRING nom, attributs, type, contexte, *objet) : le SDK prend `nom` pour une chaîne C
+// (l'adresse de l'ANSI_STRING est lue comme du texte : nom vide, recherche toujours en échec). XAM (threads système)
+// appelle ensuite ObDereferenceObject(*objet) sans contrôler le statut : *objet n'est pas écrit et garde une valeur
+// ancienne (0xBEBEBEBE, pointeurs d'objets précédents). Ce déréférencement décrémente le compte de handles d'un objet
+// quelconque (dont le thread en cours de création du Dashboard, qui est alors détruit). Ici : nom lu comme ANSI_STRING,
+// et *objet = 0 en cas d'échec.
+REX_HOOK_RAW(__imp__ObReferenceObjectByName) {
+  const u32 name_addr = ctx.r3.u32, out = ctx.r7.u32;
+  const std::string_view name = rex::system::util::TranslateAnsiStringAddress(REX_KERNEL_MEMORY(), name_addr);
+  constexpr uint32_t kStatusNameNotFound = 0xC0000034u;  // X_STATUS_OBJECT_NAME_NOT_FOUND
+  uint32_t handle = 0xFFFFFFFFu;                         // X_INVALID_HANDLE_VALUE
+  if (REX_KERNEL_OBJECTS()->GetObjectByName(name, &handle) == 0) {  // X_STATUS_SUCCESS
+    auto object = REX_KERNEL_OBJECTS()->LookupObject<rex::system::XObject>(handle);
+    if (object) {
+      object->RetainHandle();  // l'appelant prend la référence (libérée par ObDereferenceObject)
+      if (out) *reinterpret_cast<uint32_t*>(base + out) = __builtin_bswap32(object->guest_object());
+      ctx.r3.u64 = 0;
+      return;
+    }
+  }
+  if (out) *reinterpret_cast<uint32_t*>(base + out) = 0;
+  ctx.r3.u64 = kStatusNameNotFound;
+}
 
 REX_EXPORT(__imp__XUsbcamCreate, dash::stubs::XUsbcamCreate_entry)
 REX_EXPORT(__imp__XUsbcamGetState, dash::stubs::XUsbcamGetState_entry)

@@ -260,3 +260,71 @@ DASH_DISPLAY=92 DASH_RUNS=<dossier_hors_depot> DASH_XAM_MODULE=2 DASH_ARGS="--lo
 ```
 
 Le correctif `tools/xam_unimpl_patch.py` reste à relancer après chaque `rexglue codegen` du projet XAM.
+
+## Palier D : le hub s'affiche avec XAM chargé
+
+Résultat : le hub NXE s'affiche avec `DASH_XAM_MODULE=2` (captures hors dépôt : `runs/f1.png` à 60 s, `runs/f2.png` à 100 s).
+Le processus est vivant, les 9 threads système de XAM sont créés, aucun `FATAL`, aucun SIGSEGV.
+
+### Cause du hub noir (établie)
+
+Chaîne complète, observée par piles gdb et journal de diagnostic (instrumentation temporaire du SDK, retirée) :
+
+1. XAM (fonction `sub_81883CB8`, `generated/xam/dash_recomp.38.cpp:2238`, appelée depuis un thread système) appelle
+   `ObReferenceObjectByName(&nom_ansi, ..., &objet)` sur un nom de périphérique, puis `ObDereferenceObject(objet)` sans
+   contrôler le statut.
+2. Le SDK ne lit pas `nom` comme un `ANSI_STRING` : `ObReferenceObjectByName_entry` (`src/kernel/xboxkrnl/xboxkrnl_ob.cpp`)
+   prend l'adresse de la structure pour une chaîne C. Journal : `ObReferenceObjectByName '' -> 0xc0000034` (nom vide,
+   recherche toujours en échec). Le SDK n'écrit pas `*objet` en cas d'échec.
+3. `*objet` garde donc une valeur ancienne : `0xBEBEBEBE` (boucle de XAM, sans fin) ou le pointeur d'un objet précédent.
+   `ObDereferenceObject` appelle alors `XObject::ReleaseHandle()` sur cet objet, qui décrémente le compte de handles d'un
+   objet qui n'a pas été référencé.
+4. Le Dashboard crée son thread : `XObject` ajoute le handle (compte 1, « référence du créateur »). Un thread de XAM
+   déréférence ce handle (journal : `ReleaseHandle h=F8000114 hcnt=1 obj=<thread du Dashboard>`) : le compte tombe à 0,
+   l'entrée de la table est retirée (`Release` du pointeur de la table).
+5. `XThread::Create` puis `ExCreateThread_entry` se terminent : la dernière référence de pointeur est celle de
+   `object_ref` (`ExCreateThread_entry`). Elle libère l'objet, `~XThread` (`ExCreateThread_entry` directement dans la pile).
+6. Le thread hôte du nouveau XThread est suspendu (en attente de `Resume`) ; `~PosixThread` détruit la condition
+   (`pthread_cond_destroy`) alors qu'un thread y est en attente : le thread principal du Dashboard (`Main XThread`) reste
+   bloqué dans `pthread_cond_destroy` (pile gdb à 60 s). Plus de rendu, plus de journal.
+
+Preuves retenues : pile du thread principal à 60 s (gdb, `Main XThread` dans `ExCreateThread_entry` → `~XThread` →
+`~PosixThread` → `pthread_cond_destroy`) ; `XThread dtor` appelé directement depuis `ExCreateThread_entry` (gdb) ; deux
+objets différents portant le même handle `F8000114` (le second créé par un thread de XAM après la suppression du
+premier) ; piles des `ObDereferenceObject` sur `0xBEBEBEBE` (`sub_81883CB8` ← `sub_81890F18` ← thread système) ; sans
+instrumentation, la même séquence (journal arrêté après « Created 9 graphics pipelines », process vivant).
+
+### Correctif (`common/src/kernel_stubs.cpp`, SDK inchangé)
+
+`REX_HOOK_RAW(__imp__ObReferenceObjectByName)` : nom lu comme `ANSI_STRING` (`TranslateAnsiStringAddress`) ; en cas
+d'échec, `*objet = 0` et statut `STATUS_OBJECT_NAME_NOT_FOUND`. Sur succès, la référence est prise (`RetainHandle`), comme
+dans le SDK. XAM voit alors `0` et ne déréférence pas (la branche `beq` de la fonction de XAM).
+
+Ce correctif contourne le SDK. Le défaut à corriger dans le SDK (`xboxkrnl_ob.cpp`) :
+- `ObReferenceObjectByName_entry` doit lire `X_ANSI_STRING*` (`util::TranslateAnsiStringAddress`), comme
+  `LookupNamedObject` ;
+- il doit écrire `NULL` dans `out_object_ptr` sur échec.
+Le correctif de `common/` touche tous les projets qui lient `common/` (13604, 13604-xam, 6770 ; 17559 non recompilé). Il ne
+couvre pas les objets de périphérique (`\Device\...`) : ils ne figurent pas dans la table des noms, la recherche échoue
+toujours, mais sans déréférencement fautif.
+
+### Vérifications
+
+| Vérification | Résultat |
+|---|---|
+| `dashboards/2.0.13604.0-xam` (module 2) | hub affiché à 60 s et 100 s (`f1.png`, `f2.png`) ; 9 threads système ; 0 FATAL |
+| `dashboards/2.0.13604.0` (HLE, même `common/`) | hub affiché à 40 s (`hle1.png`) |
+| Compilation | `2.0.13604.0` et `2.0.6770.0` : rc 0 ; `2.0.13604.0-xam` : rc 0 |
+| SDK | `third_party/rexglue-sdk` : aucun fichier modifié (instrumentation temporaire annulée par `git checkout`, `sdk/lib/librexruntime.so` md5 `769fc992…`, identique à l'état d'avant) |
+
+### Blocages restants
+
+1. **Threads de XAM en boucle** : après le correctif, deux threads système de XAM consomment 75 à 90 % d'un cœur
+   (`Main XThread` à ~97 %, comme dans la référence sans module à ~98 %). Ils réessaient les recherches de périphériques
+   (`\Device\...`, absents de la table des noms) : à traiter (objets de périphérique ou table de noms).
+2. **Redirection des imports** (bonus) : non faite.
+3. **Correctif SDK** : à faire dans `xboxkrnl_ob.cpp` (voir ci-dessus) ; le correctif de `common/` peut alors être retiré.
+4. Sémantique de `ExCreateThread` (flags `0x80`, objet renvoyé sans référence) : non vérifiée.
+5. Fenêtre de course : entre l'ajout du thread dans la table (`XObject`, compte 1) et le `RetainHandle` de `XThread::Create`,
+   un déréférencement concurrent retire le thread de la table. C'est la fenêtre observée ; le SDK ne protège pas cette
+   fenêtre.
