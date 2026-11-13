@@ -20,6 +20,7 @@
 
 #include "dash_input.h"
 #include "dash_launch.h"
+#include "dash_xam_redirect.h"
 #include "dash_xam_runtime.h"
 #include "null_audio.h"
 
@@ -90,9 +91,12 @@ void DashAppBase::OnPostSetup() {
       dash::xamrt::MountXamDevices(runtime()->file_system());
       // DASH_XAM_MODULE=1 : chargement seul ; =2 : + point d'entrée (DllMain/DLL_PROCESS_ATTACH) sur un thread invité.
       const bool run_entry = std::string_view(std::getenv("DASH_XAM_MODULE")) == "2";
-      auto load = [ks, run_entry]() {
+      auto* resolver = runtime()->export_resolver();
+      auto load = [ks, resolver, run_entry]() {
         auto xam = ks->LoadUserModule("game:\\xam.xex", run_entry);
         REXLOG_INFO("[dash] module xam.xex recompilé : {}", xam ? "chargé" : "ÉCHEC");
+        // Palier E : redirection des imports XAM du Dashboard (DASH_XAM_REDIRECT), voir dash_xam_redirect.h.
+        dash::xamredir::Configure(ks, resolver, xam.get());
         return 0;
       };
       if (run_entry) {

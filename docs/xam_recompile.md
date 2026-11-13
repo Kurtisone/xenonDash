@@ -328,3 +328,121 @@ toujours, mais sans déréférencement fautif.
 5. Fenêtre de course : entre l'ajout du thread dans la table (`XObject`, compte 1) et le `RetainHandle` de `XThread::Create`,
    un déréférencement concurrent retire le thread de la table. C'est la fenêtre observée ; le SDK ne protège pas cette
    fenêtre.
+
+## Palier E : redirection des imports du Dashboard vers XAM recompilé
+
+Le Dashboard appelait encore le HLE du SDK pour chacun de ses imports XAM ; le module tournait à côté sans servir à rien.
+Ce palier ajoute un mécanisme de redirection configurable, sans modifier le SDK.
+
+### Étape 1 : mécanisme d'imports (constats)
+
+- **Codegen** : un import du Dashboard devient un appel direct `__imp__<Nom>(ctx, base)`
+  (`third_party/rexglue-sdk/src/codegen/builders/context.cpp`, `phase_register.cpp`). Le nom vient de la table d'exports du
+  SDK (ordinal → nom).
+- **Résolution à l'édition de liens** : `__imp__<Nom>` est fourni par le HLE du SDK (`REX_EXPORT` dans
+  `src/kernel/xam/xam_ui.cpp` et voisins, dans `librexruntime.so`). Un `REX_HOOK_RAW(__imp__<Nom>)` dans l'exécutable
+  l'emporte pour les appels de l'exécutable : c'est le mécanisme déjà utilisé par `common/`.
+- **Ordinaux du Dashboard** : `work/dash_imports.tsv` (43 entrées `xam.xex`, dont l'ordinal 96, non nommé). Noms :
+  `third_party/rexglue-sdk/src/kernel/xam/export_table.inc` (ex. ordinal 714 = `XamShowMessageBoxUI`).
+- **Exports de XAM recompilé à l'exécution** : `XexModule::GetProcAddress(ordinal)` (`src/system/xex_module.cpp`) lit la
+  table d'exports du XEX ; `UserModule::GetProcAddressByOrdinal` la relaie. La fonction recompilée se trouve ensuite dans
+  la table de fonctions du module (`FunctionDispatcher::GetFunction`). Testé : XGetVideoMode (977) → `0x818CAD18`,
+  XamShowMessageBoxUI (714) → `0x8189A3C0`, signature à 9 arguments conforme (le 9e est lu à `1412(r1)` après `stwu -1328`,
+  soit `r1 + 0x54` de l'appelant).
+- **Table d'exports PE de `work/xam13604.pe`** : son répertoire d'exports (RVA `0x4E0000`) pointe sur des zéros dans l'image
+  décodée (données utiles décalées, en gros-boutiens) : non exploitable. Les noms viennent donc du SDK, les adresses de
+  l'exécution.
+- **Imports déjà remplacés dans `common/`** (non redirigeables sans toucher à leur fichier) : `XamShowAchievementsUI`
+  (`dash_xam_ui.cpp`), `XamLoaderLaunchTitle` (`dash_launch.cpp`), `XamNotifyCreateListener` (`dash_disc.cpp`),
+  `XamContentClose` et `XamContentCreateEnumerator` (`dash_library.cpp`, `dash_content.cpp`), `XamUserGetName`
+  (`dash_profile.cpp`). Ils restent sur le hook de `common/`.
+
+### Étape 2 : mécanisme (`common/src/dash_xam_redirect.{h,cpp}`)
+
+- Un hook par import XAM du Dashboard (36 hooks, macro `DASH_XAM_REDIRECT_HOOK`). Chaque hook appelle `Dispatch` : si le
+  nom figure dans `DASH_XAM_REDIRECT`, il exécute la fonction de XAM recompilé avec le même `ctx` ; sinon le HLE du SDK.
+- `Configure` est appelée après `LoadUserModule("game:\\xam.xex")` (`dash_app_base.cpp`). Elle résout chaque nom en
+  ordinal (table `xam.xex` du SDK), puis en adresse, et journalise `[xamredir] <nom> (ordinal N) -> XAM recompilé 0x...`.
+- **Trace** : `[xamredir] <nom> : appel N par XAM recompilé|HLE` au premier appel de chaque import puis tous les 1000 appels.
+- **Piège trouvé (interposition ELF)** : `librexruntime.so` exporte aussi `__imp__XGetLanguage` ; sa table de registre
+  (`FindPPCFuncByName`) pointe sur le hook de l'exécutable, et le repli HLE s'appelait lui-même (récursion, SIGSEGV dans
+  `Dispatch`). Sous Linux, le HLE est donc résolu par `dlsym(RTLD_NEXT)` ; sous Windows, la table de registre suffit (pas
+  d'interposition entre DLL).
+- Aucune modification du SDK. Sans `DASH_XAM_REDIRECT`, les imports passent tous par le HLE (même comportement qu'avant,
+  seule la trace est ajoutée).
+
+Utilisation :
+
+```sh
+DASH_XAM_MODULE=2 DASH_XAM_REDIRECT=XGetVideoMode,XamShowMessageBoxUI ./run_headless.sh 90 essai
+DASH_TEST_MSGBOX=30   # test : appelle XamShowMessageBoxUI depuis un thread titre au bout de 30 s (appel asynchrone)
+```
+
+Imports appelés par le Dashboard au démarrage (trace, sans redirection) : XamLoaderGetLaunchData, XGetVideoMode,
+XamUserGetXUID (1000 appels en 90 s), XamUserGetSigninState, XamEnumerate, XNotifyGetNext, XamInputGetKeystrokeEx,
+XamInputGetState, XamLoaderGetDvdTrayState, XamContentCreateDeviceEnumerator. Les autres imports de la table n'apparaissent pas
+dans ce démarrage.
+
+### Étape 3 : premier test (XGetVideoMode)
+
+| Run | Réglage | Résultat |
+|---|---|---|
+| `r5a` | `DASH_XAM_REDIRECT=XGetVideoMode` | journal : `XGetVideoMode (ordinal 977) -> XAM recompilé 0x818CAD18`, puis `appel 1 par XAM recompilé` ; vivant 90 s ; hub affiché (`runs/r5a.png`) |
+| `r4a` | sans redirection | trace des imports appelés (liste ci-dessus), hub affiché |
+
+### Étape 4 : XamShowMessageBoxUI via XAM recompilé (blocage classé)
+
+Le test `DASH_TEST_MSGBOX` appelle la voie redirigée comme le ferait le Dashboard (hook → `Dispatch` → XAM). Résultats :
+
+| Run | Arguments | Retour (r3) | Journal |
+|---|---|---|---|
+| `r6a` | 9e argument mal placé (`r1 + 0x28` au lieu de `r1 + 0x54`) : `overlapped` lu comme une valeur quelconque | `0x65B` (1627) | `appel 1 par XAM recompilé`, retour immédiat, résultat 0 |
+| `r7a` | 9e argument à `r1 + 0x54`, `overlapped` nul | `0x57` (87, ERREUR_PARAMETRE) | aucun autre journal |
+| `r8a` | `overlapped` = XOVERLAPPED à zéro (appel asynchrone) | `0x65B` (1627) | aucun autre journal ; capture hub affichée (`runs/r8a.png`) |
+
+Lecture du code généré (`dashboards/2.0.13604.0-xam/generated/xam/dash_recomp.20.cpp`, fonction `sub_8189A3C0`) :
+
+- Contrôles d'arguments (`loc_8189A400` à `loc_8189A484`) : utilisateur < 4 ou 255 ; drapeaux sans bits interdits ; nombre de
+  boutons ; `overlapped` nul impose `pResult` nul (sinon 87). Avec les valeurs de test, ces contrôles passent.
+- Corps : `sub_818FCD10`/`sub_818FCCA8` (initialisation de la structure), puis `sub_8189F0D0` (r3 non nul → chemin 254 avec
+  `sub_8187B8E8` puis `r4 = 997` et `sub_81896B20`, qui renvoie r4 ; r3 nul → 5). Ce chemin devrait donner 997, 0 ou 5, pas
+  0x65B : **la cause du 0x65B n'est pas établie**. Le contrôle `sub_8189F0D0` et les fonctions appelées n'ont pas été tracés
+  (essai gdb : `handle SIGSEGV nostop noprint pass` requis, les points d'arrêt dans `sub_8189A3C0` n'ont pas été atteints).
+- Aucun fichier XUI n'est demandé pendant l'appel : pas de `File not found` pour `hud.xex`, `huduiskin.xex`, `signin.xex`,
+  `vk.xex`, `shrdres.xzp`. XAM refuse donc avant le chargement de l'interface.
+
+Blocages classés (étape 4) :
+
+1. **XamShowMessageBoxUI refuse avec 0x65B avant tout chargement de module XUI** (preuve : `r8a`). Cause non établie.
+   Pistes : `sub_8189F0D0` (état de l'interface, à tracer) ; variable importée `xam:0x3db` (`g_XuiAutomation`) non
+   implémentée, signalée à chaque chargement (`Variable import xam:0x3db (g_XuiAutomation) not implemented`), jamais
+   renseignée. Une recherche des `li r3,1627` du code généré ne désigne pas un chemin évident.
+2. **Chargement des modules XUI** (`hud.xex`, `huduiskin.xex`, `signin.xex`, `createprofile.xex`, `vk.xex`) : non observé
+   (la voie n'y arrive pas). Prévision : ces XEX ne sont pas recompilés (aucun `[[modules]]` dans `dash_manifest.toml`) ;
+   leur chargement par XAM ne donnerait que des images sans code. À confirmer une fois le point 1 levé.
+3. **Périphériques absents** (existant) : `secexp.xex`, `xstudio.xex`, `systemupdate.xex` (`\Device\Mass0`) : journalisés,
+   non bloquants pour le hub.
+4. **Autres imports non testés** : seule XGetVideoMode est redirigée en route de production ; les entrées manette
+   (`XamInputGetState`) et les profils (`XamUserGetSigninState`) restent sur le HLE par défaut, faute de test.
+
+### Vérifications
+
+| Vérification | Résultat |
+|---|---|
+| `dashboards/2.0.13604.0-xam` (module, redirection et test) | compile (rc 0), hub affiché (`r5a`, `r8a`), aucun SIGSEGV ni FATAL pendant 90 s |
+| `dashboards/2.0.13604.0` (HLE) | compile (rc 0) : pas de symbole dupliqué avec les hooks de redirection |
+| `dashboards/2.0.6770.0` | compile (rc 0) |
+| SDK (`third_party/rexglue-sdk`) | aucun fichier modifié par ce palier |
+
+### Fichiers
+
+- Nouveaux : `common/src/dash_xam_redirect.h`, `common/src/dash_xam_redirect.cpp`.
+- Modifiés : `common/CMakeLists.txt` (une source), `common/src/dash_app_base.cpp` (appel de `Configure` après le chargement de
+  XAM), ce document.
+
+### Reste à faire
+
+- Lever le point 1 (0x65B) : tracer `sub_8189F0D0` et les fonctions de XAM appelées depuis `sub_8189A3C0`, avec gdb
+  (`handle SIGSEGV nostop noprint pass`, points d'arrêt par nom dans `libdash_xam.so`) ; renseigner `xam:0x3db`.
+- Recompiler les XEX XUI de la flash (`hud.xex`, `signin.xex`, ...) si XAM les charge (point 2).
+- Étendre la liste des redirections (entrées manette, profils) après validation de chaque import.
