@@ -16,6 +16,7 @@
 
 #include <rex/system/kernel_state.h>
 #include "ngpu.h"
+#include NGPU_PROFILE_HEADER
 
 namespace {
 struct Slot { uint32_t addr; std::atomic<uint64_t> frame_calls{0}, total{0}; int logged = 0; };
@@ -76,7 +77,7 @@ void TraceHit(int slot, uint32_t a, PPCContext& ctx) {
   if (!g_out) return;
   static const long seq = std::getenv("DASH_D3D_SEQ") ? std::atol(std::getenv("DASH_D3D_SEQ")) : -1;
   static std::atomic<int> seqlines{0};
-  if ((long)g_frame.load() == seq && a != 0x92120C98 && seqlines < 6000) {
+  if ((long)g_frame.load() == seq && a != ngpu_profile::kSeqIgnore && seqlines < 6000) {
     seqlines++;
     std::lock_guard<std::mutex> l(g_mu);
     std::fprintf(g_out, "[seq %08X] r3=%08X r4=%08X r5=%08X r6=%08X r7=%08X r8=%08X r9=%08X r10=%08X f1=%g f2=%g lr=%08X\n", a, ctx.r3.u32, ctx.r4.u32,
@@ -151,12 +152,12 @@ void TraceFrame(uint32_t a) {
   extern "C" void sub_##A(PPCContext& __restrict ctx, uint8_t* base) {                \
     static int slot = Register(0x##A);                                                \
     ngpu::TraceHit(slot, 0x##A, ctx);                                                 \
-    if (0x##A == 0x92121EE8) { ngpu::TraceFrame(0x##A); ngpu::SwapTick(); }                                 \
+    if (0x##A == ngpu_profile::kSwapEntry) { ngpu::TraceFrame(0x##A); ngpu::SwapTick(); }                                 \
     if (ngpu::Enabled() && ngpu_hook_##A) {                                           \
       try { if (ngpu_hook_##A(ctx, base)) return; }                                   \
       catch (const std::exception& e) { std::fprintf(stderr, "[ngpu] EXCEPTION dans le crochet %08X : %s\n", 0x##A, e.what()); }   \
     }                            \
     __imp__sub_##A(ctx, base);                                                        \
   }
-#include "d3d6770_entries.inc"
+#include NGPU_ENTRIES_FILE
 #undef X

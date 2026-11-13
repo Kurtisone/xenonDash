@@ -40,7 +40,10 @@ bool Enabled();  // false avec DASH_NGPU_DISABLE=1 (les crochets natifs sont ign
 // ngpu_hook_<ADRESSE> (symbole faible) avant la fonction d'origine ; renvoyer true = la fonction est remplacée
 // (rien d'autre n'est exécuté), false = on enchaîne sur la fonction d'origine. Pour une action « après », le
 // crochet appelle lui-même NGPU_ORIG(ADRESSE) puis renvoie true.
-#define NGPU_HOOK(ADDR)                                                                        \
+// ADDR peut etre un jeton d'adresse (9212EE10) ou une macro qui s'y developpe (NGP_Swap, profiles/*.h) : d'ou les deux niveaux.
+#define NGPU_HOOK_I(ADDR)                                                                      \
   extern "C" void __imp__sub_##ADDR(PPCContext& __restrict, uint8_t*);                         \
   extern "C" bool ngpu_hook_##ADDR([[maybe_unused]] PPCContext& ctx, [[maybe_unused]] uint8_t* base)
-#define NGPU_ORIG(ADDR) __imp__sub_##ADDR(ctx, base)
+#define NGPU_HOOK(ADDR) NGPU_HOOK_I(ADDR)
+#define NGPU_ORIG_I(ADDR) __imp__sub_##ADDR(ctx, base)
+#define NGPU_ORIG(ADDR) NGPU_ORIG_I(ADDR)

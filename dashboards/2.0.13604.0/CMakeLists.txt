@@ -23,4 +23,13 @@ else()
 endif()
 
 target_link_libraries(dash PRIVATE xenondash_common)
+
+# Rendu natif D3D (remplace l'émulation du GPU Xenos par le plugin xenos) : voir docs/ngpu_core.md (section 13604). Désactivé par défaut.
+option(DASH_NATIVE_GPU "Rendu natif au niveau D3D (native_gpu/, ngpu_core) pour cette version" OFF)
+if(DASH_NATIVE_GPU)
+    set(NGPU_PROFILE 13604 CACHE STRING "Version du D3D invité (native_gpu/CMakeLists.txt)" FORCE)
+    add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/../../native_gpu xenondash_native_gpu)
+    target_link_libraries(dash PRIVATE xenondash_native_gpu)
+    target_compile_definitions(dash PRIVATE DASH_NATIVE_GPU=1)
+endif()
 rexglue_setup_target(dash)

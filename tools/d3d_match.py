@@ -566,7 +566,8 @@ def match_image(img, sigs):
             del chosen[role]
     result = {}
     for role, top in chosen.items():
-        others = [e for e in pools[role] if e["addr"] != top["addr"]]
+        # une fonction deja retenue par un autre role n'est pas une ambiguite (jumeaux Resolve/ResolveInner de la famille dash-13604)
+        others = [e for e in pools[role] if e["addr"] != top["addr"] and used.get(e["addr"], role) == role]
         margin = None if not others else round(top["score"] - others[0]["score"], 4)
         rel_ok = top.get("rel_ok")
         fields = read_fields(img, top["sig"], top)

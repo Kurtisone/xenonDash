@@ -13,6 +13,7 @@
 #include <rex/system/xthread.h>
 
 #include "ngpu.h"
+#include NGPU_PROFILE_HEADER
 
 namespace ngpu {
 namespace {
@@ -25,10 +26,10 @@ void Loop() {
     uint32_t dev = g_dev.load();
     if (dev) {
       auto* d = mem->TranslateVirtual<uint8_t*>(dev);
-      uint32_t idp = Be32(d + 10896);
+      uint32_t idp = Be32(d + ngpu_profile::kFencePtr);
       if (idp) {
         auto* id = mem->TranslateVirtual<uint8_t*>(idp);
-        PutBe32(id, Be32(d + 10908));
+        PutBe32(id, Be32(d + ngpu_profile::kFenceValue));
       }
     }
     std::this_thread::sleep_for(std::chrono::microseconds(100));
@@ -50,7 +51,7 @@ static void StartVblank(uint32_t dev) {
           auto* t = rex::system::XThread::GetCurrentThread();
           t->SetActiveCpu(2);
           uint64_t args[] = {dev};
-          rex::system::kernel_state()->function_dispatcher()->ExecuteInterrupt(t->thread_state(), 0x92121210, args, 1);
+          rex::system::kernel_state()->function_dispatcher()->ExecuteInterrupt(t->thread_state(), ngpu_profile::kVblankHandler, args, 1);
         }
         return 0;
       }));
@@ -60,6 +61,9 @@ static void StartVblank(uint32_t dev) {
 
 // Mémorise le périphérique D3D invité et démarre le fil de complétion (premier appel).
 void NullGpuAttach(uint32_t dev) {
+  if (!dev) return;
+  // D3D n'a pas fini de s'initialiser tant que le pointeur de retour du GPU est nul : ne rien declencher avant.
+  if (!Be32(rex::system::kernel_memory()->TranslateVirtual<uint8_t*>(dev) + ngpu_profile::kFencePtr)) return;
   g_dev = dev;
   if (!g_started.exchange(true)) {
     std::thread(Loop).detach();
@@ -69,7 +73,7 @@ void NullGpuAttach(uint32_t dev) {
 // Publie tout de suite la consommation complète (utilisé par les crochets d'attente de fence).
 void NullGpuCompleteNow(uint8_t* base, uint32_t dev) {
   NullGpuAttach(dev);
-  uint32_t idp = Be32(base + dev + 10896);
-  if (idp) PutBe32(base + idp, Be32(base + dev + 10908));
+  uint32_t idp = Be32(base + dev + ngpu_profile::kFencePtr);
+  if (idp) PutBe32(base + idp, Be32(base + dev + ngpu_profile::kFenceValue));
 }
 }  // namespace ngpu

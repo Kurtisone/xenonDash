@@ -1640,10 +1640,17 @@ void Renderer::Draw(const DrawCall& call) {
   const float sz = state.RegF(xenos::reg::PA_CL_VPORT_ZSCALE);
   const float oz = state.RegF(xenos::reg::PA_CL_VPORT_ZOFFSET);
   RenderViewport viewport(ox - sx, oy + sy, 2.0f * sx, -2.0f * sy, oz, oz + sz);
-  const float boundViewport[] = {ox, oy, sx, sy, oz, sz, float(color.width), float(color.height)};
+  RenderRect scissor(0, 0, int32_t(color.width), int32_t(color.height));
+  if (call.has_scissor) {
+    scissor.left = std::clamp(int32_t(std::lround(call.scissor[0] * xScale)), 0, int32_t(color.width));
+    scissor.top = std::clamp(int32_t(std::lround(call.scissor[1] * scaleXy)), 0, int32_t(color.height));
+    scissor.right = std::clamp(int32_t(std::lround(call.scissor[2] * xScale)), scissor.left, int32_t(color.width));
+    scissor.bottom = std::clamp(int32_t(std::lround(call.scissor[3] * scaleXy)), scissor.top, int32_t(color.height));
+  }
+  const float boundViewport[] = {ox, oy, sx, sy, oz, sz, float(color.width), float(color.height),
+                                 float(scissor.left), float(scissor.top), float(scissor.right), float(scissor.bottom)};
   if (!has_bound_viewport_ || std::memcmp(bound_viewport_, boundViewport, sizeof(boundViewport))) {
     commands_->setViewports(&viewport, 1);
-    RenderRect scissor(0, 0, int32_t(color.width), int32_t(color.height));
     commands_->setScissors(&scissor, 1);
     std::memcpy(bound_viewport_, boundViewport, sizeof(boundViewport));
     has_bound_viewport_ = true;

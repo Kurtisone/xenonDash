@@ -55,6 +55,10 @@ struct DrawCall {
   // BeginVertices / EndVertices: the vertices written into the command buffer.
   const uint8_t* inline_vertices = nullptr;
   uint32_t inline_size = 0;
+  // Rectangle de coupe en pixels invites (x0, y0, x1, y1) : plans de coupe utilisateur alignes sur les axes que la facade a convertis
+  // (le Dashboard 13604 coupe ses textes ainsi). Hors de la plage, ou has_scissor faux : toute la cible.
+  bool has_scissor = false;
+  int32_t scissor[4] = {};
 };
 
 // ClearF(flags, rect, color): flags 0xF color targets, 0x10 depth, 0x20 stencil.
@@ -358,7 +362,7 @@ class Renderer {
   std::array<SlotBinding, 1024> bindings_;
   uint32_t texture_generation_ = 1;
   const void* bound_pipeline_ = nullptr;
-  float bound_viewport_[8] = {}, bound_bias_[2] = {};
+  float bound_viewport_[12] = {}, bound_bias_[2] = {};
   bool has_bound_viewport_ = false, has_bound_bias_ = false;
   Timings timings_;
   double texture_frame_ms_ = 0.0, buffer_frame_ms_ = 0.0;

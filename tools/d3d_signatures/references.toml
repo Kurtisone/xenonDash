@@ -164,3 +164,50 @@ second_word = ["WaitSecond", 4, "disp"]
 vertex_constants = ["BeginVertices", 1920, "imm"]
 pixel_constants = ["BeginVertices", 6016, "imm"]
 reg_copy_dest_base = ["Resolve", 10780, "disp"]
+
+# Dashboard 2.0.13604 (dash.xex), D3D9 2.0.20158 : adresses verifiees a la main (docs/ngpu_core.md, section 13604) par comparaison de code avec
+# la famille 5632/6132 (memes fonctions, XDK plus tardive), puis par l'execution (natif, parite mesuree). Le Resolve de reference est
+# l'ENVELOPPE publique 921A6908 (dev, drapeaux, rect, texture, point...) : la grande fonction 921A57B8 a deux arguments de plus
+# (ResolveInner, utile pour lire le registre RB_COPY_DEST_BASE). Les constructeurs sur place des shaders n'ont pas de role : leur
+# convention d'appel (objet, copie du microcode) n'est pas celle de Skate (objet, taille, &info).
+[dash-13604]
+description = "Dashboard 2.0.13604 (dash.xex), D3D9 2.0.20158"
+[dash-13604.roles]
+BeginVertices = 0x927E0A58
+EndVertices = 0x927E0A48
+DrawVerticesUP = 0x927E0F18
+DrawIndexedVerticesUP = 0x927E14A0
+DrawVertices = 0x927E1540
+DrawIndexedVertices = 0x927E1958
+Clear = 0x92195E98
+BeginTiling = 0x92196370
+Resolve = 0x921A6908
+ResolveInner = 0x921A57B8
+Swap = 0x9218EAB0
+CreateVertexShader = 0x9219D0F0
+CreatePixelShader = 0x9219CF08
+SetTexture = 0x92191348
+SetVertexShader = 0x9219C8C8
+SetPixelShader = 0x9219C6C0
+VblankHandler = 0x9218E290
+WaitFence = 0x92197358
+WaitDrain = 0x92196CA8
+WaitSecond = 0x92196C10
+[dash-13604.relations]
+EndVertices = ["after_end", "BeginVertices"]
+SetVertexShader = ["after", "SetPixelShader"]
+CreateVertexShader = ["after", "CreatePixelShader"]
+[dash-13604.fields]
+vertex_shader = ["SetVertexShader", 12872, "disp"]
+pixel_shader = ["SetPixelShader", 12868, "disp"]
+index_buffer = ["DrawIndexedVertices", 12612, "disp"]
+fence_ptr = ["WaitFence", 10896, "disp"]
+fence_value = ["WaitFence", 10908, "disp"]
+drain_ptr_word = ["WaitDrain", 60, "disp"]
+second_word = ["WaitSecond", 4, "disp"]
+fetch_base_slot = ["SetTexture", 48, "imm"]
+fetch_stride = ["SetTexture", 24, "imm"]
+texture_table = ["SetTexture", 3180, "imm"]
+vertex_constants = ["BeginVertices", 1920, "imm"]
+pixel_constants = ["BeginVertices", 6016, "imm"]
+reg_copy_dest_base = ["ResolveInner", 10780, "disp"]
