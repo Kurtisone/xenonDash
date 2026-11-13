@@ -66,14 +66,9 @@ interdite par `ptrace_scope=1`). Pile à 60 s avec module : le thread principal 
 
 ## Blocages restants, classés
 
-1. **Écran noir avec XAM chargé** (`m2f`) alors que le hub s'affiche sans module (`base2`). Et, en chargement seul (`m1a`),
-   un `FATAL` : le Dashboard appelle une fonction à partir d'un objet dont la case `+24` vaut `0xFFFFFFFF`
-   (`dash_recomp.35.cpp:844`). Le chargement du module modifie donc un état que le Dashboard lit, sans que l'origine soit
-   trouvée. Piste : tracer les écritures sur l'objet (vtable) pendant `LoadUserModule` ; comparer les tables de fonctions
-   (`Function table initialized for module`) et les imports résolus par ordinal.
-2. **Instructions non implémentées dans XAM** (génération) : `crmove` (0x81936D14), `crnot` (0x81936D28), `vavguw`
-   (0x81B19A48). Le code généré lève `runtime_error` si elles sont atteintes. À implémenter (SDK) ou surcharger la
-   fonction englobante.
+1. **Écran noir avec XAM chargé** (`m2f`, `m2h`) alors que le hub s'affiche sans module (`base2`). Cause du `FATAL`
+   (`m1a`) établie ; cause du hub noir probable. Voir « Palier B ».
+2. **Instructions non implémentées dans XAM** : traitées par `tools/xam_unimpl_patch.py` (voir « Palier B »).
 3. **Redirection des imports** non commencée : le Dashboard appelle toujours le HLE (`__imp__Xam*`, `__imp__Xui*`). Le
    module tourne à côté sans rien servir au Dashboard. Plan : générateur `REX_HOOK_RAW` par ordinal (README, palier 3).
 4. **Contenu des périphériques** : les fichiers attendus par XAM (`secexp.xex`, `xstudio.xex`, `systemupdate.xex`) ne sont
@@ -97,6 +92,7 @@ cp work/xam13604_rekey.xex dashboards/2.0.13604.0/assets/flash/xam.xex
 ln -s flash/xam.xex dashboards/2.0.13604.0/assets/xam.xex
 # 4. projet
 cd dashboards/2.0.13604.0-xam && ../../sdk/bin/rexglue codegen dash_manifest.toml
+python3 ../../tools/xam_unimpl_patch.py generated/xam   # crmove, crnot, vavguw (palier B)
 cmake --preset linux-amd64-relwithdebinfo && cmake --build out/build/linux-amd64-relwithdebinfo -j 6
 # 5. lien du plugin GPU (manquant sinon : « GPU plugin 'xenos' not found »)
 ln -sf "$PWD/../../sdk/lib/librexgpu-xenos.so" out/build/linux-amd64-relwithdebinfo/librexgpu-xenos.so
@@ -110,9 +106,75 @@ du jeu) ; `game:\xam.xex` est lu depuis `assets/xam.xex`.
 ## Fichiers
 
 - Nouveaux : `dashboards/2.0.13604.0-xam/` (CMakeLists.txt, CMakePresets.json, dash_manifest.toml, xam_overrides.toml,
-  xam_auto_overrides.toml, run_headless.sh, input_test.sh, src/), `common/src/dash_xam_runtime.{h,cpp}`, ce document.
+  xam_auto_overrides.toml, run_headless.sh, input_test.sh, src/), `common/src/dash_xam_runtime.{h,cpp}`,
+  `tools/xam_unimpl_patch.py`, ce document.
 - Modifiés : `common/src/dash_app_base.cpp`, `common/src/kernel_stubs.cpp`, `common/CMakeLists.txt`.
 - Ignorés par git (assets Microsoft, build) : `dashboards/2.0.13604.0/assets/flash/xam.xex`, `dashboards/2.0.13604.0/assets/xam.xex`,
   `work/xam13604*`, `work/xam13604proj/`.
 - Compilation vérifiée : `dashboards/2.0.13604.0` (HLE, rc=0 après les changements de `common/`) et `dashboards/2.0.13604.0-xam`.
   Le 17559 et le 6770 n'ont pas été recompilés.
+
+## Palier B : cause du hub noir et correctifs
+
+### Cause établie : tas 0x8 et 0x9 superposés, table de fonctions de XAM
+
+- Les tas `0x80000000` et `0x90000000` sont deux vues du même fichier partagé (`/proc/PID/maps` : hôte `0x180000000` et
+  `0x190000000` ont le même décalage fichier `0x80000000`). L'octet invité `0x92000D64` (dash.xex) est donc le même que
+  `0x82000D64`.
+- La table de fonctions de XAM est placée à `image_base + image_size` = `0x81D50000`, de taille
+  `2 × (code_size + 0x10000)` = `0x727098` : elle couvre `0x82000000-0x82477098`, soit le début de dash.xex en mémoire
+  physique. `Memory::InitializeFunctionTable` la remet à zéro (`Zero`), puis `SetFunction` y écrit des pointeurs de
+  fonctions hôte (8 octets par fonction).
+- Preuves (gdb en batch, `probe8.py`, watchpoint sur l'alias `0x182000D64`) : écrivain 1 = `memset` dans
+  `Memory::InitializeFunctionTable` (la case passe à 0) ; écrivain 2 = `Memory::SetFunction` appelé par
+  `ReXModule_Register` (la case passe à `FE7F0000`).
+- La case `0x92000D64` est un enregistrement d'import du Dashboard : `SetupLibraryImports` y écrit `0x30002000`
+  (variable de noyau), puis la table de XAM la détruit. Le `FATAL` de `DASH_XAM_MODULE=1` vient de l'appel de
+  journalisation `sub_9219F010` (`dash_recomp.35.cpp:780`), qui lit `[[0x92000D64]] + 24` ; la case vaut
+  `0xFFFFFFFF`, un pointeur hôte écrit par `SetFunction`.
+- Un watchpoint sur `0x192000D64` seul ne voit rien : les écritures passent par l'alias `0x182000D64`.
+- Le hub noir avec `DASH_XAM_MODULE=2` relève du même mécanisme (les 4,6 Mo de début de dash.xex sont écrasés). Non vérifié
+  isolément.
+
+### Essai de déplacement de la table (SDK, annulé)
+
+- Le déplacement de la table hors de l'alias (contrôle des pages des deux tas et des recouvrements entre tables, table
+  placée en `0x83E10000`) fonctionne au chargement, mais le code généré ne lit pas la table là où elle est déplacée :
+  `REX_LOOKUP_FUNC` (`generated/xam/dash_pch.h`) calcule `REX_IMAGE_BASE + REX_IMAGE_SIZE` en dur. Un appel indirect lit
+  alors les données de dash.xex : crash SIGSEGV à 49 s, dans la boucle d'initialisation de XAM (`sub_818FCDB0`,
+  `call *%rax`, cible `0x3e80002918b`).
+- Les réservations de pages ne suffisent pas : `BaseHeap::Reset` (`xex_module.cpp:526`) efface la table de pages du tas
+  à chaque chargement de XEX (la réservation de la table du Dashboard disparaît au chargement de dash.xex) ;
+  `AllocFixed` avec `Reserve|Commit` ne détecte pas les recouvrements ; les tas `0x8` ont des pages de 64 Ko, les tas `0x9`
+  de 4 Ko.
+- Le SDK est restauré à son état d'origine (`sdk/lib/librexruntime.so`, md5 `067250b8…`). Le diff de l'essai est gardé hors
+  dépôt.
+
+### Correctif à faire (non appliqué, SDK)
+
+1. Codegen : remplacer `REX_IMAGE_BASE + REX_IMAGE_SIZE` de `REX_LOOKUP_FUNC` par `REX_TABLE_BASE`, émis par module
+   (`resources/templates/codegen/`), et ajouter `table_base` à `PPCImageInfo` (valeur par défaut : fin d'image, donc
+   compatible avec le Dashboard HLE et le 17559).
+2. `Memory::InitializeFunctionTable` : accepter `table_base`, vérifier le recouvrement en adresses physiques (bit 28)
+   avec les tables existantes et les images, réserver l'alias quand la page le permet, et ne pas se fier à la table de
+   pages seule (`Reset`).
+3. Régénérer `dashboards/2.0.13604.0-xam` avec un `table_base` libre physiquement (par exemple `0x84000000`).
+4. À vérifier ensuite : la plage alias de l'image XAM (`0x917E0000-0x91D50000`) n'est pas réservée dans le tas `0x9`. Le
+   Dashboard peut y allouer ; non vérifié.
+
+### Instructions non implémentées (fait)
+
+- `crmove` (0x81936D14), `crnot` (0x81936D28) et `vavguw` (0x81B19A48) : `tools/xam_unimpl_patch.py <generated/xam>` les
+  remplace dans le code généré par du C++ direct (`ctx.cr1.so = ctx.cr7.so;`, `ctx.cr0.eq = !ctx.cr0.eq;`, moyenne par
+  élément). Le SDK de la révision courante ne les génère pas. À relancer après chaque `rexglue codegen` du projet XAM.
+  Vérifié : compilation de `libdash_xam.so`, et aucun `Unimplemented PPC` en 90 s (ces chemins ne sont pas atteints
+  pendant les essais).
+
+### Critères du palier B
+
+| Critère | État |
+|---|---|
+| Hub affiché avec `DASH_XAM_MODULE=2` | non atteint : écran noir (`m2h`) |
+| Pas de `FATAL`, threads système vivants, 60 s stables | atteint pour `m2h` (vivant 90 s, aucun `FATAL`) |
+| Instructions manquantes | fait (`tools/xam_unimpl_patch.py`) |
+| Redirection d'un import vers XAM recompilé | non fait (bloqué : le hub doit d'abord être corrigé) |
