@@ -14,6 +14,7 @@ add_library(xenondash_common OBJECT
     src/dash_disc.cpp
     src/dash_launch.cpp
     src/dash_library.cpp
+    src/dash_xam_runtime.cpp
     src/dash_xam_ui.cpp
     src/kernel_stubs.cpp
 )

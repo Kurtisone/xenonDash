@@ -95,6 +95,9 @@ REX_HOOK_RAW(__imp__XamGetLanguageTypefacePatch) {
 REX_HOOK_RAW(__imp__XamIsNuiAutomationEnabled) { (void)base; ctx.r3.u64 = 0; }
 REX_HOOK_RAW(__imp__XamNuiIsDeviceReady) { (void)base; ctx.r3.u64 = 0; }
 REX_HOOK_RAW(__imp__XamGetStagingMode) { (void)base; ctx.r3.u64 = 0; }
+// IoDismountVolumeByName(nom) : démontage d'un volume. Le stub du SDK renvoie une valeur non nulle ; la machine d'état
+// du stockage de XAM (thread système) le rappelle alors sans fin. Il n'y a pas de volume à démonter : STATUS_SUCCESS.
+REX_HOOK_RAW(__imp__IoDismountVolumeByName) { (void)base; ctx.r3.u64 = 0; }
 
 REX_EXPORT(__imp__XUsbcamCreate, dash::stubs::XUsbcamCreate_entry)
 REX_EXPORT(__imp__XUsbcamGetState, dash::stubs::XUsbcamGetState_entry)

@@ -20,6 +20,7 @@
 
 #include "dash_input.h"
 #include "dash_launch.h"
+#include "dash_xam_runtime.h"
 #include "null_audio.h"
 
 namespace dash::profile {
@@ -79,11 +80,14 @@ void DashAppBase::OnPostSetup() {
     input->SetActiveCallback(
         [drawer] { return !dash::xamui::IsOpen() && !drawer->GetIO().WantCaptureMouse; });
   }
+  // La flash (\SystemRoot, \Device\Flash) est montée avant XAM : son point d'entrée lit ces chemins.
+  dash::xamrt::MountFlash(runtime()->file_system(), game_data_root() / "flash");
   // P4 (prototype) : XAM recompilé comme module ReXGlue (voir README, « XAM recompilé »). Actif seulement si le projet
   // déclare le module (`[[modules]]` dans dash_manifest.toml) ET si DASH_XAM_MODULE est défini.
   if (std::getenv("DASH_XAM_MODULE")) {
     auto* ks = runtime()->kernel_state();
     if (ks->FindRecompiledModule("xam.xex")) {
+      dash::xamrt::MountXamDevices(runtime()->file_system());
       // DASH_XAM_MODULE=1 : chargement seul ; =2 : + point d'entrée (DllMain/DLL_PROCESS_ATTACH) sur un thread invité.
       const bool run_entry = std::string_view(std::getenv("DASH_XAM_MODULE")) == "2";
       auto load = [ks, run_entry]() {
@@ -92,28 +96,12 @@ void DashAppBase::OnPostSetup() {
         return 0;
       };
       if (run_entry) {
-        rex::system::object_ref<rex::system::XHostThread> t(
-            new rex::system::XHostThread(ks, 256 * 1024, 0, load));
-        t->set_name("XAM load");
-        t->Create();
-        t->Wait(0, 0, 0, nullptr);
+        dash::xamrt::RunInSystemProcess(ks, load);
       } else {
         load();
       }
     } else {
       REXLOG_WARN("[dash] DASH_XAM_MODULE défini mais le projet ne déclare pas de module xam.xex");
-    }
-  }
-  auto flash = game_data_root() / "flash";
-  if (!std::filesystem::is_directory(flash)) {
-    REXLOG_WARN("[dash] {} absent : la flash (\\SystemRoot) ne sera pas montée", flash.string());
-    return;
-  }
-  auto* vfs = runtime()->file_system();
-  for (const char* mount : {"\\SystemRoot", "\\Device\\Flash"}) {
-    auto dev = std::make_unique<rex::filesystem::HostPathDevice>(mount, flash, true);
-    if (dev->Initialize() && vfs->RegisterDevice(std::move(dev))) {
-      REXLOG_INFO("[dash] {} monté sur {}", mount, flash.string());
     }
   }
 }
