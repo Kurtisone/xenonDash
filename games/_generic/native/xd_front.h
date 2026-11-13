@@ -18,3 +18,6 @@ void XdFrontOnCall(uint32_t function, const PPCContext& before, uint32_t result,
 void XdFrontOnSwap(uint8_t* base);
 // Un shader vient d'etre construit par la XDK : `object` (resultat) et `container` (conteneur 0x102A11xx) pour le registre de shaders.
 void XdFrontOnShaderCreate(uint8_t* base, uint32_t object, uint32_t container);
+// GpuBeginShaderConstantF4 vient de reserver `count` vecteurs a partir du registre `start` (sommets ou pixels) : `address` est
+// l'adresse invitee ou le jeu va les ecrire.
+void XdFrontOnGpuConstants(uint8_t* base, uint32_t pixel, uint32_t start, uint32_t count, uint32_t address);

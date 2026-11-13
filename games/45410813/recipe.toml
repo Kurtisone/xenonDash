@@ -38,7 +38,7 @@ profile = "d3d_profile.toml"
 
 [build]
 min_ram_gb = 16
-min_disk_gb = 40
+min_disk_gb = 4
 arch_flags = "-march=x86-64-v2"
 estimate_minutes = { codegen = 10, shaders = 4, compile = 30 }
 

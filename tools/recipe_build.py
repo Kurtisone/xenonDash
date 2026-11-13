@@ -52,6 +52,10 @@ class RecipeError(Exception):
     pass
 
 
+class MissingFunction(RecipeError):
+    """Test d'amorcage arrete sur une fonction non declaree au codegen (mode generique) : la boucle de construction la reprend."""
+
+
 def data_home():
     return os.path.join(os.environ.get("XDG_DATA_HOME") or os.path.expanduser("~/.local/share"), "xenondash")
 
@@ -220,7 +224,7 @@ def recipe_rev(rdir):
               if not r.startswith("tools/")]
     files += [(TEMPLATE, r) for _, r in tree_files(TEMPLATE)]
     if os.path.basename(rdir) == "_generic":    # le mode generique depend aussi du matcher, de ses signatures et de la boucle de codegen
-        files += [(TOOLS, "d3d_match.py"), (TOOLS, "codegen_loop.py")] + [(TOOLS, os.path.join("d3d_signatures", f))
+        files += [(TOOLS, "d3d_match.py"), (TOOLS, "codegen_loop.py"), (TOOLS, "func_discover.py")] + [(TOOLS, os.path.join("d3d_signatures", f))
                                                                           for f in sorted(os.listdir(d3d_match.SIGDIR))]
     return hashlib.sha256((sha256_tree(files) + str(ENGINE_REV)).encode()).hexdigest()[:12]
 
@@ -417,38 +421,60 @@ AFTER_ROLES = ["BeginVertices", "DrawIndexedVertices", "DrawVertices", "EndVerti
 
 
 def gen_generic_profile(report, dest, missing_dir):
-    """Rapport de d3d_match.analyze -> d3d_profile.generated.h + d3d_hooks.generated.inc + d3d_nullgpu_hooks.generated.inc."""
+    """Rapport de d3d_match.analyze -> d3d_profile.generated.h + d3d_hooks.generated.inc + d3d_nullgpu_hooks.generated.inc.
+    Seules les fonctions retrouvees a haute confiance sont crochetees (les roles facultatifs absents n'ont pas de crochet)."""
     roles = {k: int(v["addr"], 16) for k, v in report["roles"].items()}
     off = report["offsets"]
-    ok = lambda r: r in report["roles"] and report["roles"][r]["confidence"] >= d3d_match.MIN_CONFIDENCE
+    lay = report["layout"]
+    ok = lambda r: r in report["roles"] and report["roles"][r]["confidence"] >= d3d_match.MIN_CONFIDENCE \
+        and r not in report.get("optional_missing", [])
     h = ["// genere par tools/recipe_build.py (mode generique) depuis tools/d3d_match.py : ne pas versionner",
-         "#pragma once", "#include <cstdint>", "namespace xd_profile {",
-         "constexpr uint32_t kStateSize = 0x3400;"]
+         "#pragma once", "#include <cstdint>", "namespace xd_profile {"]
     for i, r in enumerate(AFTER_ROLES, 1):
         h.append(f"constexpr uint32_t k_{r} = {i};")
     h.append(f"constexpr const char* kMissingShaderDir = \"{missing_dir}\";")
     for k in ("fence_ptr", "fence_value", "drain_ptr_word", "second_word"):
         h.append(f"constexpr uint32_t kNull_{k} = 0x{off[k]:X}u;")
     h.append(f"constexpr uint32_t kNull_vblank_handler = 0x{roles['VblankHandler']:08X}u;")
+    # disposition de l'ombre du peripherique lue dans le code du jeu (ngpu_core/src/device_layout.h)
+    for k in ("fetch_constants", "vertex_constants", "pixel_constants", "vertex_bool_constants", "pixel_bool_constants",
+              "index_buffer", "pixel_shader", "vertex_shader"):
+        h.append(f"constexpr uint32_t kLayout_{k} = {lay[k]};")
+    h.append("constexpr uint32_t kLayout_register_groups[7] = {" + ", ".join(map(str, lay["register_groups"])) + "};")
+    # objet shader de la XDK : decalage du pointeur vers sa partie physique (microcode patche par D3D)
+    h.append(f"constexpr uint32_t kShader_physical_ptr = {report.get('shader_physical_ptr', 32)};")
     # aucune liste de shaders d'interface, aucune plage de pitch de scene : echelle de rendu 1
     h += ["constexpr uint64_t kInterfaceVertexShaders[] = {0};", "constexpr uint64_t kCornerVertexShaders[] = {0};",
           "constexpr uint32_t kScenePitchMin = 1;", "constexpr uint32_t kScenePitchMax = 0;", "}  // namespace xd_profile"]
     open(os.path.join(dest, "d3d_profile.generated.h"), "w").write("\n".join(h) + "\n")
     inc = ["// genere par tools/recipe_build.py (mode generique) : un crochet par fonction D3D retrouvee par d3d_match.py"]
+    hooked = {}
     for r in AFTER_ROLES:
+        if not ok(r):
+            inc.append(f"// {r} : non retrouvee a haute confiance, pas de crochet")
+            continue
         a = f"{roles[r]:08X}"
+        hooked[r] = roles[r]
         inc.append(f"REX_HOOK_RAW(sub_{a}) {{ const PPCContext before = ctx; __imp__sub_{a}(ctx, base);"
                    f" XdFrontOnCall(xd_profile::k_{r}, before, ctx.r3.u32, base); }}  // {r}")
     a = f"{roles['Swap']:08X}"
+    hooked["Swap"] = roles["Swap"]
     inc.append(f"REX_HOOK_RAW(sub_{a}) {{ XdFrontOnSwap(base); __imp__sub_{a}(ctx, base); }}  // Swap")
+    if ok("GpuBeginShaderConstantF4"):   # (peripherique, pixel, premier registre, nombre) -> adresse des constantes a ecrire
+        a = f"{roles['GpuBeginShaderConstantF4']:08X}"
+        hooked["GpuBeginShaderConstantF4"] = roles["GpuBeginShaderConstantF4"]
+        inc.append(f"REX_HOOK_RAW(sub_{a}) {{ const uint32_t pixel = ctx.r4.u32, start = ctx.r5.u32, count = ctx.r6.u32;"
+                   f" __imp__sub_{a}(ctx, base); XdFrontOnGpuConstants(base, pixel, start, count, ctx.r3.u32); }}  // GpuBeginShaderConstantF4")
     for kind in ("Vertex", "Pixel"):
         inner, wrap = roles.get(f"Create{kind}ShaderInner"), roles[f"Create{kind}Shader"]
         if inner and ok(f"Create{kind}ShaderInner"):   # constructeur sur place (objet = r3, &info = r5, info[0] = conteneur)
             a = f"{inner:08X}"
+            hooked[f"Create{kind}ShaderInner"] = inner
             inc.append(f"REX_HOOK_RAW(sub_{a}) {{ const uint32_t object = ctx.r3.u32; const uint32_t container = REX_LOAD_U32(ctx.r5.u32);"
                        f" __imp__sub_{a}(ctx, base); XdFrontOnShaderCreate(base, object, container); }}  // Create{kind}ShaderInner")
         else:                                            # enveloppe publique (pFunction = r3) -> objet en r3
             a = f"{wrap:08X}"
+            hooked[f"Create{kind}Shader"] = wrap
             inc.append(f"REX_HOOK_RAW(sub_{a}) {{ const uint32_t container = ctx.r3.u32; __imp__sub_{a}(ctx, base);"
                        f" XdFrontOnShaderCreate(base, ctx.r3.u32, container); }}  // Create{kind}Shader")
     open(os.path.join(dest, "d3d_hooks.generated.inc"), "w").write("\n".join(inc) + "\n")
@@ -464,7 +490,9 @@ def gen_generic_profile(report, dest, missing_dir):
               f" const uint32_t idp = ngpu::Be32(base + dev + xd_profile::kNull_fence_ptr);"
               f" if (idp) ngpu::PutBe32(base + idp + xd_profile::kNull_second_word, ctx.r5.u32); __imp__sub_{a}(ctx, base); }}  // WaitSecond")
     open(os.path.join(dest, "d3d_nullgpu_hooks.generated.inc"), "w").write("\n".join(ng) + "\n")
-    return roles
+    for r in ("WaitFence", "WaitDrain", "WaitSecond"):
+        hooked[r] = roles[r]
+    return hooked
 
 
 def analyze_xex(xex, image_path=None):
@@ -589,6 +617,10 @@ class Build:
         self.recipe, self.rdir = recipe, rdir
         self.locked = locked
         self.key, self.keyparts = cache_key(info, recipe, rdir)
+        if self.mode == "generic" and os.environ.get("XD_CACHE_KEY"):
+            # developpement du mode generique : garder le meme dossier de cache d'une revision des outils a l'autre (les etapes
+            # restent invalidees par leurs propres cachets) ; jamais utilise par le Dashboard
+            self.key = os.environ["XD_CACHE_KEY"]
         self.cache = os.path.join(home, "games", info["title_id"], self.key)
         self.name = recipe.get("name", info["title_id"]) if self.mode == "recipe" else f"Jeu {info['title_id']}"
         return True
@@ -724,8 +756,8 @@ class Build:
         genstage = os.path.join(self.cache, "gen.stage")
         shutil.rmtree(genstage, ignore_errors=True)
         os.makedirs(genstage)
-        roles = gen_generic_profile(rep, genstage, missing_dir)
-        self.roles = roles
+        hooked_roles = gen_generic_profile(rep, genstage, missing_dir)
+        json.dump({k: f"0x{a:08X}" for k, a in hooked_roles.items()}, open(os.path.join(self.cache, "hooked.json"), "w"), indent=1)
         open(os.path.join(genstage, "xd_project.h"), "w").write(f'#pragma once\n#include "generated/default/{name}_init.h"\n')
         for f in os.listdir(genstage):
             write_if_changed(os.path.join(gen, f), open(os.path.join(genstage, f)).read())
@@ -733,9 +765,7 @@ class Build:
         # overrides initiaux : fonctions crochetees (declarees comme debuts de fonction) + setjmp/longjmp du CRT par signature
         crt = {k: int(rep["roles"][k]["addr"], 16) for k in ("setjmp", "longjmp")
                if k in rep["roles"] and rep["roles"][k]["confidence"] >= 0.85}
-        hooked = {a: a for k, a in roles.items() if k in AFTER_ROLES + ["Swap", "CreateVertexShader", "CreatePixelShader",
-                                                                          "CreateVertexShaderInner", "CreatePixelShaderInner",
-                                                                          "WaitFence", "WaitDrain", "WaitSecond"]}
+        hooked = {a: a for a in hooked_roles.values()}
         ov = os.path.join(proj, "functions.generated.toml")
         final = os.path.join(self.cache, "functions.final.toml")     # resultat de la boucle de codegen (relance sans refaire la boucle)
         if os.path.isfile(final):
@@ -748,12 +778,21 @@ class Build:
         self.crt = crt
         self.report = rep
 
+    @staticmethod
+    def crt_roles(rep):
+        return {k: int(v["addr"], 16) for k, v in rep["roles"].items()
+                if k in ("setjmp", "longjmp") and v["confidence"] >= 0.85}
+
+    @staticmethod
+    def rexcrt_roles(rep):
+        """Fonctions XAPI du jeu remplacees par celles du SDK ([rexcrt]) : les fibres, seulement si les cinq sont retrouvees."""
+        got = {k: int(v["addr"], 16) for k, v in rep["roles"].items()
+               if k in d3d_match.REXCRT_ROLES and v["confidence"] >= d3d_match.REXCRT_MIN_CONFIDENCE}
+        return got if len(got) == len(d3d_match.REXCRT_ROLES) else {}
+
     def hooked_seeds(self):
         """Fonctions crochetees : declarees comme debuts de fonction des la 1re passe (le crochet exige __imp__sub_X)."""
-        rep = json.load(open(os.path.join(self.cache, "analysis.json")))
-        hooked = set(AFTER_ROLES + ["Swap", "CreateVertexShader", "CreatePixelShader", "CreateVertexShaderInner",
-                                    "CreatePixelShaderInner", "WaitFence", "WaitDrain", "WaitSecond"])
-        return {int(v["addr"], 16): int(v["addr"], 16) for k, v in rep["roles"].items() if k in hooked}
+        return {int(a, 16): int(a, 16) for a in json.load(open(os.path.join(self.cache, "hooked.json"))).values()}
 
     # -- etape codegen
     def do_codegen(self, prog):
@@ -762,7 +801,13 @@ class Build:
         out = os.path.join(proj, self.recipe["codegen"]["out_directory"])
         rev = self.keyparts["codegen_rev"] + self.keyparts["sdk_hash"]
         if self.mode == "generic":
-            rev += hashlib.sha256(json.dumps(sorted(read_user_functions(self.info["title_id"]).items())).encode()).hexdigest()[:8]
+            # ce qui change le code genere : la boucle, la decouverte, les fonctions crochetees/CRT/XAPI de l'analyse, les fonctions
+            # declarees a l'execution ; pas le noyau de rendu ni la facade (une retouche de ngpu_core ne refait pas le codegen)
+            rep_ = json.load(open(os.path.join(self.cache, "analysis.json")))
+            loop_rev = sha256_tree([(TOOLS, "codegen_loop.py"), (TOOLS, "func_discover.py")])[:12]
+            rev = self.keyparts["sdk_hash"] + loop_rev + hashlib.sha256(json.dumps(
+                [sorted(self.hooked_seeds()), sorted(self.crt_roles(rep_).items()), sorted(self.rexcrt_roles(rep_).items()),
+                 sorted(read_user_functions(self.info["title_id"]).items())]).encode()).hexdigest()[:12]
         if self.stamped("codegen", rev) and os.path.isfile(os.path.join(out, "sources.cmake")) and not self.force:
             log("codegen deja fait (cache)")
             return
@@ -776,22 +821,30 @@ class Build:
         if self.mode == "generic":
             img = d3d_match.Image(os.path.join(self.cache, "image", next(f for f in os.listdir(os.path.join(self.cache, "image"))
                                                                           if f.endswith(".bin"))), xex=self.xex)
-            crt = {k: int(v["addr"], 16) for k, v in json.load(open(os.path.join(self.cache, "analysis.json")))["roles"].items()
-                   if k in ("setjmp", "longjmp") and v["confidence"] >= 0.85}
+            crt = self.crt_roles(rep_)
             ldir = os.path.join(self.cache, "codegen_logs")
             os.makedirs(ldir, exist_ok=True)
+            state = os.path.join(self.cache, "codegen_state.json")     # reprise : meme boucle, memes outils (sinon on repart de zero)
+            srev = os.path.join(self.cache, "codegen_state.rev")
+            if not (os.path.isfile(srev) and open(srev).read() == loop_rev) or self.force:
+                if os.path.isfile(state):
+                    os.remove(state)
+            open(srev, "w").write(loop_rev)
             try:
                 stats = codegen_loop.run_loop(REXGLUE, os.path.join(SDK, "lib"), proj, f"{name}_manifest.toml", out, f"{name}_init.cpp",
                                               img, os.path.join(proj, "functions.generated.toml"), ldir, crt.get("setjmp"),
                                               crt.get("longjmp"), log=log,
                                               tick=lambda i, n: prog.update(message=f"codegen, passe {i}"),
-                                              extra=read_user_functions(self.info["title_id"]), seeds=self.hooked_seeds())
+                                              extra=read_user_functions(self.info["title_id"]), seeds=self.hooked_seeds(),
+                                              rexcrt=self.rexcrt_roles(rep_), state_path=state,
+                                              discover=not os.environ.get("XD_NO_DISCOVER"))
             except codegen_loop.CodegenError as e:
                 raise RecipeError(f"codegen generique : {e}")
             json.dump(stats, open(os.path.join(self.cache, "codegen_stats.json"), "w"), indent=1)
             shutil.copy(os.path.join(proj, "functions.generated.toml"), os.path.join(self.cache, "functions.final.toml"))
             log(f"codegen generique : {stats['functions']} fonctions en {stats['iterations']} passes "
-                f"({stats['unresolved']} cibles, {stats['pointer']} par pointeur, {stats['continuations']} continuations)")
+                f"({stats['unresolved']} cibles, {stats['pointer']} par pointeur dont {stats['static']} par decouverte statique, "
+                f"{stats['continuations']} continuations, {stats['static_dropped']} candidats rejetes)")
         else:
             run_logged([REXGLUE, "--force", "codegen", f"{name}_manifest.toml"], os.path.join(self.cache, "codegen.log"),
                        cwd=proj, env=env)
@@ -1000,14 +1053,34 @@ class Build:
                 os.makedirs(os.path.dirname(up), exist_ok=True)
                 with open(up, "a") as f:
                     f.write(f"0x{a:08X} = {{}}  # appelee a l'execution sans etre declaree (bootstrap)\n")
-                raise RecipeError(f"test d'amorcage : fonction 0x{a:08X} non declaree au codegen, ajoutee a {up} ; relancer la construction "
-                                  f"(boucle jouer -> reconstruire), voir {lp}")
+                raise MissingFunction(f"test d'amorcage : fonction 0x{a:08X} non declaree au codegen, ajoutee a {up} ; relancer la "
+                                      f"construction (boucle jouer -> reconstruire), voir {lp}")
             raise RecipeError("test d'amorcage : erreur fatale, voir " + lp)
         for pat in bt.get("expect", []):
             if pat not in text:
                 raise RecipeError(f"test d'amorcage : '{pat}' absent du journal ({lp})")
         if not alive:
             raise RecipeError("test d'amorcage : le jeu s'est arrete avant " + str(seconds) + " s, voir " + lp)
+
+    def do_bootstrap_loop(self, prog):
+        """Mode generique : amorcage -> fonction manquante -> codegen (une passe, reprise) -> compilation incrementale -> amorcage.
+        Dernier filet apres la decouverte statique ; XD_BOOT_LOOPS borne le nombre de tours (defaut 12, 0 = aucun)."""
+        turns = int(os.environ.get("XD_BOOT_LOOPS", "12")) if self.mode == "generic" else 0
+        self.boot_turns = 0
+        while True:
+            try:
+                return self.do_bootstrap(prog)
+            except MissingFunction as e:
+                if self.boot_turns >= turns:
+                    raise
+                self.boot_turns += 1
+                log(f"{e}")
+                log(f"tour {self.boot_turns}/{turns} de la boucle d'amorcage : codegen et compilation incrementale")
+                t = time.time()
+                prog.update(message=f"fonction manquante a l'execution : reconstruction ({self.boot_turns})")
+                self.do_codegen(prog)
+                self.do_compile(prog)
+                self.t.setdefault("boot_loop", []).append(round(time.time() - t, 1))
 
     # -- orchestration
     def run(self):
@@ -1025,7 +1098,7 @@ class Build:
         t0 = time.time()
         steps = [("identify", None), ("prepare", self.do_prepare), ("extract", self.do_extract),
                  ("scaffold", self.do_scaffold), ("codegen", self.do_codegen), ("shaders", self.do_shaders),
-                 ("compile", self.do_compile), ("bootstrap", self.do_bootstrap)]
+                 ("compile", self.do_compile), ("bootstrap", self.do_bootstrap_loop)]
         msgs = {"identify": f"XEX {info['title_id']} v{info['version']} " + ("reconnu" if self.mode == "recipe" else
                                                                        "sans recette : mode generique (" + self.generic_reason + ")"),
                 "prepare": "controles", "extract": "source du jeu",
@@ -1078,7 +1151,10 @@ def identify_report(source, force_generic=False):
     shutil.rmtree(tmp, ignore_errors=True)
     info["xdk"] = rep["xdk"]
     info["static_libraries"] = rep["libs"]
-    info["d3d"] = {"found": rep["roles"], "missing": rep["missing"], "weak": rep["weak"], "offsets": rep["offsets"]}
+    info["d3d"] = {"found": rep["roles"], "missing": rep["missing"], "weak": rep["weak"], "offsets": rep["offsets"],
+                   # lot B2 : disposition de l'ombre, roles facultatifs absents, sources des decalages (absents des analyses en cache anciennes)
+                   "layout": rep.get("layout"), "optional_missing": rep.get("optional_missing", []),
+                   "offset_sources": rep.get("offset_sources", {})}
     if info["mode"] == "recipe":
         info["supported"] = True    # la recette fait foi (rendu natif de la recette), meme si le matcher generique est moins sur
         info["reason"] = ""

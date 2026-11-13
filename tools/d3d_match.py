@@ -580,51 +580,110 @@ def match_image(img, sigs):
     return result
 
 
-# Roles indispensables au rendu natif generique (crochets du facade) et seuil de confiance
-REQUIRED_ROLES = ["BeginVertices", "EndVertices", "DrawVertices", "DrawIndexedVertices", "Clear", "BeginTiling", "Resolve",
-                  "Swap", "CreateVertexShader", "CreatePixelShader", "SetVertexShader", "SetPixelShader",
+# Roles indispensables au rendu natif generique (crochets de la facade) et seuil de confiance
+REQUIRED_ROLES = ["DrawVertices", "DrawIndexedVertices", "Clear", "Resolve", "Swap", "CreateVertexShader", "CreatePixelShader",
                   "VblankHandler", "WaitFence", "WaitDrain", "WaitSecond"]
+# Roles crochetes seulement s'ils sont retrouves avec confiance : un jeu peut ne pas les contenir (BeginTiling : rendu sans tuiles
+# predicatees ; Begin/EndVertices fondus dans le code du jeu par l'editeur de liens ; GpuBeginShaderConstantF4 : jeux qui
+# ecrivent leurs constantes directement dans le tampon de commandes). Leur absence est signalee (`optional_missing`).
+OPTIONAL_ROLES = ["BeginVertices", "EndVertices", "BeginTiling", "GpuBeginShaderConstantF4"]
 MIN_CONFIDENCE = 0.85
-# Disposition de l'ombre du peripherique que comprend ngpu_core (ngpu_core/src/xenos_decode.h) : valeurs que les champs lus
-# doivent avoir ; sinon le noyau ne sait pas lire l'etat (il faudrait synthetiser l'ombre).
+FIELD_MIN_CONFIDENCE = 0.75    # lecture d'un decalage : un jumeau proche (Set{Vertex,Pixel}ShaderConstantF) baisse la confiance sans fausser le champ
+# Fonctions XAPI du jeu que le SDK remplace par les siennes (section [rexcrt] du codegen) : les fibres. Sans cela SwitchToFiber
+# recompile change la pile invitee sous une pile hote inchangee. Appliquees seulement si les cinq sont retrouvees.
+REXCRT_ROLES = ["ConvertThreadToFiber", "ConvertFiberToThread", "CreateFiber", "DeleteFiber", "SwitchToFiber"]
+REXCRT_MIN_CONFIDENCE = 0.9
+# Disposition canonique de l'ombre du peripherique (ngpu_core/src/xenos_decode.h, XDK 2.0.5632). Depuis le lot B2 le noyau recoit un
+# instantane canonique que la facade tire de la disposition lue ici (ngpu_core/src/device_layout.h) : une valeur differente n'est
+# plus un refus, une valeur non lue est supposee canonique et signalee (`layout.assumed`).
 CANONICAL_LAYOUT = {"vertex_shader": 12688, "pixel_shader": 12684, "index_buffer": 12428, "fetch_base_slot": 48,
                     "fetch_stride": 24, "vertex_constants_slot": 120, "pixel_constants_slot": 376,
                     "reg_surface_info": 10368, "reg_copy_dest_base": 10780}
+CANONICAL_GROUPS = [10368, 10444, 10528, 10548, 10596, 10680, 10832]     # groupes de registres 0x2000 ... 0x2380
+REQUIRED_OFFSETS = ["vertex_shader", "pixel_shader", "index_buffer"]    # doivent etre lus dans le code du jeu
 FREE_OFFSETS = ["fence_ptr", "fence_value", "drain_ptr_word", "second_word"]
 
 
+def plausible_offset(name, v):
+    if v is None:
+        return False
+    if name in ("fetch_base_slot", "vertex_constants_slot", "pixel_constants_slot"):
+        return 0 < v < 1024
+    if name == "fetch_stride":
+        return v == 24
+    if name in ("drain_ptr_word", "second_word"):
+        return 0 <= v < 256 and not v & 3
+    return 0 < v < 0x8000 and not v & 3
+
+
+def device_layout(offsets):
+    """Disposition de l'ombre (decalages en octets dans le D3DDevice) d'apres les champs lus ; `assumed` = valeurs non lues."""
+    assumed = []
+
+    def get(name):
+        v = offsets.get(name)
+        if v is None:
+            assumed.append(name)
+            return CANONICAL_LAYOUT[name]
+        return v
+    stride = get("fetch_stride")
+    lay = {"fetch_constants": get("fetch_base_slot") * stride}
+    for k in ("vertex_constants", "pixel_constants"):      # en octets (lus dans BeginVertices) ou en fentes de 16 octets (Set*ConstantF)
+        lay[k] = offsets[k] if offsets.get(k) is not None else get(k + "_slot") * 16
+    lay["vertex_bool_constants"] = lay["pixel_constants"] + 0x1000
+    lay["pixel_bool_constants"] = lay["pixel_constants"] + 0x1010
+    d_low = get("reg_surface_info") - CANONICAL_LAYOUT["reg_surface_info"]        # groupes 0x2000 a 0x2280
+    d_high = get("reg_copy_dest_base") - CANONICAL_LAYOUT["reg_copy_dest_base"]    # groupes 0x2300 et 0x2380
+    lay["register_groups"] = [g + (d_low if i < 5 else d_high) for i, g in enumerate(CANONICAL_GROUPS)]
+    for k in ("index_buffer", "pixel_shader", "vertex_shader"):
+        lay[k] = get(k)
+    lay["assumed"] = assumed
+    lay["canonical"] = all(lay[k] == v for k, v in (("fetch_constants", 0x480), ("vertex_constants", 0x780), ("pixel_constants", 0x1780),
+                                                    ("register_groups", CANONICAL_GROUPS), ("index_buffer", 12428),
+                                                    ("pixel_shader", 12684), ("vertex_shader", 12688)))
+    return lay
+
+
 def analyze(img, sigs):
-    """Rapport complet : fonctions, decalages lus, verdict `supported` et raison."""
+    """Rapport complet : fonctions, decalages lus, disposition de l'ombre, verdict `supported` et raison."""
     res = match_image(img, sigs)
+    # un champ peut etre lu par plusieurs roles : la valeur plausible du role le plus sur l'emporte
     offsets = {}
     for role, r in res.items():
         for k, v in r["fields"].items():
-            offsets.setdefault(k, (v, role))
+            if plausible_offset(k, v) and r["confidence"] >= FIELD_MIN_CONFIDENCE and (k not in offsets or r["confidence"] > offsets[k][2]):
+                offsets[k] = (v, role, r["confidence"])
     roles_out = {}
     for role, r in res.items():
         roles_out[role] = {"addr": f"0x{r['addr']:08X}", "score": r["score"], "confidence": r["confidence"], "family": r["family"],
                            "checks": r["checks"], "margin": r["margin"]}
+    sure = lambda r: r in res and res[r]["confidence"] >= MIN_CONFIDENCE
     missing = [r for r in REQUIRED_ROLES if r not in res]
-    weak = [r for r in REQUIRED_ROLES if r in res and res[r]["confidence"] < MIN_CONFIDENCE]
+    weak = [r for r in REQUIRED_ROLES if r in res and not sure(r)]
+    optional_missing = [r for r in OPTIONAL_ROLES if not sure(r)]
+    if sure("EndVertices") and not (sure("BeginVertices") and res["EndVertices"].get("relation")):
+        optional_missing.append("EndVertices")     # fonction minuscule : n'a de sens qu'a la suite de BeginVertices
     reasons = []
     if missing:
         reasons.append("fonctions D3D introuvables : " + ", ".join(missing))
     if weak:
         reasons.append("fonctions D3D a faible confiance (< %.2f) : " % MIN_CONFIDENCE +
                        ", ".join(f"{r} ({res[r]['confidence']:.2f})" for r in weak))
-    diff = {k: (offsets.get(k, (None,))[0], want) for k, want in CANONICAL_LAYOUT.items()
-            if k in offsets and offsets[k][0] != want}
-    nof = [k for k in list(CANONICAL_LAYOUT) + FREE_OFFSETS if k not in offsets or offsets[k][0] is None]
-    if diff:
-        reasons.append("disposition de l'ombre du peripherique differente de celle de ngpu_core (lu/attendu) : " +
-                       ", ".join(f"{k} {a}/{b}" for k, (a, b) in diff.items()))
-    # un champ non lu n'est ignore que s'il ne concerne pas une fonction absente (les fonctions absentes sont deja signalees)
-    unread = [k for k in nof if k in CANONICAL_LAYOUT and k not in ("reg_surface_info", "reg_copy_dest_base", "index_buffer")
-              or k in FREE_OFFSETS]
-    if unread and not missing:
-        reasons.append("decalages non lus : " + ", ".join(unread))
+    # famille expérimentale (rendu natif non validé) : le verdict la refuse, comme un rôle manquant
+    # (seulement pour la XDK de la famille : une fonction de Skate peut aussi correspondre à une signature de Trials Fusion)
+    xdk_build, xdk_text = estimate_xdk(img.libs)
+    experimental = {s["family"] for s in sigs if s.get("experimental") and s.get("xdk_build") == xdk_build}
+    used_exp = sorted({r["family"] for r in res.values()} & experimental)
+    if used_exp:
+        reasons.append(f"XDK {xdk_text} : signatures expérimentales ({', '.join(used_exp)}), rendu natif non validé")
+    flat = {k: v[0] for k, v in offsets.items()}
+    unread = [k for k in REQUIRED_OFFSETS + FREE_OFFSETS if k not in flat]
+    if unread:
+        reasons.append("decalages du peripherique non lus dans le code du jeu : " + ", ".join(unread))
+    layout = device_layout(flat)
     return {"xdk": estimate_xdk(img.libs)[1], "libs": [f"{n} {v}" for n, v in img.libs if n in ("D3D9", "XGRAPHC", "D3DX9", "XBOXKRNL")],
-            "roles": roles_out, "offsets": {k: v[0] for k, v in offsets.items()}, "missing": missing, "weak": weak,
+            "roles": roles_out, "offsets": flat, "offset_sources": {k: v[1] for k, v in offsets.items()}, "layout": layout,
+            "missing": missing, "weak": weak, "optional_missing": sorted(set(optional_missing)),
             "supported": not reasons, "reason": " ; ".join(reasons), "_raw": res}
 
 
@@ -668,7 +727,8 @@ def learn(img, family, refs_path, section=None):
             extra["relation"] = {"kind": kind, "role": other}
         sigs[role] = build_signature(img, addr, role, fields_by_role.get(role), extra, terminator=role in term)
     nd, ver = estimate_xdk(img.libs)
-    return {"family": family, "description": refs.get("description", ""), "xdk": ver, "xdk_build": nd, "signatures": sigs}
+    return {"family": family, "description": refs.get("description", ""), "xdk": ver, "xdk_build": nd, "signatures": sigs,
+            "experimental": bool(refs.get("experimental", False))}
 
 
 def load_image(source, work=None):

@@ -4,7 +4,11 @@
 // Generalisation de la facade de Skate (games/45410813/native/front.cpp, elle-meme reprise de la couche D3D native de Skate1Native,
 // Kurtisone/Skate1Recompiled, GPL-3.0, commit 81805f51). Tout ce qui est propre a un jeu vient du profil genere par
 // tools/recipe_build.py a partir de tools/d3d_match.py (d3d_profile.generated.h, d3d_hooks.generated.inc) : adresses des fonctions
-// D3D, decalages. L'adresse du D3DDevice est capturee a l'execution (r3 du premier appel d'une methode du peripherique).
+// D3D, decalages. L'adresse du D3DDevice est capturee a l'execution : r3 d'une methode du peripherique retrouvee a haute confiance
+// (seules celles-la sont crochetees), acceptee quand deux appels de suite donnent le meme pointeur plausible.
+// La disposition de l'ombre du peripherique vient du profil (xenos::DeviceLayout, lue dans le code du jeu par d3d_match.py) : chaque
+// appel enregistre un instantane CANONIQUE (ngpu_core/src/device_layout.h). Les jeux qui ecrivent leurs constantes de shaders
+// directement dans le tampon de commandes (GpuBeginShaderConstantF4) sont suivis par un crochet sur cette fonction.
 // Aucune heuristique de jeu : pas d'image elargie, pas de minicarte, pas de plage de pitch de scene (echelle de rendu 1).
 // Reprise de la couche d'origine, adaptee a ngpu_core :
 //  - le moteur est `native_gpu::Core` (peripherique plume + Renderer + source de shaders) ;
@@ -21,6 +25,7 @@
 #include <condition_variable>
 #include <cmath>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <filesystem>
 #include <map>
@@ -47,6 +52,7 @@
 
 #include "d3d_profile.generated.h"
 #include "device.h"
+#include "device_layout.h"
 #include "xd_project.h"
 #include "ngpu.h"
 #include "shader_cache.h"
@@ -81,8 +87,62 @@ void NullGpuAttach(uint32_t dev, uint8_t* base);
 
 namespace {
 
-using xd_profile::kStateSize;
 uint32_t g_device = 0;   // D3DDevice invite : capture a l'execution (aucune adresse generique)
+uint32_t g_device_candidate = 0;
+
+// Disposition de l'ombre du peripherique du jeu (profil genere).
+const xenos::DeviceLayout& Layout() {
+  static const xenos::DeviceLayout layout = [] {
+    xenos::DeviceLayout l;
+    l.fetch_constants = xd_profile::kLayout_fetch_constants;
+    l.vertex_constants = xd_profile::kLayout_vertex_constants;
+    l.pixel_constants = xd_profile::kLayout_pixel_constants;
+    l.vertex_bool_constants = xd_profile::kLayout_vertex_bool_constants;
+    l.pixel_bool_constants = xd_profile::kLayout_pixel_bool_constants;
+    for (int g = 0; g < 7; ++g) l.register_groups[g] = xd_profile::kLayout_register_groups[g];
+    l.index_buffer = xd_profile::kLayout_index_buffer;
+    l.pixel_shader = xd_profile::kLayout_pixel_shader;
+    l.vertex_shader = xd_profile::kLayout_vertex_shader;
+    return l;
+  }();
+  return layout;
+}
+
+bool Trace() {
+  static const bool on = std::getenv("XD_NGPU_TRACE") != nullptr;
+  return on;
+}
+
+// Un D3DDevice plausible : aligne, dans la memoire invitee adressable par le jeu, et dont le pointeur de retour du GPU (ecrit par
+// l'initialisation de D3D) est nul ou lui-meme un pointeur invite.
+bool PlausibleDevice(uint8_t* base, uint32_t device) {
+  if (device < 0x10000 || device >= 0xF0000000u || (device & 3)) return false;
+  const uint32_t fence = REX_LOAD_U32(device + xd_profile::kNull_fence_ptr);
+  return fence == 0 || (fence >= 0x10000 && !(fence & 3));
+}
+
+// ---- constantes ecrites par le jeu dans le tampon de commandes (GpuBeginShaderConstantF4) ----
+// La fonction reserve le paquet et rend l'adresse ou le jeu ecrit ensuite `count` vecteurs : ils sont relus au prochain appel D3D
+// suivi (le jeu les a ecrits entre-temps) et recouvrent, registre par registre, les constantes de l'ombre dans l'instantane.
+struct PendingConstants {
+  uint32_t address, start, count;
+  bool pixel;
+};
+std::vector<PendingConstants> g_pending_constants;
+uint8_t g_gpu_constants[2][256 * 16];   // [0] sommets, [1] pixels : octets invites
+uint32_t g_gpu_first[2] = {256, 256}, g_gpu_last[2] = {0, 0};   // plage de registres deja ecrits par cette voie
+uint64_t g_gpu_constant_sets = 0;
+
+void FlushPendingConstants(uint8_t* base) {
+  for (const PendingConstants& p : g_pending_constants) {
+    if (p.start >= 256 || !p.address) continue;
+    const uint32_t count = std::min(p.count, 256 - p.start);
+    std::memcpy(g_gpu_constants[p.pixel] + 16 * p.start, base + p.address, 16 * count);
+    g_gpu_first[p.pixel] = std::min(g_gpu_first[p.pixel], p.start);
+    g_gpu_last[p.pixel] = std::max(g_gpu_last[p.pixel], p.start + count);
+  }
+  g_pending_constants.clear();
+}
 
 rex::memory::Memory* g_memory = nullptr;
 std::unique_ptr<ng::Core> g_core;
@@ -214,8 +274,6 @@ ShaderObject FindShaderObject(uint32_t object) {
 }
 
 // ---- enregistrement de l'image ----
-uint32_t g_inline_vertices = 0, g_inline_primitive = 0, g_inline_count = 0, g_inline_stride = 0;
-
 struct DeferredCall {
   enum class Kind { kDraw, kClear, kResolve } kind;
   size_t state;  // decalage de l'ombre dans l'arene de l'image
@@ -236,7 +294,15 @@ Frame g_recording;
 size_t SnapshotState(uint8_t* base) {
   std::vector<uint8_t>& arena = g_recording.arena;
   const size_t offset = arena.size();
-  arena.insert(arena.end(), base + g_device, base + g_device + kStateSize);
+  arena.resize(offset + xenos::kCanonicalStateSize);
+  uint8_t* state = arena.data() + offset;
+  xenos::Canonicalize(Layout(), base + g_device, state);
+  for (int pixel = 0; pixel < 2; ++pixel) {
+    if (g_gpu_first[pixel] >= g_gpu_last[pixel]) continue;
+    const uint32_t block = pixel ? xenos::device::kPixelConstants : xenos::device::kVertexConstants;
+    std::memcpy(state + block + 16 * g_gpu_first[pixel], g_gpu_constants[pixel] + 16 * g_gpu_first[pixel],
+                16 * (g_gpu_last[pixel] - g_gpu_first[pixel]));
+  }
   return offset;
 }
 
@@ -359,50 +425,104 @@ void RendererThread() {
 
 void XdFrontOnShaderCreate(uint8_t* base, uint32_t object, uint32_t container) { OnShaderCreate(base, object, container); }
 
-void XdFrontOnCall(uint32_t function, const PPCContext& before, uint32_t result, uint8_t* base) {
-  if (!g_device && before.r3.u32 >= 0x10000) {
-    g_device = before.r3.u32;   // toutes les fonctions crochetees sont des methodes du peripherique : r3 = D3DDevice
-    REXLOG_INFO("native_gpu: D3DDevice captured at {:08X}", g_device);
+void XdFrontOnGpuConstants(uint8_t* base, uint32_t pixel, uint32_t start, uint32_t count, uint32_t address) {
+  FlushPendingConstants(base);   // le bloc precedent est ecrit : le jeu ne reserve le suivant qu'apres
+  if (!address || !count) return;
+  g_pending_constants.push_back({address, start, count, pixel != 0});
+  ++g_gpu_constant_sets;
+}
+
+namespace {
+// Dessin a sommets en ligne ouvert par BeginVertices : D3D emet le paquet et l'etat des BeginVertices, le jeu ecrit les sommets
+// ensuite. Sans crochet EndVertices (fonction de trois instructions, fondue dans le code des XDK tardives), le dessin est clos au
+// prochain appel D3D suivi.
+struct InlineDraw {
+  bool open = false;
+  size_t state = 0;
+  uint32_t vertices = 0, primitive = 0, count = 0, stride = 0, vs = 0, ps = 0;
+} g_inline;
+
+void RecordDraw(uint8_t* base, ng::DrawCall call, size_t state_offset, uint32_t vs, uint32_t ps) {
+  static uint64_t unbound = 0;
+  if (!vs || !ps) {   // aucun shader lie dans l'ombre : le jeu les charge par une autre voie que Set{Vertex,Pixel}Shader
+    if (++unbound == 1 || unbound % 5000 == 0) {
+      REXLOG_WARN("native_gpu: draw without a bound shader in the device shadow (vs {:08X}, ps {:08X}) : skipped ({}x)", vs, ps,
+                  unbound);
+    }
+    return;
   }
-  if (!g_renderer || !g_device) return;
-  const xenos::DeviceState state{base + g_device};
+  const ShaderObject vertex = FindShaderObject(vs);
+  const ShaderObject pixel = FindShaderObject(ps);
+  call.vs_key = vertex.key;
+  call.ps_key = pixel.key;
+  call.vs_physical = base + REX_LOAD_U32(vs + xd_profile::kShader_physical_ptr);
+  call.vs_physical_size = vertex.physical_size;
+  DeferredCall deferred{DeferredCall::Kind::kDraw, state_offset, call, {}, {}};
+  std::vector<uint8_t>& arena = g_recording.arena;
+  if (call.inline_vertices) {
+    deferred.inline_vertices = arena.size();
+    arena.insert(arena.end(), call.inline_vertices, call.inline_vertices + call.inline_size);
+  }
+  if (call.vs_physical && call.vs_physical_size) {
+    deferred.vs_physical = arena.size();
+    arena.insert(arena.end(), call.vs_physical, call.vs_physical + call.vs_physical_size);
+  }
+  g_recording.calls.push_back(deferred);
+}
+
+void CloseInlineDraw(uint8_t* base) {
+  if (!g_inline.open) return;
+  g_inline.open = false;
+  if (!g_inline.vertices) return;
+  ng::DrawCall call;
+  call.primitive = g_inline.primitive;
+  call.count = g_inline.count;
+  call.inline_vertices = base + g_inline.vertices;
+  call.inline_size = g_inline.count * g_inline.stride;
+  RecordDraw(base, call, g_inline.state, g_inline.vs, g_inline.ps);
+}
+}  // namespace
+
+void XdFrontOnCall(uint32_t function, const PPCContext& before, uint32_t result, uint8_t* base) {
   using namespace xd_profile;
+  const uint32_t device = before.r3.u32;   // seules des methodes du peripherique retrouvees a haute confiance sont crochetees
+  if (device != g_device) {
+    if (PlausibleDevice(base, device) && device == g_device_candidate) {
+      REXLOG_INFO("native_gpu: D3DDevice captured at {:08X}{}", device, g_device ? " (replaces the previous one)" : "");
+      g_device = device;
+    } else {
+      g_device_candidate = device;
+    }
+  }
+  if (!g_renderer || !g_device || device != g_device) return;
+  FlushPendingConstants(base);
+  if (function != k_EndVertices) CloseInlineDraw(base);
+  const uint32_t vs = REX_LOAD_U32(g_device + Layout().vertex_shader);
+  const uint32_t ps = REX_LOAD_U32(g_device + Layout().pixel_shader);
+  if (Trace()) {
+    static uint32_t traced = 0;
+    if (traced++ < 400) {
+      REXLOG_INFO("native_gpu trace: call {} r4 {:08X} r5 {:08X} r6 {:08X} r7 {:08X} result {:08X} vs {:08X} ps {:08X} constant sets {}",
+                  function, before.r4.u32, before.r5.u32, before.r6.u32, before.r7.u32, result, vs, ps, g_gpu_constant_sets);
+    }
+  }
   switch (function) {
     case k_BeginVertices:  // (device, prim, count, stride) -> pointeur de sommets
-      g_inline_vertices = result;
-      g_inline_primitive = before.r4.u32;
-      g_inline_count = before.r5.u32;
-      g_inline_stride = before.r6.u32;
+      g_inline = {true, SnapshotState(base), result, before.r4.u32, before.r5.u32, before.r6.u32, vs, ps};
+      break;
+    case k_EndVertices:  // (device)
+      CloseInlineDraw(base);
       break;
     case k_DrawIndexedVertices:  // (device, prim, base vertex, start index, count)
-    case k_DrawVertices:         // (device, prim, start vertex, count)
-    case k_EndVertices: {        // (device)
+    case k_DrawVertices: {       // (device, prim, start vertex, count)
       ng::DrawCall call;
-      call.state = state;
-      const uint32_t vs = REX_LOAD_U32(g_device + xenos::device::kVertexShader);
-      const uint32_t ps = REX_LOAD_U32(g_device + xenos::device::kPixelShader);
-      const ShaderObject vertex = FindShaderObject(vs);
-      const ShaderObject pixel = FindShaderObject(ps);
-      call.vs_key = vertex.key;
-      call.ps_key = pixel.key;
-      if (vs) {
-        call.vs_physical = base + REX_LOAD_U32(vs + 32);
-        call.vs_physical_size = vertex.physical_size;
-      }
-      if (function == k_EndVertices) {
-        if (!g_inline_vertices) break;
-        call.primitive = g_inline_primitive;
-        call.count = g_inline_count;
-        call.inline_vertices = base + g_inline_vertices;
-        call.inline_size = g_inline_count * g_inline_stride;
-        g_inline_vertices = 0;
-      } else if (function == k_DrawIndexedVertices) {
+      if (function == k_DrawIndexedVertices) {
         call.primitive = before.r4.u32;
         call.base_vertex = before.r5.u32;
         call.start = before.r6.u32;
         call.count = before.r7.u32;
         // Objet tampon d'indices : +0 bit 31 = indices 32 bits, +24 donnees, +28 taille.
-        const uint32_t indices = REX_LOAD_U32(g_device + xenos::device::kIndexBuffer);
+        const uint32_t indices = REX_LOAD_U32(g_device + Layout().index_buffer);
         if (!indices) break;
         call.indices_32bit = REX_LOAD_U32(indices) >> 31;
         call.indices_address = g_memory->GetPhysicalAddress(REX_LOAD_U32(indices + 24));
@@ -412,22 +532,11 @@ void XdFrontOnCall(uint32_t function, const PPCContext& before, uint32_t result,
         call.start = before.r5.u32;
         call.count = before.r6.u32;
       }
-      DeferredCall deferred{DeferredCall::Kind::kDraw, SnapshotState(base), call, {}, {}};
-      std::vector<uint8_t>& arena = g_recording.arena;
-      if (call.inline_vertices) {
-        deferred.inline_vertices = arena.size();
-        arena.insert(arena.end(), call.inline_vertices, call.inline_vertices + call.inline_size);
-      }
-      if (call.vs_physical) {
-        deferred.vs_physical = arena.size();
-        arena.insert(arena.end(), call.vs_physical, call.vs_physical + call.vs_physical_size);
-      }
-      g_recording.calls.push_back(deferred);
+      RecordDraw(base, call, SnapshotState(base), vs, ps);
       break;
     }
     case k_Clear: {  // (device, flags, rect, color)
       ng::ClearCall call;
-      call.state = state;
       call.flags = before.r4.u32;
       call.has_rect = ReadRect(base, before.r5.u32, call.rect);
       ReadColor(base, before.r6.u32, call.color);
@@ -439,7 +548,6 @@ void XdFrontOnCall(uint32_t function, const PPCContext& before, uint32_t result,
     case k_BeginTiling: {  // (device, flags, count, tile rects, clear color, ...) : rendu sans tuiles, un effacement de toutes
       if (!before.r6.u32 || !before.r5.u32) break;
       ng::ClearCall call;
-      call.state = state;
       call.flags = 0x30;
       call.stencil = before.r8.u32;
       call.has_rect = true;
@@ -460,7 +568,6 @@ void XdFrontOnCall(uint32_t function, const PPCContext& before, uint32_t result,
     }
     case k_Resolve: {  // (device, flags, source rect, texture, dest point, ...)
       ng::ResolveCall call;
-      call.state = state;
       call.flags = before.r4.u32;
       call.has_rect = ReadRect(base, before.r5.u32, call.rect);
       if (before.r7.u32) {
@@ -469,8 +576,11 @@ void XdFrontOnCall(uint32_t function, const PPCContext& before, uint32_t result,
         call.dest_y = int32_t(REX_LOAD_U32(before.r7.u32 + 4));
       }
       call.clear_depth = float(before.f1.f64);
-      g_recording.calls.push_back({DeferredCall::Kind::kResolve, SnapshotState(base), {}, {}, call});
-      if (!(call.flags & 4)) g_recording.front_buffer = state.Reg(0x2319);  // RB_COPY_DEST_BASE
+      const size_t snapshot = SnapshotState(base);
+      g_recording.calls.push_back({DeferredCall::Kind::kResolve, snapshot, {}, {}, call});
+      if (!(call.flags & 4)) {
+        g_recording.front_buffer = xenos::DeviceState{g_recording.arena.data() + snapshot}.Reg(0x2319);  // RB_COPY_DEST_BASE
+      }
       break;
     }
     default:
@@ -480,6 +590,15 @@ void XdFrontOnCall(uint32_t function, const PPCContext& before, uint32_t result,
 
 void XdFrontOnSwap(uint8_t* base) {
   if (!g_renderer) return;
+  FlushPendingConstants(base);
+  CloseInlineDraw(base);
+  if (Trace()) {
+    static uint32_t swaps = 0;
+    if (swaps++ < 600) {
+      REXLOG_INFO("native_gpu trace: swap {} : {} calls recorded, device {:08X}, front buffer {:08X}", swaps, g_recording.calls.size(),
+                  g_device, g_recording.front_buffer);
+    }
+  }
   if (g_device) ngpu::NullGpuAttach(g_device, base);
   const auto swap_start = std::chrono::steady_clock::now();
   static auto stats_start = swap_start;

@@ -23,8 +23,9 @@ tools/recipe_build.py identify|build|status|launch-info|clean <source> [--generi
 
 Interface stable pour le Dashboard : mêmes sous-commandes, mêmes JSON et `progress.json` (étapes inchangées). Champs ajoutés :
 `identify` : `mode` (`recipe`|`generic`), `supported`, `reason`, `xdk`, `static_libraries`, `d3d` (`found`, `missing`, `weak`, `offsets`),
-`extra_modules`, `generic_supported`/`generic_reason` (pour un jeu en recette) ; `status` et `launch-info` : `mode`. L'option `--generic`
-(ou `XD_GENERIC=1`) ignore la recette ; `XD_MIN_DISK_GB` abaisse le seuil d'espace libre (essais).
+`extra_modules`, `generic_supported`/`generic_reason` (pour un jeu en recette) ; `status` et `launch-info` : `mode`. Lot B2 : `d3d` reçoit
+aussi `layout`, `optional_missing` et `offset_sources` (ajouts seulement). L'option `--generic` (ou `XD_GENERIC=1`) ignore la recette ;
+`XD_MIN_DISK_GB` abaisse le seuil d'espace libre (essais).
 
 ## 2. `tools/d3d_match.py` : retrouver la XDK D3D par motif de code
 
@@ -43,20 +44,26 @@ décalages du périphérique, qui changent d'une XDK à l'autre.
   décalage vient de l'instruction alignée dans la fonction trouvée, pas d'une table) ; contrôles croisés (imports du noyau atteints : `VdSwap`
   pour Swap ; constantes) ; relations ; unicité (une fonction ne sert qu'un rôle). Confiance = score pondéré par les contrôles et la marge sur le
   deuxième candidat.
-- **Rôles** (`REQUIRED_ROLES`) : BeginVertices, EndVertices, DrawVertices, DrawIndexedVertices, Clear, BeginTiling, Resolve, Swap (la fonction qui appelle
-  `VdSwap`), CreateVertexShader/CreatePixelShader (enveloppes, ou constructeurs sur place quand ils sont retrouvés), SetVertexShader/SetPixelShader,
-  VblankHandler, WaitFence, WaitDrain, WaitSecond ; en plus SetTexture, Set*ShaderConstantF et `setjmp`/`longjmp` du CRT (signature indépendante de la XDK).
+- **Rôles requis** (`REQUIRED_ROLES`, 11) : DrawVertices, DrawIndexedVertices, Clear, Resolve, Swap (la fonction qui appelle `VdSwap`),
+  CreateVertexShader/CreatePixelShader, VblankHandler, WaitFence, WaitDrain, WaitSecond. **Facultatifs** (`OPTIONAL_ROLES`, listés dans
+  `optional_missing`) : BeginVertices, EndVertices, BeginTiling, GpuBeginShaderConstantF4 (absent de Skate). SetTexture, Set*ShaderConstantF et
+  `setjmp`/`longjmp` du CRT (signature indépendante de la XDK) restent cherchés.
 - **Décalages lus** : vertex_shader, pixel_shader, index_buffer, fence_ptr, fence_value, drain_ptr_word, second_word, fetch_base_slot/fetch_stride,
   vertex/pixel_constants_slot, reg_surface_info, reg_copy_dest_base.
 - **Adresse du `D3DDevice`** : jamais figée ; la façade la capture à l'exécution (r3 du premier appel d'une méthode crochetée).
-- **Verdict `supported`** : tous les rôles requis avec confiance ≥ 0,85 **et** décalages de l'ombre du périphérique égaux à ceux que comprend `ngpu_core`
-  (`xenos_decode.h` : 12688, 12684, 12428, 48×24, 120, 376, 10368, 10780) ; sinon `reason` liste ce qui manque ou diffère.
+- **Verdict `supported`** : les 11 rôles requis avec confiance ≥ 0,85 ; les décalages `vertex_shader`, `pixel_shader`, `index_buffer` et les 4
+  décalages du GPU nul lus dans le code du jeu. La disposition de l'ombre n'est plus comparée à une seule disposition : elle est recopiée dans
+  `layout` et canonisée par `ngpu_core/src/device_layout.h` pour le noyau (`xenos_decode.h` ne lit toujours que l'ombre canonique). Une famille
+  marquée `experimental` (`fusion-21256`) refuse le verdict pour la XDK de cette famille, sauf `XD_ALLOW_UNSUPPORTED=1` (diagnostic). `reason`
+  liste ce qui manque ou échoue.
 
 ```
 d3d_match.py match|analyze <xex|image.bin> [--exclude FAMILLE]     d3d_match.py compare <xex> <d3d_profile.toml>     d3d_match.py learn ...
 ```
 
-Familles de signatures livrées : `skate-5632` (D3D 2.0.5632), `dash-6770` (2.0.6132), `crt-13604`, `crt-17559` (setjmp/longjmp).
+Familles de signatures livrées : `skate-5632` (D3D 2.0.5632), `dash-6770` (2.0.6132), `crt-13604`, `crt-17559` (setjmp/longjmp), `xapi-21256`
+(fibres XAPI de Trials Fusion), `fusion-21256` (Trials Fusion, D3D 2.0.21256 : **expérimentale**, voir §7.5). Lot B2 : les familles
+`xapi-21256` et `fusion-21256` sont apprises ; les XDK 20158 (Dashboard 13604) et 17559 n'ont pas encore de famille D3D complète (§7.1).
 Les adresses de référence sont celles de `games/45410813/d3d_profile.toml`, de `native_gpu/src/front6770.cpp` et des `dash_overrides.toml` 13604/17559.
 
 ## 3. Façade générique (`games/_generic/`)
@@ -65,7 +72,9 @@ Les adresses de référence sont celles de `games/45410813/d3d_profile.toml`, de
 `d3d_nullgpu_hooks.generated.inc` (un crochet par fonction retrouvée). Différences avec la façade de Skate : adresse du périphérique capturée ;
 aucune image élargie (`ApplyGameAspect` supprimée), aucune liste de shaders d'interface ni de minicarte, plage de pitch de scène vide (échelle de rendu 1) ;
 crochet de Swap généré (pas de plafond d'images, pas de pause ni de menus de Skate) ; enregistrement des shaders par crochet de création ; shader absent du cache : journal,
-dessin sauté, microcode écrit (§5). `src/` : application minimale (`GenericApp`, aucun plugin GPU). Skate reste en recette (façade propre) : « façade générique + profil + hooks propres » est
+dessin sauté, microcode écrit (§5). `src/` : application minimale (`GenericApp`, aucun plugin GPU). Lot B2 : disposition de l'ombre par profil (`Layout()`), instantané canonique (`ngpu_core/src/device_layout.h`), constantes
+`GpuBeginShaderConstantF4` superposées seulement si le rôle est sûr (absent de Skate), capture du `D3DDevice` validée par deux appels successifs.
+Skate reste en recette (façade propre) : « façade générique + profil + hooks propres » est
 l'étape suivante, non faite ici.
 
 ## 4. Boucle de codegen (`tools/codegen_loop.py`)
@@ -78,6 +87,16 @@ fonction générée (mesure sur Skate : 26 vrais pour 2 faux ; les références 
 **Limite connue : les fonctions appelées par pointeur et invisibles de l'analyse statique.** Le runtime s'arrête sur « Call to invalid or unregistered function ».
 Le bootstrap écrit alors l'adresse dans `~/.local/share/xenondash/games/<TitleID>/missing_functions.toml` et demande de relancer la construction (le codegen la prend en compte).
 Mesures : voir §7.
+
+**Découverte statique (`tools/func_discover.py`, lot B2).** Candidats hors `.pdata` : mot de donnée pointant dans `.text` (nature `data`), adresse
+construite par `lis` + `addi|ori` (`code`), et `data-in` (référence de donnée dans un corps `.pdata`, précédé d'un `b` ou `bl`). Filtre : pas de
+mot nul ni d'adresse de code à cette adresse ; précédent terminal hors corps `.pdata` ; **jamais un thunk d'import du XEX** (table `img.thunks`).
+Sans ce dernier filtre, Skate générique pur plantait au démarrage : 13 thunks (dont `0x8305822C`) devenaient des fonctions. Un `bl` vers
+`KeTlsSetValue` appelait alors un STUB renvoyant 0 (`sub_8305822C STUB - returning 0x0` dans le journal) ; `sub_82E5B328` et `sub_82E5B468` se
+rappelaient sans fin (gdb : pile saturée sur le fil principal). Mesure Skate après correction : 10 462 candidats (code 1947, data 8464, data-in 51) ;
+précision 1945/1947, 8464/8464, 48/51 contre le codegen de la recette ; rappel 431/475 entrées de `functions.toml`. Le rejet automatique des faux
+positifs et la reprise de boucle de `codegen_loop.py` sont écrits mais **non déclenchés** dans les essais de ce lot ; la boucle d'amorçage
+(`XD_BOOT_LOOPS`, 12 par défaut) n'a pas été sollicitée non plus : aucune fonction non déclarée dans Skate ni dans Trials Fusion.
 
 ## 5. Shaders génériques et boucle « jouer → reconstruire »
 
@@ -159,9 +178,39 @@ Paquet STFS `Trials Fusion XBLA/` ouvert par `xcontainer.py` (extraction 15 s) ;
   3. **Fibres XAPI** (`[rexcrt]` de TrialsReVolution : ConvertThreadToFiber…) : non détectées ni mappées par le mode générique.
   4. Fonctions par pointeur (61 de 253 manquantes), XEX secondaire, vidéo (Bink), modules DLC.
 
+### 7.4 Lot B2 : Skate générique pur (sans liste copiée, sans recette)
+
+- Premiers essais : `Unhandled guest access violation: write of guest 0x700CFFE0` juste après « ngpu_core on » (`skate_pure1`, puis sans les
+  `data-in` : même plantage). Cause : les thunks d'import (§4), corrigée dans `func_discover.py`. gdb sur le binaire : SIGSEGV dans la récursion
+  `sub_82E5B328` / `sub_82E5B468`.
+- Construction corrigée (cache `b2thunk`, trois natures par défaut, `--jobs 8`, `XD_MIN_DISK_GB=3`) : **3 passes** de codegen (≈ 170 à 180 s
+  chacune), 115 154 fonctions, 10 476 par pointeur dont 10 462 par découverte statique, 6 continuations, 0 rejet ; shaders 8 s (177 shaders, dont
+  142 issus de parties précédentes) ; compilation 389 s ; amorçage 42 s ; **total 1031 s**.
+- Journal du jeu : `D3DDevice captured at 40002200` (même adresse que la recette), `first native frame presented (1280x720)`, aucune violation
+  d'accès. Capture : écran-titre de Skate (logo, « Appuie sur START pour continuer »), regardée à l'œil. Pas de comparaison au pixel près avec la
+  recette dans ce lot.
+- Non-régression : recette Skate, clé `d86199b86b4ee9d2` **inchangée**, codegen et shaders déjà en cache, construite en 62 s, amorçage OK.
+- Dashboard 6770 natif (`cmake --build dashboards/2.0.6770.0/out/build/native -j8`) : compile et lie `dash` sans échec.
+
+### 7.5 Lot B2 : Trials Fusion XBLA, essai de rendu
+
+- `identify --generic` : XDK 2.0.21256.0. Avant le drapeau `experimental`, `supported` = true, mais la famille `fusion-21256` a été apprise sur
+  Trials Fusion (contrôle circulaire ; sans elle, 3/11 rôles). Après : `supported` = false, `reason` = « XDK 2.0.21256.0 (D3D9) : signatures
+  expérimentales (fusion-21256), rendu natif non validé ». Skate générique reste `supported` = true.
+- Construction d'essai (cache `b2fusion`, `XD_DISPLAY=:93`, `XD_NGPU_TRACE=1`) : **5 passes** de codegen (58 674 fonctions, 6 165 par pointeur dont
+  6 153 par découverte statique, 21 continuations), 750 s ; 56 shaders (26 issus de parties précédentes) ; compilation 331 s ; **total 1127 s**.
+- Amorçage : `D3DDevice captured at 40852680`, `first native frame presented (1024x608)`, 600 échanges (`Swap`) tracés à 3 appels enregistrés
+  chacun, 19 avertissements `draw without a bound shader in the device shadow (vs 00000000, ps 00000000) : skipped`. **Image entièrement noire**
+  (`bootstrap.png`).
+- Conclusion : le moteur présente des images, mais les dessins sont sautés faute de shader lié dans l'ombre du périphérique. La cause n'est pas
+  établie. Piste de la passation (§5 de la note de travail) : shaders chargés hors de `SetVertexShader`/`SetPixelShader`, par une fonction du type
+  `GpuLoadShaders`, non cherchée. Le rendu natif de Trials Fusion n'est donc pas validé, et la famille est marquée expérimentale.
+- Non fait : passage des menus, fibres XAPI à l'exécution, Bink, XEX secondaire `UplayBrowser.xex` (seulement signalé).
+
 ## 8. Reste
 
-- Signatures D3D des XDK tardives (Fusion, 13604, 17559) et ombre du périphérique paramétrable ; détection des fibres XAPI.
+- Trials Fusion : shaders absents de l'ombre à l'exécution (§7.5). Dashboard 13604 et 17559 : références Clear, VblankHandler (13604) et Swap
+  (17559) manquantes ; ne pas baisser le seuil pour les faire passer. Fibres XAPI : famille `xapi-21256` apprise, pas encore appliquée à l'exécution.
 - Découverte statique des fonctions par pointeur (les références `lis/addi` sont trop bruitées : 1 045 faux pour 70 vrais ; piste : analyse du flot, ou génération de tous les candidats avec repli à l'exécution).
   Aujourd'hui un démarrage s'arrête sur la première fonction non déclarée, que le bootstrap consigne dans `missing_functions.toml` ; chaque tour coûte un codegen (≈ 3 min) : **pas viable pour 130 fonctions**.
   Piste immédiate : rendre le « fonction non enregistrée » du runtime non fatal pour enregistrer toutes les adresses d'une partie, puis un seul codegen.

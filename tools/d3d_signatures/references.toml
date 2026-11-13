@@ -108,3 +108,59 @@ terminator = ["setjmp", "longjmp"]
 [crt-17559.roles]
 setjmp = 0x9291C760
 longjmp = 0x9291C330
+
+# Fibres XAPI (ConvertThreadToFiber...) : adresses du codegen.toml de TrialsReVolution (Trials Fusion, XAPILIB 2.0.21256), trouvees
+# la-bas a la main. Le mode generique les fait remplacer par les fibres hotes du SDK ([rexcrt]).
+[xapi-21256]
+description = "Trials Fusion (58411401) : fibres XAPI, XAPILIB 2.0.21256"
+terminator = ["SwitchToFiber"]
+[xapi-21256.roles]
+ConvertThreadToFiber = 0x82B3FDF0
+ConvertFiberToThread = 0x82B3FE80
+CreateFiber = 0x82B3FED0
+DeleteFiber = 0x82B3FFB0
+SwitchToFiber = 0x82B48D10
+
+# XDK tardive (D3D9 2.0.21256), apprise sur Trials Fusion. Aucune adresse n'est une supposition du matcher seul ; chacune a deux
+# appuis independants : (1) la table des fonctions tracees a l'execution de TrialsReVolution (docs/native_port.md, « D3D entry
+# points » : DrawIndexedVertices, DrawVertices, Resolve, ClearF, SetVertexShader, SetPixelShader, attente de barriere 8225B0A0) ou une
+# preuve de structure (Swap = seul appelant de VdSwap ; VblankHandler = appele par le rappel passe a VdSetGraphicsInterruptCallback ;
+# Create*Shader : conteneurs 0x102A11xx recus par ces crochets a l'execution, lot B), (2) la lecture du code, logique identique a
+# celle de Skate (WaitFence : memes comparaisons a +11024/+11036 ; BeginVertices ; Set*Shader ecrivent +13072/+13068).
+# GpuBeginShaderConstantF4 (peripherique, pixel, premier registre, nombre) : reserve le paquet SET_SHADER_CONSTANTS (0x56) dans le
+# tampon de commandes et rend l'adresse ou le jeu ecrit ses constantes (lecture du code : en-tete 0xC0005600, registre 0x4000/0x4400).
+[fusion-21256]
+description = "Trials Fusion (58411401), D3D9 2.0.21256 (bibliotheque fondue en partie dans le code du jeu)"
+# experimental : l'identification des fonctions est mesuree, mais le rendu natif n'est pas valide (essai Trials Fusion : image
+# native entierement noire, dessins sautes faute de shader lie). Le verdict refuse la famille sauf XD_ALLOW_UNSUPPORTED=1.
+experimental = true
+[fusion-21256.roles]
+BeginVertices = 0x822272B8
+DrawVertices = 0x8222FDF8
+DrawIndexedVertices = 0x82228DB0
+Clear = 0x8220DD40
+Resolve = 0x82226160
+Swap = 0x826CB050
+CreateVertexShader = 0x826C98C0
+CreatePixelShader = 0x826C96D8
+SetVertexShader = 0x82221AB0
+SetPixelShader = 0x826C91A0
+GpuBeginShaderConstantF4 = 0x8222C6D8
+VblankHandler = 0x826CA188
+WaitFence = 0x8225B0A0
+WaitDrain = 0x821FE770
+WaitSecond = 0x82225A20
+[fusion-21256.relations]
+SetVertexShader = ["after", "SetPixelShader"]
+CreateVertexShader = ["after", "CreatePixelShader"]
+[fusion-21256.fields]
+vertex_shader = ["SetVertexShader", 13072, "disp"]
+pixel_shader = ["SetPixelShader", 13068, "disp"]
+index_buffer = ["DrawIndexedVertices", 12812, "disp"]
+fence_ptr = ["WaitFence", 11024, "disp"]
+fence_value = ["WaitFence", 11036, "disp"]
+drain_ptr_word = ["WaitDrain", 60, "disp"]
+second_word = ["WaitSecond", 4, "disp"]
+vertex_constants = ["BeginVertices", 1920, "imm"]
+pixel_constants = ["BeginVertices", 6016, "imm"]
+reg_copy_dest_base = ["Resolve", 10780, "disp"]

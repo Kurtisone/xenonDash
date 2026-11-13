@@ -9,10 +9,15 @@ d'overrides genere jusqu'a un codegen propre :
      puis tools/filter_inside.py ecarte celles situees dans une fonction deja generee (continuations de catch, tables SEH) ;
   3. continuations de funclets (« Unresolved b target T from S » avec T dans une fonction generee) -> fonction jusqu'au 1er blr/b ;
   4. setjmp/longjmp du CRT : adresses donnees par le matcher de signatures (d3d_match.py), ecrites en tete du fichier.
+Avant la 1re passe, tools/func_discover.py declare les fonctions feuilles atteintes seulement par pointeur (donnees, lis/addi) dont le
+debut est plausible ; si le codegen echoue sans cible exploitable, ces candidats sont retires par paliers (data-in, code, puis tous) et
+la passe est refaite : un faux positif ne peut pas bloquer la boucle. L'etat de la boucle est memorise (state_path) : une relance
+apres l'ajout d'une fonction decouverte a l'execution ne coute qu'une passe (rexglue ne reecrit que les fichiers qui changent).
 Les imports sans thunk et les ordinaux inconnus sont traites par le SDK (patch unified) et par les stubs generes a la compilation
 (`write_auto_stubs`). Aucune dependance a port_dashboard.py (ses fonctions sont couplees a son contexte) : ce module est le
 pendant generique, a factoriser dans l'autre sens plus tard.
 """
+import json
 import os
 import re
 import struct
@@ -28,12 +33,14 @@ class CodegenError(Exception):
     pass
 
 
-def write_overrides(path, unresolved, ptr, cont, setjmp=None, longjmp=None, extra=None):
+def write_overrides(path, unresolved, ptr, cont, setjmp=None, longjmp=None, extra=None, rexcrt=None):
     lines = ["# Corrections AUTOMATIQUES de l'analyse (tools/codegen_loop.py), regenerees a chaque construction.", ""]
     if setjmp:
         lines.append(f"setjmp_address = 0x{setjmp:08X}")
     if longjmp:
         lines.append(f"longjmp_address = 0x{longjmp:08X}")
+    if rexcrt:   # fonctions du jeu remplacees par celles du SDK (fibres XAPI... : detectees par d3d_match.py)
+        lines += ["", "[rexcrt]"] + [f"{k} = 0x{a:08X}" for k, a in sorted(rexcrt.items(), key=lambda kv: kv[1])]
     # une adresse ne figure qu'une fois (TOML) : continuation > cible non resolue > pointeur
     extra = extra or {}
     cont = {a: v for a, v in cont.items() if a not in extra}
@@ -68,12 +75,45 @@ def block_end(data, base, start):
 
 
 def run_loop(rexglue, sdk_lib, proj, manifest, gen_dir, init_name, image, overrides, log_dir, setjmp=None, longjmp=None,
-             max_iter=14, log=print, tick=None, extra=None, seeds=None):
+             max_iter=14, log=print, tick=None, extra=None, seeds=None, rexcrt=None, state_path=None, discover=True):
     """image : tools/d3d_match.Image. Renvoie un dict de statistiques ; leve CodegenError si pas de convergence."""
+    import func_discover
     env = dict(os.environ, LD_LIBRARY_PATH=sdk_lib)
     extra = dict(extra or {})
+    rexcrt = dict(rexcrt or {})
+    extra = {a: v for a, v in extra.items() if a not in rexcrt.values()}
     unresolved, ptr, cont = {}, dict(seeds or {}), {}     # seeds : fonctions imposees (crochets) declarees des la 1re passe
-    write_overrides(overrides, unresolved, ptr, cont, setjmp, longjmp, extra)
+    static, dropped = {}, []
+    resumed = False
+    if state_path and os.path.isfile(state_path):         # reprise : etat d'une boucle precedente sur la meme image
+        try:
+            st = json.load(open(state_path))
+            unresolved = {int(k): v for k, v in st["unresolved"].items()}
+            ptr.update({int(k): v for k, v in st["ptr"].items()})
+            cont = {int(k): tuple(v) for k, v in st["cont"].items()}
+            static = {int(k): v for k, v in st["static"].items()}
+            dropped = st.get("dropped", [])
+            resumed = True
+            log(f"  reprise de la boucle : {len(unresolved)} cibles, {len(ptr)} par pointeur, {len(cont)} continuations")
+        except (ValueError, KeyError):
+            pass
+    if discover and not resumed:
+        taken = set(extra) | set(rexcrt.values()) | {a for a in (setjmp, longjmp) if a}
+        kinds = set((os.environ.get("XD_DISCOVER_KINDS") or "data,code,data-in").split(","))     # essais : restreindre les natures
+        found = {a: v for a, v in func_discover.discover(image).items() if a not in ptr and a not in taken and v[0] in kinds}
+        static = {a: k for a, (k, _) in found.items()}
+        ptr.update({a: r for a, (_, r) in found.items()})
+        log(f"  decouverte statique : {len(found)} fonctions hors .pdata declarees ("
+            + ", ".join(f"{k} {sum(1 for x in static.values() if x == k)}" for k in sorted(set(static.values()))) + ")")
+
+    def save_state():
+        if state_path:
+            json.dump({"unresolved": unresolved, "ptr": ptr, "cont": cont, "static": static, "dropped": dropped},
+                      open(state_path, "w"))
+
+    def write():
+        write_overrides(overrides, unresolved, ptr, cont, setjmp, longjmp, extra, rexcrt)
+    write()
     secs = image.sections
     ts, tsz = secs[".text"]
     ts += image.base
@@ -100,10 +140,26 @@ def run_loop(rexglue, sdk_lib, proj, manifest, gen_dir, init_name, image, overri
                 if t not in unresolved and t not in cont:
                     new.setdefault(t, s)
             if not new:
-                raise CodegenError("codegen en echec sans cible non resolue exploitable :\n" + "\n".join(out.splitlines()[-20:]))
+                # rejet automatique des candidats statiques : d'abord ceux que l'erreur nomme, puis par paliers de confiance
+                named = {int(x, 16) for x in re.findall(ADDR, out)}
+                drop = [a for a in static if a in named]
+                if not drop:
+                    for kind in ("data-in", "code", "data"):
+                        drop = [a for a, k in static.items() if k == kind]
+                        if drop:
+                            break
+                if not drop:
+                    raise CodegenError("codegen en echec sans cible non resolue exploitable :\n" + "\n".join(out.splitlines()[-20:]))
+                for a in drop:
+                    static.pop(a)
+                    ptr.pop(a, None)
+                dropped += drop
+                log(f"  codegen en echec : {len(drop)} candidat(s) statique(s) retire(s), nouvelle passe")
+                write()
+                continue
             unresolved.update(new)
             log(f"  {len(new)} cible(s) non resolue(s) ajoutee(s)")
-            write_overrides(overrides, unresolved, ptr, cont, setjmp, longjmp, extra)
+            write()
             continue
         final_warn = "\n".join(l for l in out.splitlines() if l.startswith("Unresolved"))
         init = os.path.join(gen_dir, init_name)
@@ -137,11 +193,13 @@ def run_loop(rexglue, sdk_lib, proj, manifest, gen_dir, init_name, image, overri
         log(f"  fonctions par pointeur : {len(new)} nouvelles ; continuations : {len(newc)}")
         if not new and not newc:
             n_fn = len(re.findall(r"\{ 0x[0-9A-F]{8}, sub_", open(init).read()))
+            save_state()
             return {"iterations": it, "functions": n_fn, "unresolved": len(unresolved), "pointer": len(ptr),
-                    "continuations": len(cont), "residual_warnings": final_warn.splitlines()[:20]}
+                    "continuations": len(cont), "static": len(static), "static_dropped": len(dropped),
+                    "resumed": resumed, "residual_warnings": final_warn.splitlines()[:20]}
         ptr.update(new)
         cont.update(newc)
-        write_overrides(overrides, unresolved, ptr, cont, setjmp, longjmp, extra)
+        write()
     raise CodegenError(f"codegen : pas de convergence en {max_iter} iterations")
 
 

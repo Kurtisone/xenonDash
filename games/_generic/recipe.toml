@@ -26,7 +26,7 @@ mode = "native"                      # ngpu_core ; aucune emulation : un jeu non
 
 [build]
 min_ram_gb = 16
-min_disk_gb = 40
+min_disk_gb = 4
 arch_flags = "-march=x86-64-v2"
 estimate_minutes = { codegen = 12, shaders = 6, compile = 35 }
 
