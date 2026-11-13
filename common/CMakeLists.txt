@@ -21,7 +21,8 @@ add_library(xenondash_common OBJECT
     src/kernel_timers.cpp
     src/kernel_audio_guard.cpp
     src/kernel_ob.cpp
-    src/kernel_keys.cpp
+    src/kernel_random.cpp
+    src/kernel_video.cpp
 )
 target_include_directories(xenondash_common PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src)
 # Racine de XenonDash (tools/recipe_build.py, moteur de recettes) ; XENONDASH_ROOT dans l'environnement la remplace.

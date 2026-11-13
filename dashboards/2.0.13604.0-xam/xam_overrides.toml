@@ -1,1 +1,10 @@
 [functions]
+
+# Palier G : neutralisation de l'écoute « DeviceAuth » (authentification des périphériques de stockage). sub_818CD070 ouvre
+# \Device\DeviceAuth (NtOpenFile) et lui envoie un IOCTL ; ce périphérique n'existe pas ici, l'ouverture échoue et XAM
+# appelle KeBugCheck(0x29). La fonction revient aussitôt (r3 = 0) ; l'accroche est dans src/xam_neutralize.cpp.
+[[midasm_hook]]
+address = 0x818CD070
+name = "xam_skip_device_auth"
+registers = ["r3"]
+return = true

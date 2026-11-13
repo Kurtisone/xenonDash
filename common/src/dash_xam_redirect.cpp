@@ -95,6 +95,10 @@ void Dispatch(Slot& s, PPCContext& ctx, uint8_t* base) {
   hle(ctx, base);
 }
 
+// XAM recompilé (Configure) : sert aux imports des modules recompilés (CallModuleImport).
+std::atomic<rex::system::KernelState*> g_ks{nullptr};
+std::atomic<rex::system::UserModule*> g_xam{nullptr};
+
 // Ordinal d'un export de XAM (table « xam.xex » du SDK, mêmes ordinaux que la console). 0 si absent.
 uint16_t FindOrdinal(rex::runtime::ExportResolver* resolver, std::string_view name) {
   if (!resolver) return 0;
@@ -193,8 +197,58 @@ void RunMessageBoxTest(rex::system::KernelState* ks) {
 
 }  // namespace
 
+void CallModuleImport(ModuleImport& imp, PPCContext& ctx, uint8_t* base) {
+  PPCFunc* fn = imp.fn.load();
+  if (!fn) {
+    rex::system::KernelState* ks = g_ks.load();
+    rex::system::UserModule* xam = g_xam.load();
+    uint32_t addr = 0;
+    if (ks && xam) {
+      addr = xam->GetProcAddressByOrdinal(imp.ordinal);
+      fn = addr ? ks->function_dispatcher()->GetFunction(addr) : nullptr;
+    }
+    if (fn) {
+      imp.guest.store(true);
+    } else {
+      // Repli : symbole visible de l'exécutable (accroche de common/ ou HLE du SDK ; le `__imp__` du module est masqué).
+#if !defined(_WIN32)
+      fn = reinterpret_cast<PPCFunc*>(dlsym(RTLD_DEFAULT, (std::string("__imp__") + imp.name).c_str()));
+#else
+      fn = rex::ppc::FindPPCFuncByName((std::string("__imp__") + imp.name).c_str());
+#endif
+      REXLOG_WARN("[xamredir] module : {} (ordinal {}) absent de XAM recompilé, repli {}", imp.name, imp.ordinal,
+                  fn ? "HLE" : "aucun (retour 0)");
+      if (!fn) {
+        ctx.r3.u64 = 0;
+        return;
+      }
+    }
+    imp.fn.store(fn);
+  }
+  const uint64_t n = imp.calls.fetch_add(1) + 1;
+  if (n == 1) {
+    REXLOG_INFO("[xamredir] module : {} (ordinal {}) : appel 1 par {}", imp.name, imp.ordinal,
+                imp.guest.load() ? "XAM recompilé" : "HLE");
+  }
+  // DASH_XAM_TRACE_MODULE=<n> : journalise les n premiers appels de module (arguments r3..r6, retour r3), diagnostic.
+  static const long trace_max = [] {
+    const char* e = std::getenv("DASH_XAM_TRACE_MODULE");
+    return e && *e ? std::atol(e) : 0L;
+  }();
+  static std::atomic<long> trace_n{0};
+  if (trace_max > 0 && trace_n.fetch_add(1) < trace_max) {
+    const uint32_t a3 = ctx.r3.u32, a4 = ctx.r4.u32, a5 = ctx.r5.u32, a6 = ctx.r6.u32;
+    fn(ctx, base);
+    REXLOG_INFO("[xamtrace] {}({:08X}, {:08X}, {:08X}, {:08X}) -> {:08X}", imp.name, a3, a4, a5, a6, ctx.r3.u32);
+    return;
+  }
+  fn(ctx, base);
+}
+
 void Configure(rex::system::KernelState* ks, rex::runtime::ExportResolver* resolver,
                rex::system::UserModule* xam) {
+  g_ks.store(ks);
+  g_xam.store(xam);
   const char* env = std::getenv("DASH_XAM_REDIRECT");
   if (!env || !*env) {
     REXLOG_INFO("[xamredir] DASH_XAM_REDIRECT absent : imports du Dashboard servis par le HLE");

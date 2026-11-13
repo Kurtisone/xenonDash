@@ -6,7 +6,10 @@
 
 #include <atomic>
 #include <cstdlib>
+#include <cstring>
 #include <functional>
+#include <map>
+#include <mutex>
 #include <memory>
 #include <string>
 #include <system_error>
@@ -59,6 +62,7 @@ class SystemHostThread : public rex::system::XThread {
 
   void Execute() override {
     ks_->OnThreadExecute(this);
+    thread_state()->context()->fpscr.InitHost();  // comme XHostThread::Execute du SDK (exceptions flottantes masquées)
     int ret = fn_();
     Exit(ret);
   }
@@ -131,4 +135,54 @@ REX_HOOK_RAW(__imp__KeGetCurrentProcessType) {
   const uint32_t lr = static_cast<uint32_t>(ctx.lr);
   fn(ctx, base);
   if (dash::xamrt::InXamImage(lr)) ctx.r3.u64 = 2;
+}
+
+// KeBugCheckEx / KeBugCheck : journalisation du code et de l'appelant avant le traitement du SDK (diagnostic de
+// l'initialisation de XAM recompilé, qui appelle KeBugCheckEx quand une étape obligatoire échoue).
+REX_HOOK_RAW(__imp__KeBugCheckEx) {
+  static PPCFunc* fn = dash::SdkFunction("__imp__KeBugCheckEx");
+  REXLOG_ERROR("[kernel] KeBugCheckEx(0x{:X}, 0x{:X}, 0x{:X}, 0x{:X}, 0x{:X}) depuis lr=0x{:08X}", ctx.r3.u32, ctx.r4.u32,
+               ctx.r5.u32, ctx.r6.u32, ctx.r7.u32, static_cast<uint32_t>(ctx.lr));
+  fn(ctx, base);
+}
+REX_HOOK_RAW(__imp__KeBugCheck) {
+  static PPCFunc* fn = dash::SdkFunction("__imp__KeBugCheck");
+  REXLOG_ERROR("[kernel] KeBugCheck(0x{:X}) depuis lr=0x{:08X}", ctx.r3.u32, static_cast<uint32_t>(ctx.lr));
+  fn(ctx, base);
+}
+
+// XexLoadImage : XAM charge ses modules d'interface par leur nom nu ("hud.xex", "signin.xex", "vk.xex"...), que la console
+// cherche dans la flash. Le SDK résout un nom nu dans le dossier du module exécutable (ici \Device\Harddisk0\Partition1,
+// le périphérique d'état de XAM) : le fichier n'y est pas. Pour les appels venant de XAM, un nom nu présent dans la
+// flash (\SystemRoot) est remplacé par game:\flash\<nom> (même fichier ; ce chemin est celui que le manifeste donne aux
+// modules recompilés, ex. game:\flash\hud.xex) ; les autres noms passent tels quels au SDK.
+REX_HOOK_RAW(__imp__XexLoadImage) {
+  static PPCFunc* fn = dash::SdkFunction("__imp__XexLoadImage");
+  if (dash::xamrt::InXamImage(static_cast<uint32_t>(ctx.lr)) && ctx.r3.u32) {
+    const char* name = reinterpret_cast<const char*>(base + ctx.r3.u32);
+    if (*name && !std::strpbrk(name, "\\/:")) {
+      static std::mutex mu;
+      static std::map<std::string, uint32_t> cache;  // nom nu -> chaîne invitée "\SystemRoot\<nom>" (0 : absent de la flash)
+      uint32_t guest = 0;
+      {
+        std::lock_guard<std::mutex> lock(mu);
+        auto it = cache.find(name);
+        if (it == cache.end()) {
+          const std::string full = std::string("game:\\flash\\") + name;
+          uint32_t g = 0;
+          if (REX_KERNEL_FS()->ResolvePath(std::string("\\SystemRoot\\") + name)) {
+            g = REX_KERNEL_MEMORY()->SystemHeapAlloc(static_cast<uint32_t>(full.size() + 1));
+            std::memcpy(base + g, full.c_str(), full.size() + 1);
+          }
+          it = cache.emplace(name, g).first;
+        }
+        guest = it->second;
+      }
+      if (guest) {
+        REXLOG_INFO("[xam] XexLoadImage(\"{}\") -> game:\\flash\\{}", name, name);
+        ctx.r3.u64 = guest;
+      }
+    }
+  }
+  fn(ctx, base);
 }

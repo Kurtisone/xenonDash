@@ -1,0 +1,2 @@
+[functions]
+# Corrections manuelles de hud.xex : aucune pour l'instant (voir hud_auto_overrides.toml, écrit par tools/codegen_module.py).

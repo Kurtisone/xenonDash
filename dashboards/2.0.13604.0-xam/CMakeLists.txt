@@ -18,6 +18,15 @@ if(TARGET dash_xam)
     target_sources(dash_xam PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/generated/xam/dash_register.cpp)
 endif()
 
+# Module hud.xex (cible dash_hud, palier G) : même contournement du registre, plus les imports XAM routés vers XAM
+# recompilé (src_hud/hud_xam_imports.cpp, produit par tools/gen_module_xam_imports.py).
+if(TARGET dash_hud)
+    target_sources(dash_hud PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/generated/dash/hud/dash_register.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/src_hud/hud_xam_imports.cpp)
+    target_include_directories(dash_hud PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../../common/src)
+endif()
+
 # Code partagé entre versions (bibliothèque OBJECT : tous les hooks sont liés)
 add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/../../common xenondash_common)
 
@@ -31,4 +40,7 @@ else()
 endif()
 
 target_link_libraries(dash PRIVATE xenondash_common)
+# Le module XAM (DLL chargée par dlopen) appelle des fonctions de l'exécutable (accroches [[midasm_hook]] de
+# xam_overrides.toml, src/xam_neutralize.cpp) : leurs symboles doivent figurer dans la table dynamique de l'exécutable.
+set_target_properties(dash PROPERTIES ENABLE_EXPORTS ON)
 rexglue_setup_target(dash)

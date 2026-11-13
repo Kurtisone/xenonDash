@@ -18,3 +18,14 @@ out_directory_path = "generated/xam"
 # recouvre le début de dash.xex (0x82000000 en adresse physique) ; voir docs/xam_recompile.md, palier B.
 function_table_base = 0x84000000
 includes = ["xam_overrides.toml", "xam_auto_overrides.toml"]
+
+# hud.xex (interface du HUD : boîtes de message, clavier, connexion...) recompilé comme module (palier G). XAM le charge par
+# XexLoadImage("hud.xex") ; common/src/dash_xam_runtime.cpp renvoie ce nom nu vers game:\flash\hud.xex.
+# Code généré sous generated/dash/ (ignoré par git, comme celui de XAM : traduction d un binaire Microsoft).
+# Table de dispatch hors de dash.xex et de XAM (adresses physiques : 0x84800000-0x8485C000 libre).
+[[modules]]
+file_path = "assets/flash/hud.xex"
+guest_path = "game:\\flash\\hud.xex"
+out_directory_path = "generated/dash/hud"
+function_table_base = 0x84800000
+includes = ["hud_overrides.toml", "hud_auto_overrides.toml"]

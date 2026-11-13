@@ -1,0 +1,3 @@
+# Corrections AUTOMATIQUES (hud), écrites par tools/codegen_module.py.
+[functions]
+0x913FC6A4 = {}  # branche depuis 0x913FC6F4
