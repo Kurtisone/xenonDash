@@ -20,7 +20,7 @@ avec une bibliothèque de jeux qui se remplit toute seule et des jeux recompilé
 ## Installer et lancer
 
 1. Récupérez l'AppImage `XenonDash-2.0.13604.0-x86_64.AppImage` et rendez-la exécutable (`chmod +x`).
-2. Lancez-la. **Au premier lancement**, elle vous demande où se trouve la mise à jour système, l'importe, génère les shaders graphiques (une vingtaine de secondes)
+2. Lancez-la. **Au premier lancement**, elle vous demande (fenêtre `zenity` ou `kdialog` si installés, sinon dans le terminal) où se trouve la mise à jour système, l'importe, génère les shaders graphiques (une vingtaine de secondes)
    et crée votre **dossier de jeux** : `~/XenonDash/Games`. Les lancements suivants démarrent directement.
 3. Les données (profil, importation, journal `dash.log`) sont dans `~/.local/share/xenondash/2.0.13604.0/`.
 
@@ -36,9 +36,11 @@ En ligne de commande, si vous préférez :
 Déposez vos jeux dans `~/XenonDash/Games` (ou dans le dossier indiqué par `XENONDASH_GAMES_DIR`) : dossier extrait contenant `default.xex`, fichier `.xex`, ISO, paquet XBLA,
 Games on Demand. Rien n'est copié ni modifié. Au démarrage, le Dashboard les repère (la touche **F6** relance l'analyse) et ils apparaissent dans la **Game Library** avec leur nom et leur icône.
 
-Pour lancer un jeu : Game Library, le jeu, **A**, puis **Play Game**. **Au premier lancement, le jeu est recompilé pour votre machine** : une barre de progression s'affiche
-dans le Dashboard (comptez 12 à 25 minutes, environ 1 Go d'espace disque par jeu) ; le jeu démarre ensuite tout seul, et le Dashboard revient quand vous le quittez.
-Les lancements suivants sont immédiats.
+Pour lancer un jeu : Game Library, le jeu, **A**, puis **Play Game**. **Au premier lancement, le jeu est recompilé pour votre machine** (comptez 12 à 25 minutes et environ 1 Go d'espace disque par jeu) ;
+le jeu démarre ensuite tout seul, et le Dashboard revient quand vous le quittez. Les lancements suivants sont immédiats.
+
+> **Limite actuelle** : l'écran de progression de la recompilation n'est pas encore affiché dans l'AppImage native (il dépendait d'une fenêtre qui n'existe pas encore avec le rendu natif). Pendant la
+> construction, le Dashboard peut sembler figé : patientez, suivez `~/.local/share/xenondash/games/<TitleID>/<clé>/build.log`, et une notification de bureau (`notify-send`) signale la fin si elle est disponible.
 
 Un jeu que XenonDash ne sait pas faire fonctionner nativement est **refusé avec une explication** : il n'y a pas de repli sur un émulateur.
 
@@ -52,7 +54,7 @@ Un jeu que XenonDash ne sait pas faire fonctionner nativement est **refusé avec
 | Éditeur d'avatar | non disponible (nécessite un paquet que le firmware de base ne contient pas) |
 | Bibliothèque de jeux : dossiers, XEX, paquets XBLA | fonctionne |
 | Bibliothèque de jeux : ISO, Games on Demand | prévu, vérifié sur des fichiers de test seulement |
-| Jeux : **Skate** | fonctionne (testé de bout en bout) |
+| Jeux : **Skate** | fonctionne (testé de bout en bout ; la progression de la recompilation n'est pas visible, voir plus haut) |
 | Jeux : autres titres | à tester ; les jeux très différents de ceux déjà vus peuvent être refusés (ex. Trials Fusion : image noire, donc refusé) |
 | Xbox LIVE, achats, succès en ligne | indisponibles |
 | Dashboards Blades (2.0.6770, 2.0.6717) et Metro (2.0.17559) | non prioritaires pour l'instant |
@@ -81,8 +83,8 @@ Les touches se redéfinissent : `--keybind_a=Return,Space`, `--keybind_right_sho
 - **Écran noir au lancement** : `./XenonDash-…AppImage --regen-shaders` regénère les shaders ; vérifiez que les pilotes Vulkan sont installés (`vulkaninfo`).
 - **L'AppImage ne démarre pas** : `APPIMAGE_EXTRACT_AND_RUN=1 ./XenonDash-…AppImage`.
 - **Le jeu n'apparaît pas** : vérifiez le dossier (`~/XenonDash/Games`), appuyez sur F6, et regardez le journal `~/.local/share/xenondash/2.0.13604.0/dash.log`.
-- **La construction d'un jeu échoue** : le Dashboard affiche un message et le journal de construction se trouve dans `~/.local/share/xenondash/games/<TitleID>/`. Vérifiez `clang`, `cmake`, `ninja` et l'espace disque.
-- **Refaire l'import** : `--reimport` (vos profils sont conservés). `--data-dir` affiche le dossier de données.
+- **La construction d'un jeu échoue** : le Dashboard affiche un message et le journal de construction est `~/.local/share/xenondash/games/<TitleID>/<clé>/build.log`. Vérifiez `clang`, `cmake`, `ninja` et l'espace disque.
+- **Refaire l'import** : `--reimport` (vos profils sont conservés). `--data-dir` affiche le dossier de données, `--games-dir` le dossier de jeux.
 
 ## Usage et licence
 

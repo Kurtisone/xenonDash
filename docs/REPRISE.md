@@ -40,7 +40,7 @@ pilote STFS minimal côté noyau, profil local hors ligne (XUID aléatoire, sign
 ## Suite, par ordre de priorité
 1. Profil existant choisi dans la liste : XAM demande « Enter Pass Code » (cause non établie) ; `XamUserReadProfileSettings(Ex)` redirigé vers XAM plante le Dashboard (lecture invitée de `0x7008004F`) : gamertag/Gamerscore du bandeau et contenu restent liés au profil HLE ; fenêtre « Save Profile » absente du parcours Dashboard.
 2. Rendre `DASH_PROFILE_MODE=xam` le défaut et livrer la variante `-xam` (XAM + HUD) en AppImage (aujourd'hui l'AppImage NXE est la variante sans XAM recompilé, donc sans HUD).
-3. Retirer les fenêtres ImGui restantes (progression de construction des jeux, liste F5, succès) au profit de fenêtres du HUD ou de scènes du Dashboard.
+3. **Régression à corriger en priorité** : avec le rendu natif (AppImage NXE livrée) les fenêtres ImGui (progression de construction des jeux, liste F5, succès de remplacement) ne sont plus dessinées ; la recompilation d'un jeu n'a donc plus d'écran de progression visible. Les remplacer par des fenêtres du HUD de XAM (boîte de message avec progression, ou scène dédiée), ce que l'utilisateur veut de toute façon (pas de menus façon Xenia-canary). Vérifier aussi ce que le Dashboard affiche pendant la construction (écran figé ?).
 4. 72 shaders non traduits à l'import (64 plantages de XenosRecomp, 8 échecs `dxc`), 3 vertex shaders à texture ; l'un d'eux est créé à l'exécution.
 5. Avatar : dépend d'un paquet de l'utilisateur (éditeur d'avatar absent du flash).
 6. Recompilateur générique : XDK tardives (Trials Fusion refusé : image noire, shaders chargés hors `Set*Shader`).

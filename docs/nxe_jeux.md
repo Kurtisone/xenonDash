@@ -111,5 +111,6 @@ Limites et reste :
 - jeux GOD, ISO, STFS : reconnus par le scan (lot A, fichiers synthétiques) mais seule la source « dossier » a été recompilée ici ; ISO/GOD/STFS passent par `xcontainer.py extract` dans `recipe_build.py` (lot B), non testés de bout en bout ;
 - `XamLoaderGetMediaInfoEx` : la sémantique des trois sorties est déduite des comparaisons du hub (0 / -2), non documentée ; sans disque, a = b = c = 0 (la valeur -2 faisait afficher « aucun jeu ») ;
 - notification de média sans disque (paramètre 0) diffusée aussi ; 13604 et 6770 recompilés ; smoke 6770 repassé (0 FATAL, Skate dans Games) ; 6717/17559 non recompilés ici ;
+- **Depuis le passage au rendu natif (AppImage 13604, 2026-11-14), les fenêtres ImGui (progression de construction, lanceur F5, bibliothèque) ne sont plus dessinées** : les captures de progression ci-dessus ont été prises avec le plugin `xenos`. À remplacer par des fenêtres du HUD de XAM (docs/REPRISE.md) ;
 - clang/cmake/ninja non embarqués ; ImGui du Dashboard en police par défaut (pas de fenêtre XUI d'origine) ;
 - l'AppImage de test écrit son cache dans le HOME de test ; `e2e_jeux.sh` demande un disque (la tmpfs de 16 Go est refusée par la vérification des 40 Go de la recette).

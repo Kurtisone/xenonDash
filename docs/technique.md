@@ -5,9 +5,10 @@
 
 ## Présentation
 
-Recompilation statique de `dash.xex` (firmware 2.0.6770.0) en C++ natif avec
-[ReXGlue](https://github.com/rexglue/rexglue-sdk) (runtime dérivé de Xenia) et des outils de
-[XenonRecomp](https://github.com/hedge-dev/XenonRecomp).
+Recompilation statique de `dash.xex` en C++ natif avec [ReXGlue](https://github.com/rexglue/rexglue-sdk) (runtime dérivé de Xenia)
+et des outils de [XenonRecomp](https://github.com/hedge-dev/XenonRecomp). Ce document a été écrit à partir du Dashboard Blades 2.0.6770.0 ; les sections
+suivantes couvrent les autres versions. **Version prioritaire aujourd'hui : NXE 2.0.13604** (rendu natif, XAM et HUD recompilés, bibliothèque de jeux) : voir
+[xam_recompile.md](xam_recompile.md), [ngpu_core.md](ngpu_core.md) et [nxe_jeux.md](nxe_jeux.md). Les sections « Mise en place », « Contrôles » et « État actuel » ci-dessous décrivent surtout le 6770.
 
 ## Mise en place
 
@@ -731,9 +732,12 @@ Sous Xvfb, RADV ne peut pas présenter (pas de DRI3) : utiliser lavapipe :
   quelques changements d'onglet ; le Dashboard attend alors le GPU indéfiniment. Non observé hors
   lavapipe pour l'instant (à vérifier sur un vrai bureau avec RADV).
 - `XboxKrnlBaseVersion` (variable noyau) non implémentée.
-- Un seul profil, toujours connecté localement (pas d'écran de connexion ni de création de profil :
+- **Dashboard 6770 (HLE)** : un seul profil, toujours connecté localement (pas d'écran de connexion ni de création de profil :
   `XamShowSigninUIp`, `XamShowCreateProfileUI`, `XamUserLogon` restent en stub). Réputation et zone
-  sont des valeurs fixées par option.
+  sont des valeurs fixées par option. **NXE 13604, variante `-xam`** : connexion et création de profil par les vraies fenêtres Xbox
+  (`DASH_PROFILE_MODE=xam`, voir [xam_recompile.md](xam_recompile.md), palier N4) ; code PIN d'un profil existant et `XamUserReadProfileSettings` non résolus.
+- **NXE 13604, rendu natif** : pas de superposition ImGui (écran de progression de construction des jeux, lanceur F5, succès de remplacement : non affichés) ;
+  72 shaders du Dashboard non traduits à l'import, 3 vertex shaders à texture ([ngpu_core.md](ngpu_core.md) §8).
 - Icônes partagées (Ⓖ, boutons, zones) : ce sont celles du XAM **17559**, d'un style plus récent que
   la 6770. Celles d'origine sont dans le `xam.xex` de base 2.0.1888 (+ `xam.xexp` de la 6770) ;
   XeBuilds le fournit (`firmware/xebuild-xam/`, identique pour toutes les versions) mais il ne se

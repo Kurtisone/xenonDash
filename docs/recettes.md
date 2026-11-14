@@ -96,7 +96,7 @@ Décalages `+10896` / `+10908` identiques ; plus loin dans le périphérique ils
 2. sinon il lance la construction dans un **processus détaché** (journal `<cache>/build.log`), **reste vivant**, affiche une **fenêtre de progression ImGui** (étape, barre, durée écoulée/estimée, journal),
    journalise toutes les 5 s, envoie `notify-send` s'il existe, et **lance le jeu tout seul** à la fin (échec : message et journal, le Dashboard continue).
 
-L'écran de progression est une fenêtre ImGui du Dashboard (versions rendues par le plugin `xenos`, ou à terme par `ngpu_core` quand ImGui y sera porté, voir ngpu_core.md §5) ; il ne s'agit pas d'une scène XUI d'origine.
+L'écran de progression est une fenêtre ImGui du Dashboard. **Elle n'est visible qu'avec le plugin d'émulation `xenos`** ; avec le rendu natif `ngpu_core` (cas de l'AppImage NXE 13604 livrée, voir ngpu_core.md §8) aucune fenêtre ImGui n'est dessinée : il faut un affichage par le HUD de XAM (boîte de message Xbox), voir docs/REPRISE.md.
 
 ## 6. Mesures (Skate, machine de développement : 12 cœurs, 30 Go de RAM, clang 23, Arch Linux)
 
