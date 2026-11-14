@@ -11,6 +11,8 @@
 #include <cstring>
 
 #include <rex/hook.h>
+
+#include "dash_xam_redirect.h"
 #include <rex/logging.h>
 #include <rex/system/kernel_state.h>
 #include <rex/system/xam/user_profile.h>
@@ -36,7 +38,7 @@ inline bool IsLocalUser(uint32_t index) { return index == 0; }
 
 // XamUserGetUserTenure(utilisateur, &a(8), &b(4), &c(8), overlapped) : ancienneté du compte Xbox LIVE.
 // Profil hors ligne : zéros, succès (le hub le sondait toutes les 5 s et traitait l'échec comme « pas de profil »).
-REX_HOOK_RAW(__imp__XamUserGetUserTenure) {
+REX_HOOK_RAW(__imp__XamUserGetUserTenure) { DASH_XAM_FWD(XamUserGetUserTenure);
   Zero(base, ctx.r4.u32, 8);
   Put32(base, ctx.r5.u32, 0);
   Zero(base, ctx.r6.u32, 8);
@@ -44,14 +46,14 @@ REX_HOOK_RAW(__imp__XamUserGetUserTenure) {
 }
 
 // XamUserGetSubscriptionType(utilisateur, &octet, &dword, overlapped) : abonnement (0 = aucun, hors ligne).
-REX_HOOK_RAW(__imp__XamUserGetSubscriptionType) {
+REX_HOOK_RAW(__imp__XamUserGetSubscriptionType) { DASH_XAM_FWD(XamUserGetSubscriptionType);
   Zero(base, ctx.r4.u32, 1);
   Put32(base, ctx.r5.u32, 0);
   ctx.r3.u64 = IsLocalUser(ctx.r3.u32) ? 0 : kXENoSuchUser;
 }
 
 // XamProfileFindAccount(xuid, &compte(0x17C), 0) : 0 = trouvé (le Dashboard lit xuid_online à +0x28 : 0 = hors ligne).
-REX_HOOK_RAW(__imp__XamProfileFindAccount) {
+REX_HOOK_RAW(__imp__XamProfileFindAccount) { DASH_XAM_FWD(XamProfileFindAccount);
   uint64_t xuid = ctx.r3.u64;
   if (!xuid || xuid != dash::profile::LocalXuid() || !ctx.r4.u32) {
     ctx.r3.u64 = kErrorNotFound;
@@ -62,7 +64,7 @@ REX_HOOK_RAW(__imp__XamProfileFindAccount) {
 }
 
 // XamUserGetIndexFromXUID(xuid, indicateurs, &indice) : >= 0 = succès.
-REX_HOOK_RAW(__imp__XamUserGetIndexFromXUID) {
+REX_HOOK_RAW(__imp__XamUserGetIndexFromXUID) { DASH_XAM_FWD(XamUserGetIndexFromXUID);
   uint64_t xuid = ctx.r3.u64;
   if (xuid && xuid == dash::profile::LocalXuid() && ctx.r5.u32) {
     Put32(base, ctx.r5.u32, 0);
@@ -73,12 +75,12 @@ REX_HOOK_RAW(__imp__XamUserGetIndexFromXUID) {
 }
 
 // Profil hors ligne : pas de niveau d'abonnement, pas de pays/langue Live, adulte, sans contrôle parental.
-REX_HOOK_RAW(__imp__XamUserGetMembershipTierFromXUID) { (void)base; ctx.r3.u64 = 0; }
-REX_HOOK_RAW(__imp__XamUserGetOnlineCountryFromXUID) { (void)base; ctx.r3.u64 = 0; }
-REX_HOOK_RAW(__imp__XamUserGetOnlineLanguageFromXUID) { (void)base; ctx.r3.u64 = 1; }
-REX_HOOK_RAW(__imp__XamUserGetAge) { (void)base; ctx.r3.u64 = 25; }
-REX_HOOK_RAW(__imp__XamUserGetAgeGroup) { (void)base; ctx.r3.u64 = 3; }  // adulte
-REX_HOOK_RAW(__imp__XamUserIsParentalControlled) { (void)base; ctx.r3.u64 = 0; }
-REX_HOOK_RAW(__imp__XamUserIsPartial) { (void)base; ctx.r3.u64 = 0; }
-REX_HOOK_RAW(__imp__XamUserIsUnsafeProgrammingAllowed) { (void)base; ctx.r3.u64 = 0; }
-REX_HOOK_RAW(__imp__XamUserFlushLogonQueue) { (void)base; ctx.r3.u64 = 0; }
+REX_HOOK_RAW(__imp__XamUserGetMembershipTierFromXUID) { DASH_XAM_FWD(XamUserGetMembershipTierFromXUID); (void)base; ctx.r3.u64 = 0; }
+REX_HOOK_RAW(__imp__XamUserGetOnlineCountryFromXUID) { DASH_XAM_FWD(XamUserGetOnlineCountryFromXUID); (void)base; ctx.r3.u64 = 0; }
+REX_HOOK_RAW(__imp__XamUserGetOnlineLanguageFromXUID) { DASH_XAM_FWD(XamUserGetOnlineLanguageFromXUID); (void)base; ctx.r3.u64 = 1; }
+REX_HOOK_RAW(__imp__XamUserGetAge) { DASH_XAM_FWD(XamUserGetAge); (void)base; ctx.r3.u64 = 25; }
+REX_HOOK_RAW(__imp__XamUserGetAgeGroup) { DASH_XAM_FWD(XamUserGetAgeGroup); (void)base; ctx.r3.u64 = 3; }  // adulte
+REX_HOOK_RAW(__imp__XamUserIsParentalControlled) { DASH_XAM_FWD(XamUserIsParentalControlled); (void)base; ctx.r3.u64 = 0; }
+REX_HOOK_RAW(__imp__XamUserIsPartial) { DASH_XAM_FWD(XamUserIsPartial); (void)base; ctx.r3.u64 = 0; }
+REX_HOOK_RAW(__imp__XamUserIsUnsafeProgrammingAllowed) { DASH_XAM_FWD(XamUserIsUnsafeProgrammingAllowed); (void)base; ctx.r3.u64 = 0; }
+REX_HOOK_RAW(__imp__XamUserFlushLogonQueue) { DASH_XAM_FWD(XamUserFlushLogonQueue); (void)base; ctx.r3.u64 = 0; }

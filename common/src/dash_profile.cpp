@@ -26,6 +26,7 @@
 #include <fmt/format.h>
 
 #include "dash_gamerpic.h"
+#include "dash_xam_redirect.h"
 
 #include <rex/cvar.h>
 #include <rex/filesystem/devices/host_path_device.h>
@@ -366,14 +367,14 @@ void ApplyProfileSettings() {
 
 }  // namespace dash::profile
 
-REX_HOOK(__imp__XamUserGetName, dash::profile::XamUserGetName_entry)
-REX_HOOK(__imp__XamUserGetGamerTag, dash::profile::XamUserGetGamerTag_entry)
-REX_HOOK(__imp__XamProfileCreateEnumerator, dash::profile::XamProfileCreateEnumerator_entry)
-REX_HOOK(__imp__XamProfileEnumerate, dash::profile::XamProfileEnumerate_entry)
-REX_HOOK(__imp__XamProfileLoadAccountInfo, dash::profile::XamProfileLoadAccountInfo_entry)
-REX_HOOK(__imp__XamProfileOpen, dash::profile::XamProfileOpen_entry)
-REX_HOOK(__imp__XamProfileClose, dash::profile::XamProfileClose_entry)
-REX_HOOK(__imp__XamReadTileEx, dash::profile::XamReadTileEx_entry)
+DASH_XAM_FWD_HOOK(XamUserGetName, dash::profile::XamUserGetName_entry)
+DASH_XAM_FWD_HOOK(XamUserGetGamerTag, dash::profile::XamUserGetGamerTag_entry)
+DASH_XAM_FWD_HOOK(XamProfileCreateEnumerator, dash::profile::XamProfileCreateEnumerator_entry)
+DASH_XAM_FWD_HOOK(XamProfileEnumerate, dash::profile::XamProfileEnumerate_entry)
+DASH_XAM_FWD_HOOK(XamProfileLoadAccountInfo, dash::profile::XamProfileLoadAccountInfo_entry)
+DASH_XAM_FWD_HOOK(XamProfileOpen, dash::profile::XamProfileOpen_entry)
+DASH_XAM_FWD_HOOK(XamProfileClose, dash::profile::XamProfileClose_entry)
+DASH_XAM_FWD_HOOK(XamReadTileEx, dash::profile::XamReadTileEx_entry)
 
 // --- Ressources partagées (sharedres://) ---------------------------------------
 //

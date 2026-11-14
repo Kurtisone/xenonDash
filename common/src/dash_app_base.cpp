@@ -6,7 +6,9 @@
 #include <cstring>
 #include <filesystem>
 
+#include <rex/cvar.h>
 #include <rex/filesystem/devices/host_path_device.h>
+#include <rex/filesystem/vfs.h>
 #include <rex/input/input_system.h>
 #include <rex/logging.h>
 #include <rex/memory.h>
@@ -44,6 +46,9 @@ void DashAppBase::OnPreSetup(rex::RuntimeConfig& config) {
   if (config.gpu_plugin.empty()) config.gpu_plugin = "xenos";
   // Clavier → manette avec une disposition adaptée au Dashboard (voir dash_input.h).
   dash::input::ApplyDashKeyboardLayout();
+  // XAM recompilé écrit ses paquets de contenu (profils : Content\<XUID>\FFFE07D1\00010000\...) sur
+  // \Device\Harddisk0\Partition1, c'est-à-dire dans <game_data_root> : la racine du jeu doit être inscriptible.
+  if (std::getenv("DASH_XAM_MODULE")) REXCVAR_SET(allow_game_relative_writes, true);
   const char* audio = std::getenv("DASH_AUDIO");
   if (audio && std::strcmp(audio, "nop") == 0) {
     config.audio_factory = REX_AUDIO_BACKEND(dash::audio::NullAudioSystem);
@@ -88,6 +93,9 @@ void DashAppBase::OnPostSetup() {
       }
     }
   }
+  // Réglages du profil servis par le HLE (carte joueur : Gamerscore, zone, réputation). En mode profil XAM (DASH_PROFILE_MODE=xam,
+  // palier N4) ils restent servis ainsi : XamUserReadProfileSettings(Ex) de XAM recompilé, appelé par le Dashboard, planterait
+  // (lecture invitée de 0x7008004F : le Dashboard prend un identifiant de réglage pour un pointeur, résultat asynchrone non attendu).
   dash::profile::ApplyProfileSettings();
   dash::launch::Init();
   dash::disc::Init();

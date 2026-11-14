@@ -16,7 +16,7 @@ sleep 1
 env VK_ICD_FILENAMES=${VK_ICD_FILENAMES:-/usr/share/vulkan/icd.d/lvp_icd.json} ${DASH_ENV:-} DISPLAY=:$DN \
     DASH_AUDIO=${DASH_AUDIO:-nop} LD_LIBRARY_PATH=$P/sdk/lib \
     ${DASH_GDB:+gdb -q -batch -ex "set debuginfod enabled off" -ex "handle SIGSEGV SIG32 SIG33 SIG34 SIG35 SIGUSR1 SIGUSR2 SIGPIPE nostop noprint pass" -ex run --args} \
-    $D/out/build/linux-amd64-relwithdebinfo/dash --game_data_root=$D/assets ${DASH_ARGS:-} \
+    $D/out/build/linux-amd64-relwithdebinfo/dash --game_data_root=${DASH_ROOT:-$D/assets} ${DASH_ARGS:-} \
     > $RUNS/$N.out 2>&1 & DP=$!
 sleep $W
 python3 -I $P/tools/xwd2png.py $FB/Xvfb_screen0 $RUNS/${N}_0.png

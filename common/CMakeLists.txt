@@ -23,6 +23,12 @@ add_library(xenondash_common OBJECT
     src/kernel_ob.cpp
     src/kernel_event_guard.cpp
     src/kernel_random.cpp
+    src/kernel_rtl.cpp
+    src/kernel_stfs.cpp
+    src/kernel_md5.cpp
+    src/kernel_localkey.cpp
+    src/kernel_xconfig.cpp
+    src/kernel_obfuscate.cpp
     src/kernel_video.cpp
     src/kernel_xinputd.cpp
 )

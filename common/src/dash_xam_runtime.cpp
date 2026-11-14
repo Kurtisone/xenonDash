@@ -26,7 +26,6 @@
 #include <rex/system/xthread.h>
 
 namespace dash::xamrt {
-namespace {
 
 namespace fs = std::filesystem;
 
@@ -37,6 +36,8 @@ fs::path StateDir() {
   const char* home = std::getenv("HOME");
   return fs::path(home ? home : ".") / ".local" / "share" / "xenondash" / "xam";
 }
+
+namespace {
 
 // Monte `dir` sous `device` (ex. \Device\MU0). Un échec est journalisé sans interrompre le démarrage.
 void Mount(rex::filesystem::VirtualFileSystem* vfs, const std::string& device, const fs::path& dir, bool read_only) {

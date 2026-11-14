@@ -183,7 +183,8 @@ std::vector<uint8_t> LoadIcon(const launch::Game& g) {
   }
   std::vector<fs::path> cand;
   if (!g.spa.empty()) cand.push_back(rel(g.spa));
-  for (auto& e : fs::directory_iterator(fs::absolute(REXCVAR_GET(game_data_root)) / "profiles", fs::directory_options::skip_permission_denied)) {
+  std::error_code dir_ec;  // sans dossier « profiles » (premier lancement sans profil) : aucun candidat, pas d'exception
+  for (auto& e : fs::directory_iterator(fs::absolute(REXCVAR_GET(game_data_root)) / "profiles", fs::directory_options::skip_permission_denied, dir_ec)) {
     if (e.is_directory()) cand.push_back(e.path() / fmt::format("{:08X}.gpd", g.title_id));
   }
   for (auto& c : cand) {

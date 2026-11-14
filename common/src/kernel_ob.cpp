@@ -12,12 +12,16 @@
 
 #include <atomic>
 #include <cstdint>
+#include <cstring>
 #include <mutex>
+#include <string>
 #include <unordered_map>
 
 #include <rex/hook.h>
 #include <rex/logging.h>
+#include <rex/string/utf8.h>
 #include <rex/system/kernel_state.h>
+#include <rex/system/util/string_utils.h>
 #include <rex/system/xobject.h>
 #include <rex/system/xthread.h>
 #include <rex/thread.h>
@@ -165,6 +169,105 @@ REX_HOOK_RAW(__imp__ObDereferenceObject) {
                     static_cast<uint32_t>(ctx.lr));
       ctx.r3.u64 = 0;
       return;
+    }
+  }
+  sdk(ctx, base);
+}
+
+// --- Liens symboliques de XAM (\System??\__tmp0000000B: -> \Device\Harddisk0\Partition1\) ------------------------------------
+//
+// XAM monte ses périphériques de contenu sous un nom temporaire `\System??\__tmpXXXXXXXX:` (espace de noms DOS du processus
+// système) puis ouvre `__tmpXXXXXXXX:\Content\...` sans préfixe. Le SDK retire seulement `\??\` : le lien était enregistré
+// sous `\System??\__tmp...:`, jamais retrouvé (« VFS: '__tmp0000000B:\' -> [no device] »), et la création d'un profil
+// échouait en ERROR_FILE_NOT_FOUND (palier N4). Ici : `\System??\` et `\??\` sont retirés à la création et à la suppression.
+namespace {
+
+std::string SymlinkName(uint8_t* base, uint32_t ansi_ptr, bool strip_prefix) {
+  std::string s(rex::system::util::TranslateAnsiStringAddress(REX_KERNEL_MEMORY(), ansi_ptr));
+  s = rex::string::trim_string(s);
+  if (strip_prefix) {
+    for (const char* prefix : {"\\System??\\", "\\??\\"}) {
+      const size_t n = std::strlen(prefix);
+      if (s.size() >= n && rex::string::utf8_starts_with_case(s, prefix)) {
+        s.erase(0, n);
+        break;
+      }
+    }
+  }
+  (void)base;
+  return rex::string::utf8_canonicalize_guest_path(s);
+}
+
+}  // namespace
+
+REX_HOOK_RAW(__imp__ObCreateSymbolicLink) {
+  const std::string path = SymlinkName(base, ctx.r3.u32, true), target = SymlinkName(base, ctx.r4.u32, false);
+  ctx.r3.u64 = REX_KERNEL_FS()->RegisterSymbolicLink(path, target) ? 0u : 0xC0000001u;  // STATUS_UNSUCCESSFUL
+}
+
+REX_HOOK_RAW(__imp__ObDeleteSymbolicLink) {
+  const std::string path = SymlinkName(base, ctx.r3.u32, true);
+  ctx.r3.u64 = REX_KERNEL_FS()->UnregisterSymbolicLink(path) ? 0u : 0xC0000001u;
+}
+
+// ObTranslateSymbolicLink(OBJECT_ATTRIBUTES* nom, ANSI_STRING* résultat) : nom d'un lien (ou d'un chemin qui commence par un lien)
+// -> chemin réel. Le SDK en fait un stub : XAM (sub_8185DD80) obtenait un chemin vide et ouvrait '' pour créer son paquet.
+REX_HOOK_RAW(__imp__ObTranslateSymbolicLink) {
+  constexpr uint32_t kStatusNameNotFound = 0xC0000034u, kStatusBufferTooSmall = 0xC0000023u;
+  const uint32_t attrs = ctx.r3.u32, out = ctx.r4.u32;
+  if (!attrs || !out) {
+    ctx.r3.u64 = 0xC000000Du;  // STATUS_INVALID_PARAMETER
+    return;
+  }
+  const std::string path = SymlinkName(base, __builtin_bswap32(*Word(base, attrs + 4)), true);
+  // Le lien est le préfixe « <nom>: » (les noms de montage de XAM : __tmp0000000B:, _rand...:, ...) ; le reste est conservé.
+  // Un chemin absolu (« \Device\... ») sans lien est déjà réel : renvoyé tel quel.
+  std::string resolved, target;
+  const size_t colon = path.find(':');
+  if (colon != std::string::npos && path.find('\\') > colon) {
+    if (!REX_KERNEL_FS()->FindSymbolicLink(path.substr(0, colon + 1), target)) {
+      ctx.r3.u64 = kStatusNameNotFound;
+      return;
+    }
+    resolved = target + path.substr(colon + 1);
+  } else if (!path.empty() && path[0] == '\\') {
+    resolved = path;
+  } else {
+    ctx.r3.u64 = kStatusNameNotFound;
+    return;
+  }
+  const uint16_t max = __builtin_bswap16(*reinterpret_cast<uint16_t*>(base + out + 2));
+  const uint32_t buf = __builtin_bswap32(*Word(base, out + 4));
+  if (resolved.size() > max) {
+    ctx.r3.u64 = kStatusBufferTooSmall;
+    return;
+  }
+  std::memcpy(base + buf, resolved.data(), resolved.size());
+  *reinterpret_cast<uint16_t*>(base + out) = __builtin_bswap16(static_cast<uint16_t>(resolved.size()));
+  ctx.r3.u64 = 0;
+}
+
+// NtOpenSymbolicLinkObject(&handle, OBJECT_ATTRIBUTES*) : XAM interroge ses liens sous la forme `\System??\<nom>:` ; le SDK ne
+// retire que `\??\` après avoir refusé tout chemin qui contient un `?` (« objet invalide », 0xC0000033 : XAM ne retrouvait pas le
+// périphérique de son conteneur et ne le fermait jamais : l'en-tête du paquet n'était ni écrit ni signé). Le nom est réécrit sans
+// préfixe (`<nom>:`, comme l'enregistre ObCreateSymbolicLink ci-dessus ; copie sous le pointeur de pile de l'appelant) avant le
+// traitement du SDK.
+REX_HOOK_RAW(__imp__NtOpenSymbolicLinkObject) {
+  static PPCFunc* sdk = dash::SdkFunction("__imp__NtOpenSymbolicLinkObject");
+  const uint32_t attrs = ctx.r4.u32;
+  if (attrs) {
+    const uint32_t name_ptr = __builtin_bswap32(*Word(base, attrs + 4));
+    const std::string name(rex::system::util::TranslateAnsiStringAddress(REX_KERNEL_MEMORY(), name_ptr));
+    constexpr char kPrefix[] = "\\System??\\";
+    if (name.size() > sizeof(kPrefix) - 1 && rex::string::utf8_starts_with_case(name, kPrefix)) {
+      const std::string fixed = name.substr(sizeof(kPrefix) - 1);
+      const uint32_t tmp = (ctx.r1.u32 - 0x400u) & ~0xFu;
+      uint8_t* t = base + tmp;
+      *reinterpret_cast<uint16_t*>(t) = __builtin_bswap16(static_cast<uint16_t>(fixed.size()));
+      *reinterpret_cast<uint16_t*>(t + 2) = __builtin_bswap16(static_cast<uint16_t>(fixed.size() + 1));
+      *Word(base, tmp + 4) = __builtin_bswap32(tmp + 16);
+      std::memcpy(t + 16, fixed.c_str(), fixed.size() + 1);
+      *Word(base, attrs + 4) = __builtin_bswap32(tmp);
     }
   }
   sdk(ctx, base);

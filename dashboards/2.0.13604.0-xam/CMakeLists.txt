@@ -45,9 +45,9 @@ if(TARGET dash_xam)
     target_include_directories(dash_xam PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src_xam_d3d)
 endif()
 
-if(TARGET dash_xam AND EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/src_ftrace/xam_ftrace.cpp)  # TEMPORAIRE (trace jetable)
-    target_sources(dash_xam PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src_ftrace/xam_ftrace.cpp)
-    target_include_directories(dash_xam PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src_ftrace)
+# Correctifs de comportement de XAM recompilé (palier N4) : définitions fortes de sub_<adresse> (même mécanisme que les crochets D3D).
+if(TARGET dash_xam)
+    target_sources(dash_xam PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src_xam_patch/xam_input_patch.cpp)
 endif()
 
 # Code partagé entre versions (bibliothèque OBJECT : tous les hooks sont liés)

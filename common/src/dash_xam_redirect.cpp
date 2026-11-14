@@ -12,6 +12,8 @@
 #include <cstring>
 #include <functional>
 #include <memory>
+#include <mutex>
+#include <unordered_map>
 #include <string>
 #include <string_view>
 #include <thread>
@@ -77,6 +79,7 @@ PPCFunc* FindHle(const std::string& sym) {
 }
 
 void DispatchImpl(Slot& s, PPCContext& ctx, uint8_t* base);
+std::atomic<rex::system::KernelState*> g_ks{nullptr};
 
 // Exécute l'import : XAM recompilé si redirigé, sinon le HLE du SDK (même fonction que sans ce fichier).
 // Trace : première exécution de chaque import (voie et compteur), puis tous les 1000 appels.
@@ -106,6 +109,26 @@ void Dispatch(Slot& s, PPCContext& ctx, uint8_t* base) {
       return;
     }
   }
+  // Connexion/déconnexion d'un utilisateur dans XAM recompilé : XAM diffuse XN_SYS_SIGNINCHANGED dans ses propres files de
+  // notification ; le Dashboard écoute celles du HLE (XamNotifyCreateListener/XNotifyGetNext du SDK). La notification est donc
+  // rediffusée côté HLE quand l'état de connexion d'un utilisateur change (palier N4, mode profil XAM).
+  if (std::string_view(s.name) == "XamUserGetSigninState" && s.guest.load()) {
+    static std::atomic<int> last[4] = {-1, -1, -1, -1};
+    const uint32_t user = ctx.r3.u32;
+    DispatchImpl(s, ctx, base);
+    if (user < 4) {
+      const int state = static_cast<int>(ctx.r3.u32);
+      const int before = last[user].exchange(state);
+      if (before != -1 && before != state) {
+        uint32_t mask = 0;
+        for (uint32_t i = 0; i < 4; ++i) mask |= (last[i].load() > 0 ? 1u : 0u) << i;
+        REXLOG_INFO("[xamredir] état de connexion de l'utilisateur {} : {} -> {} : XN_SYS_SIGNINCHANGED (masque {:X}) rediffusé", user,
+                    before, state, mask);
+        if (auto* ks = g_ks.load()) ks->BroadcastNotification(rex::system::XNotificationID(0x0000000A), mask);
+      }
+    }
+    return;
+  }
   DispatchImpl(s, ctx, base);
 }
 
@@ -134,8 +157,8 @@ void DispatchImpl(Slot& s, PPCContext& ctx, uint8_t* base) {
 }
 
 // XAM recompilé (Configure) : sert aux imports des modules recompilés (CallModuleImport).
-std::atomic<rex::system::KernelState*> g_ks{nullptr};
 std::atomic<rex::system::UserModule*> g_xam{nullptr};
+std::atomic<rex::runtime::ExportResolver*> g_resolver{nullptr};
 
 // Ordinal d'un export de XAM (table « xam.xex » du SDK, mêmes ordinaux que la console). 0 si absent.
 uint16_t FindOrdinal(rex::runtime::ExportResolver* resolver, std::string_view name) {
@@ -369,6 +392,38 @@ void StartTestThread(rex::system::KernelState* ks, const char* env, const char* 
 
 }  // namespace
 
+bool ProfileModeXam() {
+  static const bool on = [] {
+    const char* m = std::getenv("DASH_PROFILE_MODE");
+    return m && std::string_view(m) == "xam" && std::getenv("DASH_XAM_MODULE");
+  }();
+  return on;
+}
+
+bool CallXamExport(const char* name, PPCContext& ctx, uint8_t* base) {
+  static std::mutex mu;
+  static std::unordered_map<std::string, PPCFunc*> cache;
+  PPCFunc* fn = nullptr;
+  {
+    std::lock_guard<std::mutex> lock(mu);
+    auto it = cache.find(name);
+    if (it == cache.end()) {
+      rex::system::KernelState* ks = g_ks.load();
+      rex::system::UserModule* xam = g_xam.load();
+      const uint16_t ordinal = FindOrdinal(g_resolver.load(), name);
+      const uint32_t addr = (ks && xam && ordinal) ? xam->GetProcAddressByOrdinal(ordinal) : 0;
+      fn = addr ? ks->function_dispatcher()->GetFunction(addr) : nullptr;
+      if (fn) REXLOG_INFO("[xamredir] {} (ordinal {}) -> XAM recompilé 0x{:08X} (mode profil XAM)", name, ordinal, addr);
+      else REXLOG_WARN("[xamredir] {} : export absent de XAM recompilé, HLE", name);
+      it = cache.emplace(name, fn).first;
+    }
+    fn = it->second;
+  }
+  if (!fn) return false;
+  fn(ctx, base);
+  return true;
+}
+
 void CallModuleImport(ModuleImport& imp, PPCContext& ctx, uint8_t* base) {
   PPCFunc* fn = imp.fn.load();
   if (!fn) {
@@ -433,7 +488,18 @@ void Configure(rex::system::KernelState* ks, rex::runtime::ExportResolver* resol
                rex::system::UserModule* xam) {
   g_ks.store(ks);
   g_xam.store(xam);
-  const char* env = std::getenv("DASH_XAM_REDIRECT");
+  g_resolver.store(resolver);
+  // Mode profil XAM : les imports de session utilisateur du Dashboard sont servis par XAM recompilé (en plus de DASH_XAM_REDIRECT).
+  static std::string redirect_list;
+  if (ProfileModeXam()) {
+    redirect_list = "XGetVideoMode,XamUserGetXUID,XamUserGetSigninState,XamUserLogon,XamUserCheckPrivilege,XamUserIsOnlineEnabled,"
+                    "XamShowMessageBoxUI,XamShowMessageBoxUIEx,"
+                    "XamShowKeyboardUI,XamShowSigninUI,XamShowSigninUIp,XamShowCreateProfileUI,XamShowDeviceSelectorUI,"
+                    "XamShowGamerCardUIForXUID";
+    if (const char* e = std::getenv("DASH_XAM_REDIRECT"); e && *e) redirect_list += std::string(",") + e;
+    REXLOG_INFO("[xamredir] DASH_PROFILE_MODE=xam : redirections {}", redirect_list);
+  }
+  const char* env = ProfileModeXam() ? redirect_list.c_str() : std::getenv("DASH_XAM_REDIRECT");
   if (!env || !*env) {
     REXLOG_INFO("[xamredir] DASH_XAM_REDIRECT absent : imports du Dashboard servis par le HLE");
   } else if (!xam) {
@@ -525,6 +591,10 @@ DASH_XAM_REDIRECT_HOOK(XMsgCancelIORequest)
 DASH_XAM_REDIRECT_HOOK(XamUserGetXUID)
 DASH_XAM_REDIRECT_HOOK(XamUserLogon)
 DASH_XAM_REDIRECT_HOOK(XamUserGetSigninState)
+DASH_XAM_REDIRECT_HOOK(XamUserReadProfileSettings)
+DASH_XAM_REDIRECT_HOOK(XamUserReadProfileSettingsEx)
+DASH_XAM_REDIRECT_HOOK(XamUserCheckPrivilege)
+DASH_XAM_REDIRECT_HOOK(XamUserIsOnlineEnabled)
 DASH_XAM_REDIRECT_HOOK(XamUserAreUsersFriends)
 DASH_XAM_REDIRECT_HOOK(XamEnumerate)
 DASH_XAM_REDIRECT_HOOK(XamContentCreate)

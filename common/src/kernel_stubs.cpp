@@ -10,6 +10,8 @@
 
 #include <rex/hook.h>
 #include <rex/types.h>
+
+#include "kernel_sdk_fn.h"
 #include <rex/system/kernel_state.h>
 #include <rex/system/util/string_utils.h>
 #include <rex/system/xobject.h>
@@ -129,6 +131,15 @@ REX_HOOK_RAW(__imp__ObReferenceObjectByName) {
   }
   if (out) *reinterpret_cast<uint32_t*>(base + out) = 0;
   ctx.r3.u64 = kStatusNameNotFound;
+}
+
+// NetDll_WSAStartupEx(appelant, version, &WSADATA, drapeaux) : le SDK n'implémente que NetDll_WSAStartup (succès, WSADATA rempli) et
+// laisse la variante Ex en stub (r3 inchangé = 2, soit un échec). signin.xex l'appelle par XexGetProcedureAddress(xam.xex, 36) :
+// il quittait aussitôt avec 80004005 (« This feature is temporarily unavailable », palier N4). Même traitement que WSAStartup :
+// démarrage de Winsock sans réseau (les opérations de socket échouent ensuite d'elles-mêmes).
+REX_HOOK_RAW(__imp__NetDll_WSAStartupEx) {
+  static PPCFunc* fn = dash::SdkFunction("__imp__NetDll_WSAStartup");
+  fn(ctx, base);
 }
 
 REX_EXPORT(__imp__XUsbcamCreate, dash::stubs::XUsbcamCreate_entry)

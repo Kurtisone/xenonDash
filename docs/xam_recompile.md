@@ -1007,3 +1007,112 @@ amorçage (appel de XamInputGetState au repos) et un état neutre de `XInputdRea
 ### Fichiers (palier N3)
 Nouveaux : `tools/regen_xam_modules.py`, `dashboards/2.0.13604.0-xam/{vk,signin,createprofile,gamerprofile,deviceselector,ximecore}_{overrides,auto_overrides}.toml`, `dashboards/2.0.13604.0-xam/src_xui/*.cpp` (produits).
 Modifiés : `dashboards/2.0.13604.0-xam/{CMakeLists.txt,dash_manifest.toml}`, `common/src/dash_xam_redirect.{h,cpp}` (tests, `DASH_XAM_EXPORTS`), `common/src/dash_xam_runtime.{h,cpp}` (`InXamImage`), ce document. SDK : 6 fichiers (ci-dessus).
+
+## Palier N4 : création de profil, connexion et parcours « premier lancement sans profil » par XAM recompilé
+
+**Atteint** (captures regardées, scratchpad non versionné) : avec `DASH_XAM_MODULE=2` et `DASH_PROFILE_MODE=xam`, le hub NXE démarre sans aucun profil
+(tuile « Sign In / No Profiles Found », `m2_1.png`) ; A sur la tuile ouvre la scène « Sign In » du Dashboard (« Create Profile », `m3_5.png`), puis
+`XamShowCreateProfileUI` ouvre la vraie fenêtre « Enter Profile Name » de `createprofile.xex` avec le clavier de `vk.xex` (`m3_14.png`) ; la création
+est **effective** (`XamProfileCreate` puis `XamProfileGetCreationStatus` = 0), XAM connecte le profil (`XamUserLogon`), le Dashboard reçoit la
+notification de connexion et affiche le profil dans « My Xbox » (tuile « 0 Latest Games » + avatar, `m9_12.png`). `DASH_TEST_SIGNIN=<s>` ouvre la
+vraie fenêtre « No Profiles Found / Create Profile / Recover Gamertag / Exit » de `signin.xex` (`s9_1.png`) ; le test enchaîné signin → création → nom →
+« Save Profile » → « Done » aboutit (`s11_*.png`). Après redémarrage sur une racine contenant le profil, le hub affiche « Sign In / 1 Profile Found »
+(`r7_2.png`) et la scène « Sign In » liste « Player1 / HDD » lu par XAM dans le paquet (`r8_5.png`). **Non atteint** : la connexion d'un profil existant
+choisi dans cette liste (XAM demande « Enter Pass Code », voir blocages).
+
+### Choix de la couche de stockage
+
+XAM écrit un profil dans un paquet de contenu « CON » (`Content\[<XUID>\]FFFE07D1\00010000\<XUID>`, en-tête de 40 Ko écrit par XAM avec NtWriteFile),
+puis demande au pilote STFS du **noyau** de monter le système de fichiers contenu dans le paquet (`StfsCreateDevice`, `StfsControlDevice` 0 à 5) et
+écrit `Account` dans ce volume. Le SDK n'a pas de pilote STFS (stubs). Options examinées :
+
+- (b) surcharger `sub_81864C38` (conteneur du compte) : ne couvre ni l'énumération des profils (qui relit l'en-tête et le compte de chaque paquet), ni la
+  connexion, ni l'ouverture du profil (`DASHUSER:`) ; il faudrait remplacer plusieurs fonctions de la couche de contenu de XAM.
+- (a) **retenue** : pilote STFS minimal côté noyau (`common/src/kernel_stfs.cpp`) dont le « volume » est un **dossier hôte** ; XAM garde toute sa logique
+  (création de l'en-tête, énumération, vérification, ouverture, GPD de profil). Le volume du paquet de profil est `<game_data_root>/profiles/<XUID>/`, le
+  dossier de profil déjà utilisé par le Dashboard (`dash_profile.cpp`) ; les autres paquets vont dans `<game_data_root>/.stfs/<chemin relatif>/`. Les codes
+  de `StfsControlDevice` (déduits des appelants `sub_8185EF28`, `sub_8185A5B0`, `sub_8185A290`) : 0 début d'écriture, 1 fin, 2 vérification, 3 empreinte du
+  volume (36 octets), 4 validation, 5 état. Le code 3 rend un **descripteur de volume STFS valide** (taille 0x24, hachage SHA-256 des fichiers du dossier) :
+  XAM le range dans l'en-tête, le signe, et le revalide à la réouverture (un descripteur sans `0x24` en tête rendait `0x80070570` et « No Profiles Found »
+  après redémarrage). Aucun volume STFS réel n'est écrit : un paquet créé ici n'est lisible que par ce noyau natif.
+- Le profil créé contient donc : `profiles/<XUID>/Account` (404 octets : 24 d'en-tête local + les 380 octets du compte), `FFFE07D1.gpd`, `tile_32.png`,
+  `tile_64.png` (créés par XAM à la connexion), et `Content/<XUID>/FFFE07D1/00010000/<XUID>` (en-tête CON signé localement).
+
+### Données de compte et clés : local, sans valeur de sécurité
+
+- **XUID** : généré par XAM (`sub_818AFAD0` : les réglages de console 1 et 2 échouent, il tire un XUID hors ligne aléatoire `0xE…`), stable ensuite dans le paquet.
+- **`Account`** : `XeKeysObfuscate`/`XeKeysUnObfuscate` locaux (`kernel_obfuscate.cpp`) : en-tête de 24 octets (« XDASHOBF », longueur, CRC-32) puis les données
+  **en clair**. Ni clé de console ni chiffrement ; illisible par une console.
+- **Signature d'en-tête** : `XeKeysConsolePrivateKeySign`/`XeKeysConsoleSignatureVerification` (`kernel_localkey.cpp`) par HMAC-SHA-256 avec une clé **locale** de 32
+  octets, tirée au hasard au premier usage dans `<état XAM>/local_console.key`. Une signature n'est valable que sur l'installation qui l'a produite ; un
+  paquet d'une vraie console est refusé comme avant. Aucune clé de console réelle n'est fabriquée, aucune protection de contenu contournée.
+- `XeCryptMd5` (`kernel_md5.cpp`, nom de périphérique `Package_<MD5 du chemin>`), `ExGetXConfigSetting`/`ExSetXConfigSetting` (`kernel_xconfig.cpp` : mémoire ;
+  zéros pour les catégories 3 et 7 absentes du SDK ; les catégories 1 et 2 restent en échec, XAM se replie sur un XUID aléatoire).
+
+### Cause des échecs de création (chaîne établie, `sub_818B4948` → `sub_81865010` → `sub_81864C38`)
+
+Aucune n'était l'absence de clés ou de pilote STFS au premier niveau ; ce sont des défauts du noyau émulé, levés un par un (traces d'appels sur les `sub_*`
+de XAM, retours et arguments, par définitions fortes jetables ; retirées) :
+
+| # | Symptôme | Cause | Correctif |
+|---|---|---|---|
+| 1 | `0x8000FFFF` (E_UNEXPECTED) avant tout accès fichier | `RtlAppendStringToString` (stub du SDK) : statut quelconque dans `sub_8185CD38` | `kernel_rtl.cpp` (+ `RtlAppendUnicode*`) |
+| 2 | `0x80070002` | liens `\System??\__tmpN:` enregistrés avec le préfixe ; `ObTranslateSymbolicLink` stub | `kernel_ob.cpp` : `ObCreate/DeleteSymbolicLink` sans préfixe, `ObTranslateSymbolicLink` (chemin absolu rendu tel quel) |
+| 3 | `0x80070005` | `\Device\Harddisk0\Partition1` = `game_data_root` en lecture seule (le périphérique d'état de XAM est masqué : même point de montage) | `allow_game_relative_writes=true` en mode XAM (`dash_app_base.cpp`) |
+| 4 | dossier `Content` introuvable, `0xC0000022` | `CreatePath` du SDK ne crée pas un fichier désigné par un chemin `\Device\...` | **SDK** `virtual_file_system.cpp` (création sous le parent déjà résolu) |
+| 5 | nom de paquet vide dans `Content\<XUID>\...` | `%.16I64X` d'un XUID `0xE…` faux (entier signé) | **SDK** `format.h` |
+| 6 | `Account` = octets de pile | `XeKeysObfuscate` stub | `kernel_obfuscate.cpp` |
+| 7 | `StfsCreateDevice` stub | pas de pilote STFS | `kernel_stfs.cpp` |
+| 8 | « Couldn't sign in » / `0x80070570` | en-tête jamais signé : `NtOpenSymbolicLinkObject` du SDK refuse `\System??\...` (conteneur jamais fermé, donc ni écrit ni signé) ; signature stub | `kernel_ob.cpp` (nom réécrit sans préfixe), `kernel_localkey.cpp` |
+
+### Connexion (`signin.xex`)
+
+La cause de la sortie immédiate (« temporarily unavailable, 80004005 ») n'était **pas** le cache d'entrée : `signin.xex` appelle `NetDll_WSAStartupEx` par
+`XexGetProcedureAddress(xam.xex, 36)` ; le SDK n'implémente que `NetDll_WSAStartup` et laisse la variante Ex en stub (r3 inchangé = 2 = échec).
+`kernel_stubs.cpp` : `NetDll_WSAStartupEx` = `NetDll_WSAStartup` (Winsock démarre sans réseau). Preuve : trace des fonctions de `signin.xex` (`sub_90104F78` →
+`sub_9010FEC8` → `sub_901121B8`), puis `s9_1.png`.
+Le cache d'entrée vide existait bien (`XamInputGetState(0, 0x80000000)` = `0x48F`, vérifié avec `DASH_XAM_INPUT_PATCH=0`) mais `signin.xex` le tolère. Un
+correctif est tout de même en place, conforme à la demande : `dashboards/2.0.13604.0-xam/src_xam_patch/xam_input_patch.cpp` définit `sub_818C4240` (cœur de
+`XamInputGetState`) : si XAM répond `0x48F` pour le port 0 avec le drapeau système, l'état est lu sur la manette virtuelle (`XInputdReadState`). L'exclusivité des
+entrées (le HUD actif bloque le Dashboard) est inchangée. `DASH_TEST_SIGNIN=<s>` existait déjà (`dash_xam_redirect.cpp`).
+
+### Mode `DASH_PROFILE_MODE=xam` (défaut : absent = comportement précédent)
+
+- `dash_xam_redirect.{h,cpp}` : `ProfileModeXam()`, `CallXamExport(nom)` ; redirections par défaut vers XAM : `XGetVideoMode`, `XamUserGetXUID`, `XamUserGetSigninState`,
+  `XamUserLogon`, `XamUserCheckPrivilege`, `XamUserIsOnlineEnabled`, `XamShow*UI`. Les accroches de profil de `dash_profile.cpp` (`XamUserGetName`, `XamUserGetGamerTag`,
+  `XamProfile*`, `XamReadTileEx`) et de `dash_user.cpp` passent la main à l'export de même nom de XAM (`DASH_XAM_FWD`, `DASH_XAM_FWD_HOOK`).
+- `XamUserGetSigninState` (XAM) : quand l'état d'un utilisateur change, `XN_SYS_SIGNINCHANGED` est **rediffusé côté HLE** (le Dashboard écoute les files du SDK, pas
+  celles de XAM) : sans cela la scène « Sign In » du Dashboard ne se fermait pas après la connexion.
+- Aucun profil au démarrage : vérifié (`m1`, dossier `profiles/` vide).
+- Robustesse : `dash_disc.cpp` (`LoadIcon`) levait une exception sans dossier `profiles/` (premier lancement) : corrigé.
+
+### Reproduire
+
+```sh
+cd third_party/rexglue-sdk && cmake --build out/build/linux-amd64 --config Release --target install -j 4        # SDK modifié (2 fichiers, voir plus bas)
+cd dashboards/2.0.13604.0-xam && cmake --preset linux-amd64-relwithdebinfo -DDASH_NATIVE_GPU=ON && cmake --build out/build/linux-amd64-relwithdebinfo -j 4
+# racine de jeu de test (dash.xex copié, flash en lien, profiles/ vide) ; DASH_ROOT remplace --game_data_root=assets (input_test.sh, run_headless.sh)
+DASH_ROOT=<racine> DASH_PROFILE_MODE=xam DASH_XAM_STATE=<dossier> ... ./input_test.sh essai 25 "Up" "sleep:2" "Right" "sleep:2" "Return" ...
+```
+Touches : `XKEYS_HOLD=0.12` ; `Up` (My Xbox), `Right` (tuile Sign In), `Return` (A), `p` (Start = Done du clavier).
+
+### Blocages restants, classés
+
+1. **Connexion d'un profil existant choisi dans la liste** : XAM affiche « Enter Pass Code » (compte à code nul, drapeaux réservés `0x10000001` écrits par `createprofile.xex`). Essais : drapeau `0x10000000` retiré, code `FFFFFFFF` : même
+   fenêtre (comptes modifiés à la main, CRC refait). Cause non établie ; piste : lecture du code dans `signin.xex` ou réglages « contrôle parental » (`ExGetXConfigSetting(3, 0x0F…)`) à zéro.
+2. **Réglages de profil** (`XamUserReadProfileSettings(Ex)`, `XamUserWriteProfileSettings`) : toujours servis par le HLE ; les rediriger vers XAM plante le Dashboard (lecture invitée de `0x7008004F` :
+   un identifiant de réglage pris pour un pointeur ; résultat asynchrone ?). Conséquence : gamertag et Gamerscore du bandeau du hub ne viennent pas du profil XAM ; le contenu (`dash_content.cpp`) reste lié au profil HLE.
+3. **Fenêtre « Save Profile »** : absente du parcours Dashboard (présente dans `DASH_TEST_CREATEPROFILE`) ; la connexion a lieu quand même.
+4. **Entrées du hub après connexion** : deux « Up » n'ont pas changé de blade (non élucidé : focus ? exclusivité ?).
+5. Défauts du SDK contournés dans `common/` : `StfsCreateDevice/ControlDevice`, `Rtl*String`, `ObTranslateSymbolicLink`, `NtOpenSymbolicLinkObject` (préfixe), `NetDll_WSAStartupEx`, `XeKeys*` locaux, `XeCryptMd5`, `Ex*XConfigSetting`.
+   Défauts corrigés **dans le SDK** (2 fichiers, ci-dessous) : `%I64X`, `CreatePath`.
+6. Rien n'est signé ni chiffré à la façon d'une console : les profils de ce mode sont locaux et illisibles par une console ; les packages d'une vraie console ne sont pas lus.
+
+### Fichiers (palier N4)
+
+Nouveaux : `common/src/{kernel_rtl,kernel_stfs,kernel_obfuscate,kernel_localkey,kernel_md5,kernel_xconfig}.cpp`, `common/src/dash_sha256.h`,
+`dashboards/2.0.13604.0-xam/src_xam_patch/xam_input_patch.cpp`.
+Modifiés : `common/CMakeLists.txt`, `common/src/{dash_app_base,dash_disc,dash_profile,dash_user,dash_xam_redirect,dash_xam_runtime,kernel_ob,kernel_stubs}.{cpp,h}`,
+`dashboards/2.0.13604.0-xam/{CMakeLists.txt,input_test.sh,run_headless.sh}` (variable `DASH_ROOT`), ce document.
+**SDK** (`third_party/rexglue-sdk`, non commité ; sauvegarde de `sdk/lib` et `sdk/bin` d'avant dans le scratchpad `n4_profile/sdkbak/`) : `include/rex/system/format.h`
+(conversions `%x/%u/%o` sur entier non signé), `src/filesystem/virtual_file_system.cpp` (`OpenFile` : création sous le parent résolu).

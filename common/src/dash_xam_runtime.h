@@ -27,6 +27,9 @@ namespace dash::xamrt {
 // XAM, pour tous les Dashboards.
 void MountFlash(rex::filesystem::VirtualFileSystem* vfs, const std::filesystem::path& flash_dir);
 
+// Répertoire d'état de XAM recompilé : DASH_XAM_STATE, sinon ${XDG_DATA_HOME:-~/.local/share}/xenondash/xam.
+std::filesystem::path StateDir();
+
 // Monte \Device\Harddisk0\Partition1 et \Device\MU0 sur des répertoires d'état (lecture/écriture). Répertoire racine :
 // DASH_XAM_STATE, sinon ${XDG_DATA_HOME:-~/.local/share}/xenondash/xam. Appelée seulement quand XAM est un module.
 void MountXamDevices(rex::filesystem::VirtualFileSystem* vfs);
