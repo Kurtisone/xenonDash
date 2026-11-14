@@ -667,7 +667,7 @@ class Build:
         for tool in ("clang", "clang++", "cmake", "ninja", "python3"):
             if not shutil.which(tool):
                 errs.append(f"outil manquant : {tool}")
-        for p, hint in ((REXGLUE, "SDK installe dans sdk/ (voir README)"),
+        for p, hint in ((REXGLUE, "SDK installe dans sdk/ (voir docs/technique.md)"),
                         (XENOSRECOMP, "XenosRecomp unifie : tools/build_xenosrecomp.sh")):
             if not os.path.isfile(p):
                 errs.append(f"{p} manquant : {hint}")

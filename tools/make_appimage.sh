@@ -1,5 +1,5 @@
 #!/bin/sh
-# Construit out/appimage/XenonDash-<version>-x86_64.AppImage (phase P6 ; voir README, « AppImage »).
+# Construit out/appimage/XenonDash-<version>-x86_64.AppImage (phase P6 ; voir docs/technique.md, « AppImage »).
 # usage: tools/make_appimage.sh <version> [--no-strip] [--no-build-tools]
 # --no-build-tools : sans les outils de recompilation de jeux (SDK, ngpu_core, XenosRecomp...) : AppImage légère, sans « Play Game »
 # pour les jeux à recompiler.

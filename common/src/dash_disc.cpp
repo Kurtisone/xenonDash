@@ -1,7 +1,7 @@
 // dash - disque simulé dans le lecteur (phase P5b).
 //
 // Un jeu du registre marqué `disc = true` (ou --dash_disc=<TitleID>) apparaît comme disque inséré. Ce que le
-// Dashboard 6770 interroge pour son bouton de disque (relevé dans le code recompilé, voir README) :
+// Dashboard 6770 interroge pour son bouton de disque (relevé dans le code recompilé, voir docs/technique.md) :
 //   1. notification système 0x8000000D, paramètre = type de média (1 = disque de jeu Xbox 360, 2 = Xbox
 //      d'origine...) : sub_9210EB88 la dépile et sub_9210E478 range le type dans l'état global (0x92803A8C),
 //      avec XamLoaderGetDvdTrayState. Sans cette notification l'état reste « aucun média » -> « Unplayable Disc ».

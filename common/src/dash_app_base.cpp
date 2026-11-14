@@ -110,7 +110,7 @@ void DashAppBase::OnPostSetup() {
   }
   // La flash (\SystemRoot, \Device\Flash) est montée avant XAM : son point d'entrée lit ces chemins.
   dash::xamrt::MountFlash(runtime()->file_system(), game_data_root() / "flash");
-  // P4 (prototype) : XAM recompilé comme module ReXGlue (voir README, « XAM recompilé »). Actif seulement si le projet
+  // P4 (prototype) : XAM recompilé comme module ReXGlue (voir docs/technique.md, « XAM recompilé »). Actif seulement si le projet
   // déclare le module (`[[modules]]` dans dash_manifest.toml) ET si DASH_XAM_MODULE est défini.
   if (std::getenv("DASH_XAM_MODULE")) {
     auto* ks = runtime()->kernel_state();

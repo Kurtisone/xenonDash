@@ -13,7 +13,7 @@ produit un projet ReXGlue compilé et testé dans dashboards/<version>/ :
   smoke     test de fumée sous Xvfb + lavapipe : capture PNG, aucune ligne FATAL
   compare   (option --compare-with) comparaison avec un projet de référence
 
-Code de retour non nul si une étape échoue. Voir README, « Porter une nouvelle version ».
+Code de retour non nul si une étape échoue. Voir docs/technique.md, « Porter une nouvelle version ».
 """
 import argparse
 import glob
@@ -688,7 +688,7 @@ def main():
             BUILD_DIR_NAME = f"{PRESET}-{os.path.basename(SDK.rstrip('/'))}"
 
     for tool, hint in ((REXGLUE, "SDK installé (cmake --build ... --target install)"),
-                       (XEXINFO, "tools/xexinfo (voir README)")):
+                       (XEXINFO, "tools/xexinfo (voir docs/technique.md)")):
         if not os.path.exists(tool):
             sys.exit(f"outil manquant : {tool} -- {hint}")
     if a.shrdres_xam is None:

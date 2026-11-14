@@ -1,6 +1,6 @@
 # Reprise du projet par une autre session ou un autre modèle
 
-Ce document permet de reprendre le travail sans l'historique de conversation. Dernière mise à jour : 2026-11-14.
+Ce document permet de reprendre le travail sans l'historique de conversation. Dernière mise à jour : 2026-11-14 (après le palier N4 : création de profil et connexion par XAM). Index de la documentation : [INDEX.md](INDEX.md) ; le README est destiné aux utilisateurs.
 
 ## Objectif en cours (NXE 2.0.13604)
 Le Dashboard NXE doit rester dans l'interface Xbox : plus de fenêtres ImGui façon Xenia-canary ; sans profil, le même parcours qu'une console
@@ -9,7 +9,7 @@ Le Dashboard NXE doit rester dans l'interface Xbox : plus de fenêtres ImGui fa�
 
 ## Où lire l'état
 `git log --oneline | head -40` ; `PLAN.md` (P8) ; `docs/xam_recompile.md` (paliers A à N4 : XAM 13604, HUD, modules XUI, entrées, profil) ;
-`docs/ngpu_core.md` (rendu natif du Dashboard et du HUD) ; `docs/nxe_jeux.md` ; `docs/recompilateur_generique.md` ; `docs/bibliotheque.md` ; `README.md`.
+`docs/ngpu_core.md` (rendu natif du Dashboard et du HUD) ; `docs/nxe_jeux.md` ; `docs/recompilateur_generique.md` ; `docs/bibliotheque.md` ; `docs/technique.md`.
 Notes détaillées des agents (non versionnées, `work/notes/`) : `xam13604-AVANCEMENT.md`, `hud_native-…`, `n3_modules-…`, `n4_profile-…` (si présent).
 
 ## Règles de l'utilisateur
@@ -32,12 +32,15 @@ Notes détaillées des agents (non versionnées, `work/notes/`) : `xam13604-AVAN
 - `/tmp` est un tmpfs (11 Go libres) : caches de jeu et journaux volumineux à supprimer par nom ; core dumps désactivés.
 - `pgrep -f` se retrouve lui-même dans une boucle d'attente `while pgrep -f ...` : toute attente doit avoir un délai maximal.
 - Le fork du SDK est le sous-module `third_party/rexglue-sdk` (branche `unified`) ; après modification : le reconstruire et le réinstaller dans `sdk/` (procédure dans `docs/xam_recompile.md`), puis commiter le sous-module PUIS le dépôt.
-- Un bloc « TEMPORAIRE (trace jetable) » `src_ftrace` traîne dans `dashboards/2.0.13604.0-xam/CMakeLists.txt` : à retirer.
+
+## État du profil (palier N4, commité)
+Création de profil, connexion et parcours « aucun profil » fonctionnent avec les vraies fenêtres Xbox (`DASH_PROFILE_MODE=xam`, défaut OFF ; variante `dashboards/2.0.13604.0-xam/`) :
+pilote STFS minimal côté noyau, profil local hors ligne (XUID aléatoire, signature par une clé locale tirée au hasard), aucune clé de console. Détail : `docs/xam_recompile.md`.
 
 ## Suite, par ordre de priorité
-1. Création effective du profil (`XamProfileCreate`) et connexion (`signin.xex`) par XAM recompilé (voir `docs/xam_recompile.md`, palier N4).
-2. Mode « aucun profil au premier lancement » : la tuile de connexion du hub appelle les vraies fenêtres (`DASH_PROFILE_MODE=xam` tant que non validé).
+1. Profil existant choisi dans la liste : XAM demande « Enter Pass Code » (cause non établie) ; `XamUserReadProfileSettings(Ex)` redirigé vers XAM plante le Dashboard (lecture invitée de `0x7008004F`) : gamertag/Gamerscore du bandeau et contenu restent liés au profil HLE ; fenêtre « Save Profile » absente du parcours Dashboard.
+2. Rendre `DASH_PROFILE_MODE=xam` le défaut et livrer la variante `-xam` (XAM + HUD) en AppImage (aujourd'hui l'AppImage NXE est la variante sans XAM recompilé, donc sans HUD).
 3. Retirer les fenêtres ImGui restantes (progression de construction des jeux, liste F5, succès) au profit de fenêtres du HUD ou de scènes du Dashboard.
-4. Livrer la variante `-xam` (XAM + HUD) en AppImage ; 72 shaders non traduits (plantages XenosRecomp), 3 vertex shaders à texture.
+4. 72 shaders non traduits à l'import (64 plantages de XenosRecomp, 8 échecs `dxc`), 3 vertex shaders à texture ; l'un d'eux est créé à l'exécution.
 5. Avatar : dépend d'un paquet de l'utilisateur (éditeur d'avatar absent du flash).
 6. Recompilateur générique : XDK tardives (Trials Fusion refusé : image noire, shaders chargés hors `Set*Shader`).

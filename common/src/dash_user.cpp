@@ -5,7 +5,7 @@
 // 1 Profile Found » sinon). Ici : un profil local, hors ligne (connecté localement, sans Xbox LIVE),
 // cohérent avec XamUserGetSigninState (1 = connecté localement) du SDK.
 //
-// Les signatures viennent de la lecture du code recompilé du Dashboard (voir README, « Profil joueur »).
+// Les signatures viennent de la lecture du code recompilé du Dashboard (voir docs/technique.md, « Profil joueur »).
 
 #include <algorithm>
 #include <cstring>

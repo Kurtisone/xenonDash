@@ -215,7 +215,7 @@ std::optional<Game> Find(uint32_t title_id) {
   return std::nullopt;
 }
 
-// `library = true` à la racine de games.toml : les jeux apparaissent aussi comme contenu installé (voir README).
+// `library = true` à la racine de games.toml : les jeux apparaissent aussi comme contenu installé (voir docs/technique.md).
 bool LibraryEnabled() {
   std::error_code ec;
   if (fs::exists(AutoRegistryPath(), ec)) return true;  // bibliothèque automatique : toujours listée

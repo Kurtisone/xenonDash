@@ -154,7 +154,7 @@ std::vector<Item> List(uint32_t title_id, uint32_t type) {
     all.push_back(std::move(p));
   }
   // Jeux du registre games.toml (Games Library : démos, Arcade, Xbox Originals...) : éléments virtuels, seulement
-  // dans les énumérations, seulement avec `library = true` (« My Games » : voir dash_library.cpp et README).
+  // dans les énumérations, seulement avec `library = true` (« My Games » : voir dash_library.cpp et docs/technique.md).
   if (launch::LibraryEnabled()) {
     for (auto& g : launch::Games()) {
       Item v;
@@ -463,7 +463,7 @@ REX_HOOK(__imp__XamContentCreateEnumerator, dash::content::XamContentCreateEnume
   }
 // XamContentGetAttributesInternal(contenu XCONTENT_DATA*, attributs*, 0) : le Dashboard réserve 36 octets
 // (sub_922293F0 : memset(+38364, 0, 36) dans l'enregistrement d'une tâche de chargement CLoaderTask) ; sans
-// réussite de l'appel (sub_9222B550), la tâche échoue et « My Games » reste grisé. Contenu : zéros (voir README).
+// réussite de l'appel (sub_9222B550), la tâche échoue et « My Games » reste grisé. Contenu : zéros (voir docs/technique.md).
 REX_HOOK_RAW(__imp__XamContentGetAttributesInternal) {
   uint32_t out = ctx.r4.u32;
   if (out) std::memset(base + out, 0, 36);

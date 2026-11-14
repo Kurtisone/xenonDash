@@ -6,7 +6,7 @@ Date : 2026-11-12. Tout se passe depuis le Dashboard : l'AppImage NXE crée un d
 
 ## 1. Parcours utilisateur
 
-1. Lancer l'AppImage (`XenonDash-2.0.13604.0-x86_64.AppImage`). Premier lancement : import de la mise à jour système (voir README, « AppImage »), puis
+1. Lancer l'AppImage (`XenonDash-2.0.13604.0-x86_64.AppImage`). Premier lancement : import de la mise à jour système (voir docs/technique.md, « AppImage »), puis
    `AppRun` crée le **dossier de jeux** `~/XenonDash/Games` (ou `$XENONDASH_GAMES_DIR`) et le dit (console et `notify-send` s'il existe) ;
    `AppRun --games-dir` l'affiche.
 2. Déposer les jeux dans ce dossier : ISO, dossiers extraits (avec `default.xex`), paquets XBLA (STFS), GOD, liens symboliques (formats : bibliotheque.md §1).
@@ -37,7 +37,7 @@ Méthode : gdb en mode batch avec un script Python qui pose un point d'arrêt (n
 **Cause trouvée : `XamLoaderGetMediaInfoEx` était un stub du SDK** (`REX_EXPORT_STUB`, r3 inchangé, sorties non écrites). Le hub l'appelle
 (`sub_92236178`, `sub_922447F8`, `sub_92244748`, `sub_923133E0`) avec trois pointeurs de sortie avant toute action sur le disque : A sur la tuile, Play Game, Eject.
 Il lit la 3e sortie et la compare à 0 et à -2 ; avec des valeurs de pile aléatoires il abandonnait en silence (aucune fonction XAM de lancement journalisée,
-d'où le constat du README). Le trace de l'appui A sur la tuile de disque montrait, juste après `XamContentGetDeviceData`, `XamLoaderGetMediaInfo` puis `XamLoaderGetMediaInfoEx`
+d'où le constat de docs/technique.md). La trace de l'appui A sur la tuile de disque montrait, juste après `XamContentGetDeviceData`, `XamLoaderGetMediaInfo` puis `XamLoaderGetMediaInfoEx`
 (r3=&a, r4=&b, r5=&c), puis plus rien.
 
 **Correctif** (`dash_launch.cpp`) : `XamLoaderGetMediaInfoEx(&a, &b, &c)` écrit a = type de média (1 = disque de jeu Xbox 360, 0 sans disque), b = TitleID du disque,

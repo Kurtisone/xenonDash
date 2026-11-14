@@ -57,7 +57,7 @@ l'utilisateur au premier lancement.
   au lieu du stub) ; suppression vérifiée de bout en bout ; Copy/Move (`XamContentCopyInternal`/`MoveInternal`) :
   changement de propriétaire sur le disque, erreur propre vers un appareil non inscriptible.
 - Stored Game Items non filtré : c'est le comportement du Dashboard 6770 (scène `DeviceSelector.xur` sans paramètre,
-  voir README), pas un défaut de XAM.
+  voir docs/technique.md), pas un défaut de XAM.
 - Reste : Downloads (Marketplace en ligne, demande une connexion Xbox LIVE simulée) ; noms d'appareils « Dummy HDD /
   Dummy ODD » (SDK) ; `XamContentGetAttributesInternal`, `ResolveInternal`, `GetDefaultDevice`, `OpenFileInternal`
   encore en stub (jamais appelés par le parcours Stored Game Items) ; Copy/Move entre profils non testés à l'écran.
@@ -85,7 +85,7 @@ l'utilisateur au premier lancement.
   SDK (imports sans thunk, adresse 0 dans `PPCFuncMappings`). Achievements/Played Games non atteints (écran de
   profil derrière « Sign In »).
 - **5759 et 4532 : partiel** : codegen et compilation OK, écran noir (déréférencement nul à l'initialisation XUI,
-  voir README). Pistes : tracer les appels XAM/noyau avant le crash et les comparer à 6717 ; ces versions ouvrent
+  voir docs/technique.md). Pistes : tracer les appels XAM/noyau avant le crash et les comparer à 6717 ; ces versions ouvrent
   `media:\gamercrd.xzp` (ressource XAM de la même version, indisponible : XAM base 1888 chiffrée).
 - **2255 : impossible** (que des deltas `.xexp` sur la base 1888).
 - Outil : continuations de funclets (`finally`) déclarées automatiquement, copie du profil de test et de
@@ -106,17 +106,17 @@ l'utilisateur au premier lancement.
   dispatchait pas (le D3D 17559 soumet ses tampons imbriqués par une DPC) ; correctif SDK `8eb253f`. Autres correctifs :
   `setjmp`/`longjmp` du CRT déclarés (Lua), stubs XAM qui renvoyaient leur 1er argument (langue, contexte de Dashboard,
   Kinect...), ressources XZP embarquées dans `dash.xex` extraites par l'outil (`langpack://` -> `media:\<nom>.xzp`),
-  `XeCryptHmacSha*`. Profil du hub résolu en P4b (`common/src/dash_user.cpp`) ; reste `XLIVEBASE 0x58003` (échec conservé, voir README).
+  `XeCryptHmacSha*`. Profil du hub résolu en P4b (`common/src/dash_user.cpp`) ; reste `XLIVEBASE 0x58003` (échec conservé, voir docs/technique.md).
 - **Bloqué (palier 2)** : le premier thread système de XAM lit un singleton nul (périphériques `Harddisk0\Partition1`...
   absents) ; la redirection des imports du Dashboard vers les exports de XAM n'est pas écrite.
-- **Suite chiffrée** (détail et risques dans le README, « Dashboard 2.0.17559 et XAM recompilé ») : 2) XAM vivant
+- **Suite chiffrée** (détail et risques dans docs/technique.md, « Dashboard 2.0.17559 et XAM recompilé ») : 2) XAM vivant
   (périphériques, stubs noyau), 2-3 j ; 3) générateur de redirections + `XamShow*UI`, 1-2 j ; 4) profil/succès via XAM,
   3-5 j ; 5) rendu XUI de XAM + manette, 2-4 j ; 6) retrait d'ImGui, captures, AppImage, 1 j. À court terme : profil et
   Games/My Games du 17559 en HLE (comme 6770), puis AppImage Metro.
 - **NXE 2.0.13604 (HLE, FAIT en partie, 2026-11-06)** : interface NXE affichée et pilotée au clavier, AppImage OK
   (`tools/xex_rekey.py` : le `xam.xex` 13604 est chiffré avec la clé XEX1 ; polices 6770 en substitution) ; profil, Recent Games, Achievements, disque et
   lancement/retour de Skate **faits** (P4b, 2026-11-12 ; reste le bouton Play Game du hub, non câblé), puis recompilation de XAM 13604 (XEX désormais décodable).
-  Détail : README, « Dashboard NXE 2.0.13604 ». **Découverte** : les `xam_*.xex` Blades de XeBuilds (6717, 7258...) se
+  Détail : docs/technique.md, « Dashboard NXE 2.0.13604 ». **Découverte** : les `xam_*.xex` Blades de XeBuilds (6717, 7258...) se
   déchiffrent aussi avec la clé XEX1 : XAM Blades recompilable (à explorer ; 6770 reste base 1888 + delta).
 - Ensuite : autres mises à jour complètes NXE/Metro.
 
@@ -131,7 +131,7 @@ l'utilisateur au premier lancement.
   rendu), puis retour au Dashboard ; idem avec une commande factice. 6717 recompilé, smoke OK.
 - **P5b (FAIT)** : lancement natif depuis les boutons du Dashboard 6770 : le bouton de disque (jeu `disc = true`) affiche le
   nom et l'icône du jeu et A le lance ; Games Library > « My Games » liste les jeux du registre (`library = true`), « Last
-  Played Game » et la page « My Games - <jeu> » avec « Play Game » les lancent (voir README, « Bouton de disque et My
+  Played Game » et la page « My Games - <jeu> » avec « Play Game » les lancent (voir docs/technique.md, « Bouton de disque et My
   Games »). Disque : notification `0x8000000D` (type de média 1), XEX synthétique monté en `\Device\Cdrom0`, message
   XAM `0xFB/0xB003C` (nom + icône), `XamLoaderGetMediaInfo`. My Games : `XamContentGetAttributesInternal` réussi,
   `XamContentCreateInternal`/`Close` interposés pour monter un `ArcadeInfo.xml` (UTF-16 BE avec BOM) généré,
@@ -204,6 +204,10 @@ TrialsReVolution : Trials HD/Evolution/Fusion) sont fusionnés dans XenonDash.
   - *NXE 13604* (FAIT en grande partie) : registre fusionné (`games.toml` + `games.auto.toml`), scan au démarrage (F6), **Game Library listant tous les jeux sans disque** (éléments d'énumération de 512 octets),
     Play Game câblé (`XamLoaderGetMediaInfoEx`), progression de construction à l'écran, AppImage embarquant la chaîne de recompilation (49,9 Mo ; clang, cmake, ninja et python 3.11+ de l'hôte). Bout en bout vérifié
     avec Skate en recette (`dashboards/2.0.13604.0/e2e_jeux.sh`). Détail : [docs/nxe_jeux.md](docs/nxe_jeux.md).
+  - *NXE : XAM, HUD et profil (2026-11-14, FAIT en grande partie)* : XAM 13604 recompilé et 8 modules XUI du flash (`hud`, `vk`, `signin`, `createprofile`, `gamerprofile`, `deviceselector`, `ximecore`, ressources `huduiskin`) chargés à la demande ;
+    **rendu natif du Dashboard 13604** (`ngpu_core`, façade par profil, parité ≈ 2/255) et **du HUD de XAM** (copie D3D9 2099 de XAM interceptée, second contexte de rendu, superposition alpha) : vraie boîte de message, vrai clavier virtuel,
+    création de profil et connexion par les fenêtres Xbox (pilote STFS minimal côté noyau, profil local hors ligne, aucune clé de console), parcours « aucun profil » (`DASH_PROFILE_MODE=xam`). AppImage 13604 native, shaders générés à l'import.
+    Reste : code PIN d'un profil existant, `XamUserReadProfileSettings`, `DASH_PROFILE_MODE=xam` par défaut et AppImage de la variante `-xam`, retrait des fenêtres ImGui, avatar. Détail : [docs/xam_recompile.md](docs/xam_recompile.md), [docs/ngpu_core.md](docs/ngpu_core.md), [docs/REPRISE.md](docs/REPRISE.md).
   - *Reste* : XDK tardives (chargement des shaders de Trials Fusion, références manquantes pour 20158/17559), autres XDK jamais essayées (un seul jeu validé en générique), ISO/GOD réels, lancement générique de bout en bout
     depuis la Game Library à plusieurs jeux, étiquette « Arcade Game » des jeux disque, dialogue « Can't launch » résiduel après un refus, shaders des archives compressées (boucle « jouer -> reconstruire »).
 

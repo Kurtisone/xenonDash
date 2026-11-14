@@ -1,6 +1,6 @@
 // dash - « My Games » de la Games Library : jeux du registre vus comme jeux Arcade installés (phase P5b).
 //
-// Analyse du Dashboard 6770 (voir README) : la Games Library est une scène « Arcade:: » (2500_LiveArcadeHome.xur,
+// Analyse du Dashboard 6770 (voir docs/technique.md) : la Games Library est une scène « Arcade:: » (2500_LiveArcadeHome.xur,
 // Arcade::CMyArcadeMetaScene, Arcade::CTitleSelectorScene). Pour chaque contenu de type Arcade (0xD0000) énuméré,
 // une tâche CLoaderTask (vtable 0x9201F8B8, thread de travail) :
 //   1. XamContentGetAttributesInternal(contenu, attributs[36 octets], 0) doit réussir (dash_content.cpp) ;

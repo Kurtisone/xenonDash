@@ -1,6 +1,6 @@
 # XAM 13604 recompilé dans le processus du Dashboard (palier A)
 
-Suite de « Dashboard 2.0.17559 et XAM recompilé » (README, phase P4). Objectif du palier : `dashboards/2.0.13604.0-xam/`
+Suite de « Dashboard 2.0.17559 et XAM recompilé » (docs/technique.md, phase P4). Objectif du palier : `dashboards/2.0.13604.0-xam/`
 démarre avec `xam.xex` 13604 recompilé chargé comme module, le hub s'affiche, les threads système de XAM vivent.
 
 ## État
@@ -70,7 +70,7 @@ interdite par `ptrace_scope=1`). Pile à 60 s avec module : le thread principal 
    (`m1a`) établie ; cause du hub noir probable. Voir « Palier B ».
 2. **Instructions non implémentées dans XAM** : traitées par `tools/xam_unimpl_patch.py` (voir « Palier B »).
 3. **Redirection des imports** non commencée : le Dashboard appelle toujours le HLE (`__imp__Xam*`, `__imp__Xui*`). Le
-   module tourne à côté sans rien servir au Dashboard. Plan : générateur `REX_HOOK_RAW` par ordinal (README, palier 3).
+   module tourne à côté sans rien servir au Dashboard. Plan : générateur `REX_HOOK_RAW` par ordinal (docs/technique.md, palier 3).
 4. **Contenu des périphériques** : les fichiers attendus par XAM (`secexp.xex`, `xstudio.xex`, `systemupdate.xex`) ne sont
    pas dans les répertoires d'état, qui sont vides au départ.
 5. **Variables et stubs noyau** : `xam:0x3db` (`g_XuiAutomation`), `xboxkrnl:0x157` (`XboxKrnlBaseVersion`) non
