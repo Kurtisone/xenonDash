@@ -107,10 +107,28 @@ bool Evlog() {
   return on;
 }
 
+// Dossier des <cle>.spv : DASH_NGPU_SHADERS, sinon <game_data_root>/shaders/dash (fixé par dash_app_base.cpp ; relatif
+// au dossier courant en repli, qui est le dossier de données sous l'AppImage).
 std::string ShaderDir() {
   const char* e = std::getenv("DASH_NGPU_SHADERS");
-  return e && *e ? e : "work/shaders_out";
+  return e && *e ? e : "shaders/dash";
 }
+// Shader absent : un dossier absent donne un seul message (lancer la régénération) ; un dossier présent mais incomplet donne
+// une ligne par shader.
+void ReportMissingShader(uint64_t key, bool pixel, uint32_t object) {
+  static bool dir_reported = false;
+  const std::string dir = ShaderDir();
+  struct stat st;
+  if (::stat(dir.c_str(), &st) != 0 || !S_ISDIR(st.st_mode)) {
+    if (!dir_reported) {
+      dir_reported = true;
+      NGPU_ERR("shaders natifs du Dashboard introuvables dans %s : lancer la régénération (XenonDash --regen-shaders)", dir.c_str());
+    }
+    return;
+  }
+  NGPU_ERR("SPIR-V introuvable pour le shader %s %016llX (objet %08X) dans %s", pixel ? "PS" : "VS", (unsigned long long)key, object, dir.c_str());
+}
+
 std::string MissingDir() {
   const char* e = std::getenv("DASH_NGPU_MISSING");
   return e && *e ? e : "";
@@ -257,8 +275,7 @@ const ShaderObject* RegisterObject(const uint8_t* base, uint32_t object, bool pi
         g.core->shaders().AddFile(info.key, path);
       } else {
         const std::string dir = MissingDir();
-        NGPU_ERR("SPIR-V introuvable pour le shader %s %016llX (objet %08X) dans %s", pixel ? "PS" : "VS", (unsigned long long)info.key, object,
-                 ShaderDir().c_str());
+        ReportMissingShader(info.key, pixel, object);
         if (!dir.empty()) {  // boucle « jouer -> reconstruire » : le conteneur est ecrit pour tools/dash_shaders.py
           std::snprintf(name, sizeof name, "/%016llX_%s.bin", (unsigned long long)info.key, pixel ? "PS" : "VS");
           if (FILE* f = std::fopen((dir + name).c_str(), "wb")) {

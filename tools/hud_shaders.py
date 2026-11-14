@@ -18,26 +18,22 @@ a zero avant le hachage (D3D les remplit a l'execution ; les autres octets sont 
 Rien de ce que cet outil produit n'est versionne (derives de microcode Microsoft).
 """
 import os
+import re
 import shutil
 import struct
-import subprocess
 import sys
 import tempfile
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(ROOT, "tools"))
+import dash_shaders as ds  # noqa: E402  (XXH3, XenosRecomp, traduction par lots)
 
 
 def be(data, offset):
     return struct.unpack(">I", data[offset:offset + 4])[0]
 
 
-def xxh3(data):
-    with tempfile.NamedTemporaryFile() as f:
-        f.write(data)
-        f.flush()
-        out = subprocess.run(["xxhsum", "-H3", f.name], capture_output=True, text=True, check=True).stdout
-    return int(out.split("_")[1].split()[0], 16)
+xxh3 = ds.xxh3
 
 
 def convert(old):
@@ -111,45 +107,21 @@ def extract(image, out):
     print(f"{n} conteneurs -> {out}")
 
 
-def batch(src, out, root):
-    """XenosRecomp puis dxc (comme tools/xenos_batch.py), avec la correction des booleens de pixel shader (128 + n)."""
-    import re
-    X = f"{root}/build/XenosRecomp/XenosRecomp"
-    DXC = f"{root}/thirdparty/dxc-bin/bin/x64/dxc-linux"
-    INC = f"{root}/XenosRecomp/shader_common.h"
-    env = dict(os.environ, LD_LIBRARY_PATH=f"{root}/thirdparty/dxc-bin/lib/x64")
-    os.makedirs(out, exist_ok=True)
-    for f in sorted(os.listdir(os.path.join(src, "ui"))):
-        if not f.endswith(".bin"):
-            continue
-        name = f[:-4]
-        h, o = f"{out}/ui_{name}.hlsl", f"{out}/ui_{name}.spv"
-        r = subprocess.run([X, os.path.join(src, "ui", f), h, INC], capture_output=True, text=True, timeout=60)
-        if r.returncode != 0 or not os.path.exists(h):
-            print("XenosRecomp a echoue :", name, (r.stderr.strip().splitlines() or [""])[-1][:160])
-            continue
-        text = open(h).read()
-        text = re.sub(r"#define (\w+) \(1 << (\d+)\)", lambda m: f"#define {m.group(1)} (1 << {int(m.group(2)) - 128 if int(m.group(2)) >= 144 else int(m.group(2))})", text)
-        open(h, "w").write(text)
-        t = "ps_6_0" if name.endswith("PS") else "vs_6_0"
-        args = [DXC, "-T", t, "-HV", "2021", "-all-resources-bound", "-spirv", "-fvk-use-dx-layout", "-Qstrip_debug"]
-        if t == "vs_6_0":
-            args.append("-fvk-invert-y")
-        r = subprocess.run(args + [h, "-Fo", o], capture_output=True, text=True, env=env, timeout=300)
-        if r.returncode != 0 or not os.path.exists(o):
-            errs = [l for l in r.stderr.splitlines() if "error" in l]
-            print("dxc a echoue :", name, (errs[0] if errs else r.stderr.strip())[:200])
+def fix_bools(text):
+    """Booleens de pixel shader : le microcode lit b128 + n, la table de constantes donne n (decalage retire du HLSL)."""
+    return re.sub(r"#define (\w+) \(1 << (\d+)\)",
+                  lambda m: f"#define {m.group(1)} (1 << {int(m.group(2)) - 128 if int(m.group(2)) >= 144 else int(m.group(2))})", text)
 
 
 def translate(bindir, out, root):
-    import dash_shaders as ds
+    """Conteneurs convertis (<bindir>/*.bin) -> <out>/<cle>.spv et <cle>.cont (lus par hud_front.cpp)."""
     tmp = tempfile.mkdtemp(prefix="hudsh-")
     try:
         os.makedirs(os.path.join(tmp, "ui"))
         for name in os.listdir(bindir):
             if name.endswith(".bin"):
                 shutil.copyfile(os.path.join(bindir, name), os.path.join(tmp, "ui", name))
-        batch(tmp, tmp + "-out", root)
+        fails = ds.batch(tmp, tmp + "-out", root, text_fix=fix_bools)
         os.makedirs(out, exist_ok=True)
         done = 0
         for name in sorted(os.listdir(bindir)):
@@ -159,13 +131,14 @@ def translate(bindir, out, root):
             key = microcode_key(container)
             spv = os.path.join(tmp + "-out", "ui_" + name[:-4] + ".spv")
             if key is None or not os.path.isfile(spv):
-                print("non traduit :", name)
+                print("non traduit :", name, flush=True)
                 continue
             shutil.copyfile(spv, os.path.join(out, f"{key:016X}.spv"))
             with open(os.path.join(out, f"{key:016X}.cont"), "wb") as f:
                 f.write(container)
             done += 1
-        print(f"{done} shaders nommes par cle -> {out}")
+        print(f"{done} shaders nommes par cle -> {out} ({len(fails)} échec(s) XenosRecomp/dxc)", flush=True)
+        return done, fails
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
         shutil.rmtree(tmp + "-out", ignore_errors=True)
@@ -173,7 +146,7 @@ def translate(bindir, out, root):
 
 def main():
     a = sys.argv[1:]
-    default_root = os.path.join(ROOT, "work", "XenosRecomp-unified")
+    default_root = ds.xenos_root()
     if len(a) == 3 and a[0] == "extract":
         extract(a[1], a[2])
     elif len(a) >= 3 and a[0] == "translate":

@@ -6,10 +6,13 @@ HERE=$(dirname "$(readlink -f "$0")")
 VERSION=$(cat "$HERE/usr/share/xenondash/version")
 DATA=${XENONDASH_DATA:-${XDG_DATA_HOME:-$HOME/.local/share}/xenondash}/$VERSION
 SHARE=$HERE/usr/share/xenondash
+# Rendu de cette AppImage : « native » (Dashboard par native_gpu, aucun plugin GPU ; shaders SPIR-V générés à l'import) ou
+# « xenos » (émulation GPU par le plugin xenos). Sans marqueur (AppImage antérieure) : xenos.
+GPU=$(cat "$SHARE/gpu" 2>/dev/null || echo xenos)
 
 usage() {
   cat <<USG
-XenonDash $VERSION (usage personnel, non redistribuable)
+XenonDash $VERSION (usage personnel, non redistribuable ; rendu : $GPU)
 Données : $DATA
 
   --import <mise_à_jour>       importe la mise à jour système officielle (dossier \$SystemUpdate, paquet STFS
@@ -17,6 +20,7 @@ Données : $DATA
   --modules <dossier>          modules/polices complets de la version (archive XeBuilds), avec --import
   --shrdres-xam <xam.xex>      xam.xex complet d'une mise à jour récente (ex. 17559) pour shrdres.xzp, avec --import
   --reimport                   refait l'import (profils et games.toml conservés)
+  --regen-shaders              refait les shaders SPIR-V du rendu natif (dash.xex et xam.xex importés), puis quitte
   --games-dir                  affiche le dossier de jeux (défaut ~/XenonDash/Games, \$XENONDASH_GAMES_DIR) et quitte
   --data-dir                   affiche le dossier de données et quitte
   --help                       cette aide
@@ -25,7 +29,7 @@ Sans option et sans données, une fenêtre (zenity/kdialog) ou la console demand
 USG
 }
 
-UPDATE= MODULES= XAM= REIMPORT=0 GAMES_ONLY=0
+UPDATE= MODULES= XAM= REIMPORT=0 GAMES_ONLY=0 REGEN_SHADERS=0
 while [ $# -gt 0 ]; do
   case $1 in
     --help|-h) usage; exit 0;;
@@ -37,6 +41,7 @@ while [ $# -gt 0 ]; do
     --shrdres-xam) XAM=$2; shift 2;;
     --shrdres-xam=*) XAM=${1#*=}; shift;;
     --reimport) REIMPORT=1; shift;;
+    --regen-shaders) REGEN_SHADERS=1; shift;;
     --games-dir) GAMES_ONLY=1; shift;;
     *) break;;
   esac
@@ -58,11 +63,26 @@ do_import() {
   set -- "$d" "$u"
   [ -n "$m" ] && set -- "$@" --modules "$m"
   [ -n "$x" ] && set -- "$@" --shrdres-xam "$x"
+  [ "$GPU" = native ] && set -- "$@" --native-shaders
   python3 -I "$SHARE/tools/xenondash_import.py" "$@" --games-example "$SHARE/games.example.toml"
 }
 
 ready() { [ -f "$DATA/.ready" ] && [ -f "$DATA/dash.xex" ]; }
 
+# Racine des outils de recompilation : l'AppImage est montée en lecture seule à un chemin qui change à chaque lancement ;
+# un lien stable (par version) sert de racine, pour que les projets compilés gardent des chemins valides entre deux lancements.
+LINK=${XENONDASH_DATA:-${XDG_DATA_HOME:-$HOME/.local/share}/xenondash}/runtime-$VERSION
+mkdir -p "$(dirname "$LINK")" 2>/dev/null
+ln -sfn "$SHARE" "$LINK"
+XRE=$LINK/work/XenosRecomp-unified/build/XenosRecomp
+if [ -x "$XRE/XenosRecomp" ]; then
+  export XD_XENOSRECOMP=$XRE/XenosRecomp
+  LD_LIBRARY_PATH=$XRE${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}; export LD_LIBRARY_PATH
+fi
+# xxhsum (XXH3 des shaders) : embarqué dans l'AppImage (tools/xxhsum), sinon celui du système
+[ -x "$SHARE/tools/xxhsum" ] && export XD_XXHSUM=$SHARE/tools/xxhsum
+
+IMPORTED=0
 if [ "$REIMPORT" = 1 ] || [ -n "$UPDATE" ] || ! ready; then
   if [ -z "$UPDATE" ]; then
     echo "XenonDash $VERSION : premier lancement, import de la mise à jour système officielle." >&2
@@ -76,6 +96,18 @@ if [ "$REIMPORT" = 1 ] || [ -n "$UPDATE" ] || ! ready; then
   fi
   [ -d "$XAM" ] && for c in "$XAM/\$flash_xam.xex" "$XAM/xam.xex"; do [ -f "$c" ] && XAM=$c && break; done
   do_import "$DATA" "$UPDATE" "$MODULES" "$XAM" || { echo "Import en échec (voir ci-dessus)." >&2; exit 1; }
+  IMPORTED=1
+fi
+
+if ! ready; then echo "Données absentes : $DATA (utiliser --import)" >&2; exit 1; fi
+
+if [ "$REGEN_SHADERS" = 1 ]; then
+  [ "$GPU" = native ] || { echo "--regen-shaders : sans objet pour un rendu $GPU" >&2; exit 1; }
+  exec python3 -I "$SHARE/tools/xenondash_import.py" "$DATA" --regen-shaders
+fi
+# Rendu natif : shaders SPIR-V présents et à jour (contrôle des empreintes ; rien à faire après un import qui vient de les générer)
+if [ "$GPU" = native ] && [ "$IMPORTED" = 0 ]; then
+  python3 -I "$SHARE/tools/xenondash_import.py" "$DATA" --native-shaders || echo "XenonDash : shaders natifs incomplets (voir ci-dessus)." >&2
 fi
 
 # Dossier de jeux : créé au premier lancement (outils Python de l'AppImage, lecture seule : tout ce qui s'écrit va dans
@@ -90,19 +122,10 @@ Déposez-y vos jeux (ISO, dossiers extraits avec default.xex, paquets XBLA, GOD.
   fi
 fi
 if [ "$GAMES_ONLY" = 1 ]; then echo "$GAMES_DIR"; exit 0; fi
-
-# Racine des outils de recompilation : l'AppImage est montée en lecture seule à un chemin qui change à chaque lancement ;
-# un lien stable (par version) sert de racine, pour que les projets compilés gardent des chemins valides entre deux lancements.
-LINK=${XENONDASH_DATA:-${XDG_DATA_HOME:-$HOME/.local/share}/xenondash}/runtime-$VERSION
-mkdir -p "$(dirname "$LINK")" 2>/dev/null
-ln -sfn "$SHARE" "$LINK"
 export XENONDASH_ROOT=$LINK XD_SDK=$LINK/sdk XENONDASH_AUTOSCAN=1 XENONDASH_GAMES_DIR=$GAMES_DIR
-XRE=$LINK/work/XenosRecomp-unified/build/XenosRecomp
-if [ -x "$XRE/XenosRecomp" ]; then
-  export XD_XENOSRECOMP=$XRE/XenosRecomp
-  LD_LIBRARY_PATH=$XRE${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}; export LD_LIBRARY_PATH
-fi
 
-if ! ready; then echo "Données absentes : $DATA (utiliser --import)" >&2; exit 1; fi
+# Le plugin GPU xenos n'est passé qu'aux builds émulés (le build natif n'en a pas besoin).
+GPU_ARG=
+[ "$GPU" = xenos ] && GPU_ARG=--gpu_plugin=xenos
 cd "$DATA" || exit 1
-exec "$HERE/usr/bin/dash" --game_data_root="$DATA" --gpu_plugin=xenos --log_file="$DATA/dash.log" "$@"
+exec "$HERE/usr/bin/dash" --game_data_root="$DATA" $GPU_ARG --log_file="$DATA/dash.log" "$@"

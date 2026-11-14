@@ -152,7 +152,8 @@ tools/port_dashboard.sh firmware/2.0.6770.0 2.0.6770.0 --stages build,smoke     
 ## 8. Dashboard NXE 2.0.13604 (palier N1, 2026-11-13) : rendu natif sans plugin `xenos`
 
 `-DDASH_NATIVE_GPU=ON` sur `dashboards/2.0.13604.0` : aucun plugin GPU, aucun lecteur de tampon de commandes ; le plugin `xenos` ne sert plus que d'**oracle**
-(`DASH_NGPU_DISABLE=1 --gpu_plugin=xenos` ou le build par défaut). Build par défaut (option OFF) inchangé (la configuration n'inclut pas `native_gpu`).
+(`DASH_NGPU_DISABLE=1 --gpu_plugin=xenos` dans un build natif, ou un build `-DDASH_NATIVE_GPU=OFF`). **Option ON par défaut** depuis l'AppImage native (§8.7) ;
+`-DDASH_NATIVE_GPU=OFF` n'inclut pas `native_gpu`.
 La variante `-xam` n'est pas touchée (ses fichiers non plus : `common/` n'est pas modifié par ce palier).
 
 ### 8.1 Fonctions D3D (XDK 2.0.20158) : adresses et confiance
@@ -197,7 +198,7 @@ utilisateur : `dev+10272` (6 x float4), hors ombre (§8.3).
 - `ngpu_core` : `DrawCall::has_scissor/scissor` (rectangle de coupe en pixels invités, §8.3) ; sans effet pour 6770 et Skate (faux par défaut).
 - `app.h` de 13604 : `gpu_plugin` vidé sous `DASH_NATIVE_GPU` (sauf `DASH_NGPU_DISABLE`).
 - Diagnostics (variables d'environnement) : `DASH_NGPU_EVLOG`, `DASH_NGPU_DRAWINFO=<image>` (état, constantes, plans), `DASH_NGPU_DRAWRANGE=a:b`, `DASH_NGPU_DRAWSKIP=a:b`, `DASH_NGPU_REGVARY=<image>`,
-  `DASH_NGPU_REGDUMP=<image>`, `DASH_NGPU_DUMP=<image>:f.ppm`, `DASH_NGPU_STATS`, `DASH_NGPU_GAMMA`, `DASH_NGPU_SHADERS` (dossier des `<clé>.spv`), `DASH_NGPU_MISSING` (conteneurs des shaders absents).
+  `DASH_NGPU_REGDUMP=<image>`, `DASH_NGPU_DUMP=<image>:f.ppm`, `DASH_NGPU_STATS`, `DASH_NGPU_GAMMA`, `DASH_NGPU_SHADERS` (dossier des `<clé>.spv` ; défaut `<game_data_root>/shaders/dash`, §8.7), `DASH_NGPU_MISSING` (conteneurs des shaders absents).
 
 ### 8.3 Trouvaille : plans de coupe utilisateur
 
@@ -209,7 +210,8 @@ signalés et ignorés. Après correction : disparition de l'artefact (Welcome : 
 ### 8.4 Shaders
 
 `tools/dash_shaders.py` : `extract` (conteneurs `0x102A11xx` de l'image : 258), `translate`/`keys` (XenosRecomp unifié + dxc, `tools/xenos_batch.py`, puis renommage `<XXH3 du microcode>.spv`), `missing`
-(boucle « jouer -> reconstruire » : la façade écrit le conteneur d'un shader sans SPIR-V dans `DASH_NGPU_MISSING`, l'outil le traduit). Résultat : **116 / 118** shaders d'interface traduits (97 PS, 19 VS ; 106 clés distinctes).
+(boucle « jouer -> reconstruire » : la façade écrit le conteneur d'un shader sans SPIR-V dans `DASH_NGPU_MISSING`, l'outil le traduit). Résultat : **116 / 118** shaders d'interface traduits (97 PS, 19 VS ; 106 clés distinctes). Sous l'AppImage, la même traduction est faite à l'import sur
+les 258 conteneurs de `dash.xex` (§8.7).
 Non traduits : 3 vertex shaders qui lisent une texture (`tfetch` du VS, échantillonneur 19 : XenosRecomp ne déclare que les échantillonneurs 0-15 ; `DotEffectSize`), dont `2F1495350021EBE2` créé à l'exécution ; aucun dessin sauté
 sur les écrans mesurés (le noyau ne lie que les 16 premières fetch constants : la lecture de texture en VS demanderait aussi un changement du noyau). Rien n'est versionné.
 
@@ -238,6 +240,7 @@ tools/build_xenosrecomp.sh
 python3 -I tools/dash_shaders.py extract <dash13604.pe> work/bins13604 && python3 -I tools/dash_shaders.py translate work/bins13604 work/shaders13604_keys
 cmake -S dashboards/2.0.13604.0 -B dashboards/2.0.13604.0/out/build/native -G Ninja -DCMAKE_BUILD_TYPE=RelWithDebInfo -DDASH_NATIVE_GPU=ON && cmake --build dashboards/2.0.13604.0/out/build/native -j6
 DASH_NGPU_SHADERS=work/shaders13604_keys dashboards/2.0.13604.0/out/build/native/dash --game_data_root=<assets>      # natif
+# sans DASH_NGPU_SHADERS : <game_data_root>/shaders/dash (produit à l'import, §8.7)
 python3 -I tools/d3d_match.py analyze dashboards/2.0.13604.0/assets/dash.xex | head                                      # supported: true
 ```
 
@@ -255,4 +258,32 @@ Le HUD de XAM (boîtes de message, clavier, connexion) dessine avec la **copie d
 - **Sortie** : l'image résolue (852 × 480, 8888, alpha) est relue par `Renderer::ReadResolved` (existant) et superposée à l'image présentée du Dashboard (`ngpu::HudComposite`, appelée par `front_profile.cpp`, alpha prémultiplié,
   interpolation bilinéaire). Deux noyaux dans un processus (Dashboard 13604 + HUD) tournent ensemble sous lavapipe.
 - **Remarque sur le noyau** : `ReadResolved` fait un `WaitIdle` et crée un tampon de relecture à chaque appel ; adapté à ≈ 30 images/s, à remplacer par une relecture asynchrone si le HUD devient la voie principale (comme la présentation par copie CPU, §5).
+
+### 8.7 AppImage native : shaders générés à l'import (2026-11-14)
+
+- **Build embarqué** : `tools/make_appimage.sh 2.0.13604.0` prend le build que le CMakeLists prévoit (option `DASH_NATIVE_GPU` ON : `out/build/native`), sans
+  `librexgpu-xenos.so` (le binaire natif n'en référence aucun). `usr/share/xenondash/gpu` vaut `native` et `AppRun` ne passe pas `--gpu_plugin=xenos`. Les AppImage
+  2.0.6717.0 et 2.0.6770.0 restent émulées (`gpu` = `xenos`).
+- **Import** (`tools/appimage/xenondash_import.py --native-shaders`, lancé par `AppRun` pour un build natif) : après l'extraction STFS, deux parties.
+  `<root>/shaders/dash` vient de `dash.xex` (`tools/dash_shaders.py` : 258 conteneurs `0x102A11xx`, traduction XenosRecomp + dxc). `<root>/shaders/hud` vient de
+  `$flash_xam.xex` de la mise à jour, copié à l'import dans `<root>/xam.xex` (rechiffré avec `xex_rekey.py` si besoin ; `tools/hud_shaders.py` : 34 conteneurs `0x102A0E0x`).
+  Un échec d'une partie est signalé (`ÉCHEC …`) sans interrompre l'import ; les shaders non traduits sont listés dans `<root>/shaders/<partie>-echecs.txt`.
+- **Outils** : XenosRecomp et `dxc-linux` de l'AppImage (`XD_XENOSRECOMP` : même convention que `tools/recipe_build.py`) ; `xxhsum` embarqué (`XD_XXHSUM`).
+- **Idempotence** : `<partie>.stamp` = empreintes SHA-256 du XEX source, du binaire XenosRecomp et version du format (`SHADER_VERSION`). `AppRun` contrôle ces empreintes à chaque
+  lancement d'un build natif (« déjà généré » si elles correspondent) ; `--regen-shaders` force la génération (sans import).
+- **Repli au lancement** : `DASH_NGPU_SHADERS` / `DASH_HUD_SHADERS` restent prioritaires ; sinon `<game_data_root>/shaders/{dash,hud}` (fixé par `common/src/dash_app_base.cpp`).
+  Dossier absent : **une** ligne `[ngpu] ERREUR shaders natifs du Dashboard introuvables dans … : lancer la régénération (XenonDash --regen-shaders)` (au lieu d'une ligne par
+  shader) ; dossier présent mais incomplet : une ligne par shader absent.
+- **Mesures** (`dashboards/2.0.13604.0/e2e_natif.sh`, HOME de test, Xvfb + lavapipe, `firmware/2.0.13604.0` + `xebuild-6770` + 17559) :
+  - import complet (extraction STFS comprise) et génération : **20 s** ; `--regen-shaders` seul : **18 s** ;
+  - Dashboard : 258 conteneurs, 186 traduits (**175 fichiers `.spv`** distincts), 72 non traduits (64 plantages de XenosRecomp, 8 échecs dxc) ;
+  - HUD : 34 conteneurs, **33** traduits (`.spv` + `.cont`), 1 échec (`817F9550_VS`, plantage XenosRecomp) ;
+  - AppImage 13604 natif : **49 158 648 octets** ; dossier `shaders/` : 2,1 Mo ;
+  - Lancement : Dashboard vivant après 90 s de jeu, hub « Welcome » rendu nativement ; journal : **une** ligne `ERREUR SPIR-V` (`2F1495350021EBE2`, vertex shader à
+    lecture de texture, §8.4), **aucun** `--gpu_plugin=xenos`.
+- **Limites** :
+  - `2F1495350021EBE2` n'est pas dans `dash.xex` (créé à l'exécution) : il ne peut pas être généré à l'import. Les 72 échecs de traduction n'ont pas été demandés pendant le test.
+  - L'AppImage 13604 embarque la variante HLE (`NGPU_HUD` OFF) : **aucun HUD natif** ; `shaders/hud` ne sert qu'à la variante `-xam` (`NGPU_HUD`, §9).
+  - Le déchiffrement du `xam.xex` 13604 demande `python3-cryptography` (comme pour `shrdres.xzp`).
+  - Le binaire XenosRecomp est strippé dans l'AppImage : l'empreinte des shaders suit donc ce binaire (une AppImage reconstruite régénère une fois).
 

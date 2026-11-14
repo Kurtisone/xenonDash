@@ -24,8 +24,8 @@ endif()
 
 target_link_libraries(dash PRIVATE xenondash_common)
 
-# Rendu natif D3D (remplace l'émulation du GPU Xenos par le plugin xenos) : voir docs/ngpu_core.md (section 13604). Désactivé par défaut.
-option(DASH_NATIVE_GPU "Rendu natif au niveau D3D (native_gpu/, ngpu_core) pour cette version" OFF)
+# Rendu natif D3D (remplace l'émulation du GPU Xenos par le plugin xenos) : voir docs/ngpu_core.md (section 13604). Activé par défaut (AppImage native) ; -DDASH_NATIVE_GPU=OFF pour le build émulé (oracle xenos).
+option(DASH_NATIVE_GPU "Rendu natif au niveau D3D (native_gpu/, ngpu_core) pour cette version" ON)
 if(DASH_NATIVE_GPU)
     set(NGPU_PROFILE 13604 CACHE STRING "Version du D3D invité (native_gpu/CMakeLists.txt)" FORCE)
     add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/../../native_gpu xenondash_native_gpu)

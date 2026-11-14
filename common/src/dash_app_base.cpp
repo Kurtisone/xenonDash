@@ -55,9 +55,28 @@ void DashAppBase::OnLoadXexImage(std::string& xex_image) {
   xex_image = "game:\\" + xex_name_;
 }
 
+namespace {
+// Shaders SPIR-V du rendu natif (native_gpu/) : <game_data_root>/shaders/{dash,hud} par défaut. DASH_NGPU_SHADERS et
+// DASH_HUD_SHADERS, si elles sont définies, restent prioritaires.
+void SetDefaultShaderDirs(const std::filesystem::path& data_root) {
+  const std::pair<const char*, const char*> vars[] = {{"DASH_NGPU_SHADERS", "dash"}, {"DASH_HUD_SHADERS", "hud"}};
+  for (const auto& [var, sub] : vars) {
+    const char* e = std::getenv(var);
+    if (e && *e) continue;
+    const std::string dir = (data_root / "shaders" / sub).string();
+#ifdef _WIN32
+    _putenv_s(var, dir.c_str());
+#else
+    setenv(var, dir.c_str(), 1);
+#endif
+  }
+}
+}  // namespace
+
 // La flash de la console (\SystemRoot, alias media:/dashmedia:) : polices .xtt, shrdres.xzp, xam.xex...
 // Montée en lecture seule depuis <game_data_root>/flash, à remplir avec le contenu extrait du dump NAND.
 void DashAppBase::OnPostSetup() {
+  SetDefaultShaderDirs(game_data_root());
   // Dashboards NXE (17559) : les ressources XEX (dashlua...) sont des pages « lecture seule » de l'image, mais le
   // Dashboard y écrit (sur console ces pages sont accessibles en écriture) : tout l'exécutable passe en lecture/écriture
   // (le code n'est pas concerné : il est recompilé).

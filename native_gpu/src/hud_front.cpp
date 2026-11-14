@@ -13,6 +13,8 @@
 // format 0x102A0E0x convertis par tools/hud_shaders.py), un seul peripherique, pas de GPU nul a fournir (le HUD n'attend rien du
 // GPU), cadence limitee a 60 Hz a la soumission (la boucle d'image du HUD tourne sinon a ~2400 images/s, faute de vsync).
 
+#include <sys/stat.h>
+
 #include <algorithm>
 #include <atomic>
 #include <chrono>
@@ -108,9 +110,24 @@ const xenos::DeviceLayout& Layout() {
   return layout;
 }
 
+// Dossier des <cle>.spv / <cle>.cont du HUD : DASH_HUD_SHADERS, sinon <game_data_root>/shaders/hud (fixé par dash_app_base.cpp).
 std::string ShaderDir() {
   const char* e = std::getenv("DASH_HUD_SHADERS");
-  return e && *e ? e : "work/shaders_hud";
+  return e && *e ? e : "shaders/hud";
+}
+// Un dossier absent donne un seul message (lancer la régénération) ; un dossier présent mais incomplet, une ligne par shader.
+void ReportMissingShader(const char* name, bool pixel, uint32_t object) {
+  static bool dir_reported = false;
+  const std::string dir = ShaderDir();
+  struct stat st;
+  if (::stat(dir.c_str(), &st) != 0 || !S_ISDIR(st.st_mode)) {
+    if (!dir_reported) {
+      dir_reported = true;
+      NGPU_ERR("shaders natifs du HUD introuvables dans %s : lancer la régénération (XenonDash --regen-shaders)", dir.c_str());
+    }
+    return;
+  }
+  NGPU_ERR("HUD : shader %s %s (objet %08X) introuvable dans %s", pixel ? "PS" : "VS", name, object, dir.c_str());
 }
 
 bool ReadFile(const std::string& path, std::vector<uint8_t>& out) {
@@ -212,7 +229,7 @@ const HudObject* RegisterObject(const uint8_t* base, uint32_t object, bool pixel
       g.core->shaders().AddFile(info.key, spv);
       g.containers.emplace(info.key, std::move(container));
     } else if (g.missing[name]++ == 0) {
-      NGPU_ERR("HUD : shader %s %s (objet %08X) introuvable dans %s", pixel ? "PS" : "VS", name, object, ShaderDir().c_str());
+      ReportMissingShader(name, pixel, object);
     }
   }
   return &(g.objects[object] = std::move(info));

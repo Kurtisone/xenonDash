@@ -331,17 +331,20 @@ tools/make_appimage.sh 2.0.6770.0      # -> out/appimage/XenonDash-2.0.6770.0-x8
 tools/test_appimage.sh 2.0.6770.0 xebuild-6770   # test : HOME temporaire, import depuis firmware/, Xvfb + lavapipe
 ```
 
-`appimagetool` est téléchargé dans `work/appimage-tools/` s'il manque. Contenu (≈ 17 Mo) : `usr/bin/dash` (strippé),
-`librexruntime.so`, `librexgpu-xenos.so` (SDL3, spdlog, ffmpeg, etc. sont liés statiquement ; libc, libstdc++, X11/xcb/
+`appimagetool` est téléchargé dans `work/appimage-tools/` s'il manque. Contenu (≈ 49 Mo) : `usr/bin/dash` (strippé),
+`librexruntime.so`, `librexgpu-xenos.so` (builds émulés seulement ; SDL3, spdlog, ffmpeg, etc. sont liés statiquement ; libc, libstdc++, X11/xcb/
 wayland, loader Vulkan et pilote GPU restent ceux du système), `AppRun`, `.desktop`, icône originale
 (`tools/appimage/xenondash.svg`), `games.example.toml`, et les scripts d'import (`port_dashboard.py` pour les étapes
-`extract`/`assets`, `stfs.py`, `xex_resource.py`, `xzp_alias.py`, l'outil `xexinfo`). **Aucun fichier Microsoft**
+`extract`/`assets`, `stfs.py`, `xex_resource.py`, `xzp_alias.py`, l'outil `xexinfo`, et pour les shaders natifs
+`dash_shaders.py`, `hud_shaders.py`, XenosRecomp, `dxc-linux` et `xxhsum`). **Aucun fichier Microsoft**
 (ni `dash.xex`, ni modules flash, polices, `shrdres`).
 
 **Prérequis** : Python 3 système (+ `python3-cryptography` si le `xam.xex` de la mise à jour est chiffré avec la clé XEX1, ex. 13604), un GPU Vulkan, FUSE 2 (sinon `APPIMAGE_EXTRACT_AND_RUN=1`), et vos propres fichiers
 Microsoft : la mise à jour système officielle de la version (dossier `$SystemUpdate` ou paquet STFS), idéalement
 les modules/polices complets (archive XeBuilds) et, pour les icônes, une mise à jour récente (17559) contenant
 `$flash_xam.xex`.
+
+**Rendu natif (2.0.13604.0)** : l'AppImage de cette version est native (aucun plugin GPU) ; le premier import génère aussi les shaders SPIR-V du rendu natif dans `~/.local/share/xenondash/2.0.13604.0/shaders/` (≈ 20 s), `./XenonDash-2.0.13604.0-x86_64.AppImage --regen-shaders` les refait. Les AppImage 2.0.6717.0 et 2.0.6770.0 restent émulées (plugin `xenos`). Détail : `docs/ngpu_core.md`, §8.7.
 
 **Premier lancement** : si `~/.local/share/xenondash/<version>/` n'est pas prêt (`dash.xex` + `.ready`), `AppRun`
 demande ces chemins par fenêtre (`zenity` ou `kdialog`) ou, à défaut, sur la console ; sans terminal ni

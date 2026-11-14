@@ -45,6 +45,11 @@ if(TARGET dash_xam)
     target_include_directories(dash_xam PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src_xam_d3d)
 endif()
 
+if(TARGET dash_xam AND EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/src_ftrace/xam_ftrace.cpp)  # TEMPORAIRE (trace jetable)
+    target_sources(dash_xam PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src_ftrace/xam_ftrace.cpp)
+    target_include_directories(dash_xam PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src_ftrace)
+endif()
+
 # Code partagé entre versions (bibliothèque OBJECT : tous les hooks sont liés)
 add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/../../common xenondash_common)
 
@@ -60,7 +65,7 @@ endif()
 target_link_libraries(dash PRIVATE xenondash_common)
 
 # Rendu natif D3D (comme 2.0.13604.0) : Dashboard par native_gpu/front_profile.cpp, HUD de XAM par native_gpu/src/hud_front.cpp (palier N2).
-option(DASH_NATIVE_GPU "Rendu natif au niveau D3D (native_gpu/, ngpu_core), Dashboard et HUD de XAM" OFF)
+option(DASH_NATIVE_GPU "Rendu natif au niveau D3D (native_gpu/, ngpu_core), Dashboard et HUD de XAM" ON)
 if(DASH_NATIVE_GPU)
     set(NGPU_PROFILE 13604 CACHE STRING "Version du D3D invité (native_gpu/CMakeLists.txt)" FORCE)
     set(NGPU_HUD ON CACHE BOOL "Facade du HUD de XAM" FORCE)
