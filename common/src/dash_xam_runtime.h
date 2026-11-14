@@ -42,7 +42,7 @@ void RunInSystemProcess(rex::system::KernelState* ks, std::function<int()> fn);
 // fils titre du Dashboard qui appellent XAM utilisent donc l'état système.
 void SetXamImageRange(uint32_t base, uint32_t size);
 
-// Vrai si `addr` (adresse invitée, ex. ctx.lr) est dans l'image de XAM recompilé.
+// Vrai si `addr` (adresse invitée, ex. ctx.lr) est dans l'image de XAM recompilé ou d'un module XUI du HUD (hud, vk, signin...).
 bool InXamImage(uint32_t addr);
 
 // Corrige des variables du noyau initialisées par le SDK de façon incompatible avec XAM recompilé. Appelée avant le

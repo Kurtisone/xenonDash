@@ -10,6 +10,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <functional>
 #include <memory>
 #include <string>
 #include <string_view>
@@ -173,6 +174,20 @@ uint32_t PutWide(const char16_t* s) {
   return a;
 }
 
+// DASH_TEST_PEEK=<adresse invitée hexadécimale> : journalise 64 mots de la mémoire invitée avant l'appel de test (diagnostic).
+void PeekGuest(uint8_t* base) {
+  if (const char* d = std::getenv("DASH_TEST_PEEK"); d && *d) {
+    const uint32_t ea = static_cast<uint32_t>(std::strtoul(d, nullptr, 16));
+    std::string line;
+    for (uint32_t k = 0; k < 64; ++k) {
+      char b[16];
+      std::snprintf(b, sizeof b, " %08X", __builtin_bswap32(*reinterpret_cast<uint32_t*>(base + ea + k * 4)));
+      line += b;
+      if (k % 8 == 7) { REXLOG_INFO("[xamredir] peek {:08X}:{}", ea + (k - 7) * 4, line); line.clear(); }
+    }
+  }
+}
+
 // Test : XamShowMessageBoxUI appelé comme le ferait le Dashboard (hook -> Dispatch), depuis un thread titre.
 // Appel asynchrone (XOVERLAPPED fourni) : le retour est immédiat, XAM complète l'overlapped plus tard.
 void RunMessageBoxTest(rex::system::KernelState* ks) {
@@ -214,17 +229,7 @@ void RunMessageBoxTest(rex::system::KernelState* ks) {
   ctx.r9.u64 = 0;                 // drapeaux
   ctx.r10.u64 = result;
 
-  // DASH_TEST_PEEK=<adresse invitée hexadécimale> : journalise 64 mots de la mémoire invitée avant l'appel (diagnostic).
-  if (const char* d = std::getenv("DASH_TEST_PEEK"); d && *d) {
-    const uint32_t ea = static_cast<uint32_t>(std::strtoul(d, nullptr, 16));
-    std::string line;
-    for (uint32_t k = 0; k < 64; ++k) {
-      char b[16];
-      std::snprintf(b, sizeof b, " %08X", __builtin_bswap32(*reinterpret_cast<uint32_t*>(base + ea + k * 4)));
-      line += b;
-      if (k % 8 == 7) { REXLOG_INFO("[xamredir] peek {:08X}:{}", ea + (k - 7) * 4, line); line.clear(); }
-    }
-  }
+  PeekGuest(base);
   REXLOG_INFO("[xamredir] test XamShowMessageBoxUI : appel");
   Dispatch(*slot, ctx, base);
   REXLOG_INFO("[xamredir] test XamShowMessageBoxUI : retour r3=0x{:08X}, résultat={}",
@@ -248,6 +253,118 @@ void RunMessageBoxTest(rex::system::KernelState* ks) {
   }
   REXLOG_WARN("[xamredir] test XamShowMessageBoxUI : NON terminé après {} ms (overlapped.InternalLow=0x{:08X}, bouton={})",
               wait_ms, word(overlapped), word(result));
+}
+
+// Attend la fin d'une requête asynchrone (XOVERLAPPED : InternalLow à +0 vaut 0x3E5 tant qu'elle est en cours). Renvoie vrai si
+// elle s'est terminée avant `wait_ms`.
+bool WaitOverlapped(uint8_t* base, uint32_t overlapped, int wait_ms) {
+  auto word = [&](uint32_t ea) { return __builtin_bswap32(*reinterpret_cast<volatile uint32_t*>(base + ea)); };
+  for (int t = 0; t < wait_ms; t += 50) {
+    if (word(overlapped) != 0x3E5) {
+      REXLOG_INFO("[xamredir] test : TERMINÉ après {} ms, overlapped.InternalLow=0x{:08X}, erreur étendue=0x{:08X}", t,
+                  word(overlapped), word(overlapped + 0x18));
+      return true;
+    }
+    std::this_thread::sleep_for(std::chrono::milliseconds(50));
+  }
+  REXLOG_WARN("[xamredir] test : NON terminé après {} ms (overlapped.InternalLow=0x{:08X})", wait_ms, word(overlapped));
+  return false;
+}
+
+// Texte UTF-16 big-endian de la mémoire invitée, en UTF-8 approximatif (ASCII ; les autres caractères en \uXXXX).
+std::string ReadWide(uint8_t* base, uint32_t ea, uint32_t max_chars) {
+  std::string out;
+  for (uint32_t i = 0; i < max_chars; ++i) {
+    const uint16_t c = __builtin_bswap16(*reinterpret_cast<volatile uint16_t*>(base + ea + i * 2));
+    if (!c) break;
+    if (c < 0x80) out.push_back(static_cast<char>(c));
+    else { char b[8]; std::snprintf(b, sizeof b, "\\u%04X", c); out += b; }
+  }
+  return out;
+}
+
+// Test : XamShowKeyboardUI (clavier virtuel du HUD, vk.xex) appelé comme le ferait un titre, depuis un thread titre.
+// Huit arguments, tous en registres : utilisateur, drapeaux, texte par défaut, titre, description, tampon résultat, taille
+// du tampon (en caractères), XOVERLAPPED. DASH_TEST_KEYBOARD_WAIT = durée d'attente en secondes (60). Le texte saisi est
+// journalisé à la fin.
+void RunKeyboardTest(rex::system::KernelState* ks) {
+  auto* ts = rex::runtime::ThreadState::Get();
+  if (!ts) {
+    REXLOG_WARN("[xamredir] test XamShowKeyboardUI : pas de thread invité");
+    return;
+  }
+  Slot* slot = FindSlot("XamShowKeyboardUI");
+  if (!slot) return;
+  uint8_t* base = ks->memory()->virtual_membase();
+  PPCContext& tc = *ts->context();
+
+  const uint32_t def_text = PutWide(u"Xenondash");
+  const uint32_t title = PutWide(u"Clavier virtuel");
+  const uint32_t desc = PutWide(u"Saisissez un texte de test");
+  constexpr uint32_t kChars = 64;
+  const uint32_t result = REX_KERNEL_MEMORY()->SystemHeapAlloc(kChars * 2);
+  std::memset(base + result, 0, kChars * 2);
+  const uint32_t overlapped = REX_KERNEL_MEMORY()->SystemHeapAlloc(0x20);
+  std::memset(base + overlapped, 0, 0x20);
+
+  PPCContext ctx = tc;
+  ctx.r1.u64 = static_cast<uint32_t>(tc.r1.u64) - 0x100;
+  ctx.r3.u64 = 0;           // utilisateur 0
+  ctx.r4.u64 = 0;           // drapeaux : clavier par défaut
+  ctx.r5.u64 = def_text;
+  ctx.r6.u64 = title;
+  ctx.r7.u64 = desc;
+  ctx.r8.u64 = result;
+  ctx.r9.u64 = kChars;
+  ctx.r10.u64 = overlapped;
+  REXLOG_INFO("[xamredir] test XamShowKeyboardUI : appel");
+  Dispatch(*slot, ctx, base);
+  REXLOG_INFO("[xamredir] test XamShowKeyboardUI : retour r3=0x{:08X}", static_cast<uint32_t>(ctx.r3.u64));
+  if (static_cast<uint32_t>(ctx.r3.u64) != 0x3E5) return;
+  const char* w = std::getenv("DASH_TEST_KEYBOARD_WAIT");
+  const int wait_ms = (w && *w ? std::atoi(w) : 60) * 1000;
+  if (WaitOverlapped(base, overlapped, wait_ms)) {
+    REXLOG_INFO("[xamredir] test XamShowKeyboardUI : texte renvoyé = \"{}\"", ReadWide(base, result, kChars));
+  }
+}
+
+// Test : appel direct (arguments en registres, sans XOVERLAPPED) d'une interface du HUD par un thread titre, comme le ferait le
+// Dashboard : XamShowSigninUI(nombre de volets, drapeaux), XamShowCreateProfileUI(utilisateur, drapeaux). La requête est
+// envoyée à l'application XAM 254 (HUD) qui charge le module XUI correspondant ; le retour n'attend pas la fin de l'interface.
+void RunUiCallTest(rex::system::KernelState* ks, const char* name, uint32_t a3, uint32_t a4) {
+  auto* ts = rex::runtime::ThreadState::Get();
+  if (!ts) {
+    REXLOG_WARN("[xamredir] test {} : pas de thread invité", name);
+    return;
+  }
+  Slot* slot = FindSlot(name);
+  if (!slot) return;
+  uint8_t* base = ks->memory()->virtual_membase();
+  PPCContext ctx = *ts->context();
+  ctx.r1.u64 = static_cast<uint32_t>(ctx.r1.u64) - 0x100;
+  ctx.r3.u64 = a3;
+  ctx.r4.u64 = a4;
+  PeekGuest(base);
+  REXLOG_INFO("[xamredir] test {}({}, {}) : appel", name, a3, a4);
+  Dispatch(*slot, ctx, base);
+  REXLOG_INFO("[xamredir] test {} : retour r3=0x{:08X}", name, static_cast<uint32_t>(ctx.r3.u64));
+}
+
+void StartTestThread(rex::system::KernelState* ks, const char* env, const char* thread_name,
+                     std::function<void(rex::system::KernelState*)> body) {
+  const char* test = std::getenv(env);
+  if (!test || !*test) return;
+  const int seconds = std::atoi(test);
+  std::thread([ks, seconds, thread_name, body] {
+    std::this_thread::sleep_for(std::chrono::seconds(seconds));
+    static std::vector<rex::system::object_ref<rex::system::XHostThread>> hosts;  // tests : vivent jusqu'à la fin du processus
+    hosts.emplace_back(new rex::system::XHostThread(ks, 256 * 1024, 0, [ks, body] {
+      body(ks);
+      return 0;
+    }));
+    hosts.back()->set_name(thread_name);
+    hosts.back()->Create();
+  }).detach();
 }
 
 }  // namespace
@@ -339,6 +456,34 @@ void Configure(rex::system::KernelState* ks, rex::runtime::ExportResolver* resol
       s->guest.store(fn);
       REXLOG_INFO("[xamredir] {} (ordinal {}) -> XAM recompilé 0x{:08X}", name, ordinal, addr);
     }
+  }
+
+  // DASH_XAM_EXPORTS=<ordinal,...> : journalise l'adresse invitée de ces exports de XAM recompilé (diagnostic, désassemblage).
+  if (const char* e = std::getenv("DASH_XAM_EXPORTS"); e && *e && xam) {
+    for (const std::string& o : SplitList(e)) {
+      const uint16_t ordinal = static_cast<uint16_t>(std::atoi(o.c_str()));
+      REXLOG_INFO("[xamredir] export XAM ordinal {} = 0x{:08X}", ordinal, xam->GetProcAddressByOrdinal(ordinal));
+    }
+  }
+
+  StartTestThread(ks, "DASH_TEST_SIGNIN", "XAM test signin",
+                  [](rex::system::KernelState* k) { RunUiCallTest(k, "XamShowSigninUI", 1, 0); });
+  StartTestThread(ks, "DASH_TEST_CREATEPROFILE", "XAM test createprofile",
+                  [](rex::system::KernelState* k) { RunUiCallTest(k, "XamShowCreateProfileUI", 0, 0); });
+
+  if (const char* test = std::getenv("DASH_TEST_KEYBOARD"); test && *test) {
+    const int seconds = std::atoi(test);
+    std::thread([ks, seconds] {
+      std::this_thread::sleep_for(std::chrono::seconds(seconds));
+      static rex::system::object_ref<rex::system::XHostThread> host;  // test : vit jusqu'à la fin du processus
+      host = rex::system::object_ref<rex::system::XHostThread>(new rex::system::XHostThread(
+          ks, 256 * 1024, 0, [ks] {
+            RunKeyboardTest(ks);
+            return 0;
+          }));
+      host->set_name("XAM test keyboard");
+      host->Create();
+    }).detach();
   }
 
   if (const char* test = std::getenv("DASH_TEST_MSGBOX"); test && *test) {

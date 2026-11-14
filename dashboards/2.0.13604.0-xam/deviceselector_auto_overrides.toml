@@ -1,0 +1,3 @@
+# Corrections AUTOMATIQUES (deviceselector), écrites par tools/codegen_module.py.
+[functions]
+0x916D7004 = {}  # branche depuis 0x916D7054

@@ -81,7 +81,11 @@ void SetXamImageRange(uint32_t base, uint32_t size) {
   g_xam_hi.store(base + size);
 }
 
-bool InXamImage(uint32_t addr) { return addr >= g_xam_lo.load() && addr < g_xam_hi.load(); }
+// Les modules XUI du HUD (hud, vk, signin, createprofile... : bases 0x90100000-0x917E7000, avant dash.xex à 0x92000000) sont des
+// extensions de XAM : leur code est traité comme celui de XAM (système, noms nus de XexLoadImage...).
+bool InXamImage(uint32_t addr) {
+  return (addr >= g_xam_lo.load() && addr < g_xam_hi.load()) || (addr >= 0x90000000u && addr < 0x91800000u);
+}
 
 void MountFlash(rex::filesystem::VirtualFileSystem* vfs, const fs::path& flash_dir) {
   if (!fs::is_directory(flash_dir)) {

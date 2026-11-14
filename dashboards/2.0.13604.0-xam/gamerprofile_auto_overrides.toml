@@ -1,0 +1,6 @@
+# Corrections AUTOMATIQUES (gamerprofile), écrites par tools/codegen_module.py.
+[functions]
+0x90119844 = {}  # branche depuis 0x90119894
+0x9010C0B0 = {}  # ref 0x90101A00
+0x90116398 = {}  # ref 0x90101B0C
+0x901163A0 = {}  # ref 0x90101B10

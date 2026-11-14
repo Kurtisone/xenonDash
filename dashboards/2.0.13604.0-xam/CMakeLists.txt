@@ -27,6 +27,17 @@ if(TARGET dash_hud)
     target_include_directories(dash_hud PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../../common/src)
 endif()
 
+# Modules XUI du HUD de XAM (palier N3) : vk.xex (clavier virtuel), ... Même procédé que dash_hud ; imports `xam.xex`
+# produits par tools/gen_module_xam_imports.py dans src_xui/<nom>_xam_imports.cpp.
+foreach(xui_mod vk signin createprofile gamerprofile deviceselector ximecore)
+    if(TARGET dash_${xui_mod})
+        target_sources(dash_${xui_mod} PRIVATE
+            ${CMAKE_CURRENT_SOURCE_DIR}/generated/dash/${xui_mod}/dash_register.cpp
+            ${CMAKE_CURRENT_SOURCE_DIR}/src_xui/${xui_mod}_xam_imports.cpp)
+        target_include_directories(dash_${xui_mod} PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../../common/src)
+    endif()
+endforeach()
+
 # Crochets D3D de XAM (palier N2) : définitions fortes des sub_<adresse> de la bibliothèque D3D liée dans xam.xex ;
 # elles appellent hudd3d_call (exécutable : src/hud_d3d_trace.cpp, puis native_gpu/src/hud_front.cpp).
 if(TARGET dash_xam)

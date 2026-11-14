@@ -29,3 +29,52 @@ guest_path = "game:\\flash\\hud.xex"
 out_directory_path = "generated/dash/hud"
 function_table_base = 0x84800000
 includes = ["hud_overrides.toml", "hud_auto_overrides.toml"]
+
+# Modules XUI du HUD de XAM (palier N3), recompilés comme modules. XAM les charge à la demande par XexLoadImage("<nom>.xex")
+# (nom nu renvoyé vers game:\flash\<nom>.xex par common/src/dash_xam_runtime.cpp) et les décharge ensuite (XexUnloadImage).
+# Bases fixes (non relocalisables) : vk 0x917D0000 (recouvre l'alias de XAM 0x817E0000 si les tas 0x8/0x9 sont aliasés :
+# SDK, tas séparés par défaut), deviceselector 0x916D0000, ximecore 0x91680000 ; signin, createprofile et gamerprofile ont la
+# MÊME base 0x90100000 : XAM n'en charge qu'un à la fois (docs/xam_recompile.md, palier N3).
+# Une table de dispatch par module, distincte (0x84900000-0x84E7AC18, libre).
+
+[[modules]]
+file_path = "assets/flash/vk.xex"
+guest_path = "game:\\flash\\vk.xex"
+out_directory_path = "generated/dash/vk"
+function_table_base = 0x84900000
+includes = ["vk_overrides.toml", "vk_auto_overrides.toml"]
+
+[[modules]]
+file_path = "assets/flash/signin.xex"
+guest_path = "game:\\flash\\signin.xex"
+out_directory_path = "generated/dash/signin"
+function_table_base = 0x84A00000
+includes = ["signin_overrides.toml", "signin_auto_overrides.toml"]
+
+[[modules]]
+file_path = "assets/flash/createprofile.xex"
+guest_path = "game:\\flash\\createprofile.xex"
+out_directory_path = "generated/dash/createprofile"
+function_table_base = 0x84B00000
+includes = ["createprofile_overrides.toml", "createprofile_auto_overrides.toml"]
+
+[[modules]]
+file_path = "assets/flash/gamerprofile.xex"
+guest_path = "game:\\flash\\gamerprofile.xex"
+out_directory_path = "generated/dash/gamerprofile"
+function_table_base = 0x84C00000
+includes = ["gamerprofile_overrides.toml", "gamerprofile_auto_overrides.toml"]
+
+[[modules]]
+file_path = "assets/flash/deviceselector.xex"
+guest_path = "game:\\flash\\deviceselector.xex"
+out_directory_path = "generated/dash/deviceselector"
+function_table_base = 0x84D00000
+includes = ["deviceselector_overrides.toml", "deviceselector_auto_overrides.toml"]
+
+[[modules]]
+file_path = "assets/flash/ximecore.xex"
+guest_path = "game:\\flash\\ximecore.xex"
+out_directory_path = "generated/dash/ximecore"
+function_table_base = 0x84E00000
+includes = ["ximecore_overrides.toml", "ximecore_auto_overrides.toml"]

@@ -1,0 +1,4 @@
+# Corrections AUTOMATIQUES (vk), écrites par tools/codegen_module.py.
+[functions]
+0x917DBC44 = {}  # branche depuis 0x917DBC94
+0x917D3970 = {}  # ref 0x917DA348

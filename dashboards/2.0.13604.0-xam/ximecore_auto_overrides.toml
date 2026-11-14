@@ -1,0 +1,4 @@
+# Corrections AUTOMATIQUES (ximecore), écrites par tools/codegen_module.py.
+[functions]
+0x9168A604 = {}  # branche depuis 0x9168A654
+0x916A5788 = {}  # ref 0x91687574

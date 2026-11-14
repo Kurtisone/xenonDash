@@ -1,0 +1,4 @@
+# Corrections AUTOMATIQUES (signin), écrites par tools/codegen_module.py.
+[functions]
+0x90103BE4 = {}  # branche depuis 0x90103C34
+0x90104E08 = {}  # ref 0x90100770

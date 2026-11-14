@@ -1,0 +1,4 @@
+# Corrections AUTOMATIQUES (createprofile), écrites par tools/codegen_module.py.
+[functions]
+0x90109864 = {}  # branche depuis 0x901098B4
+0x901033D8 = {}  # ref 0x9010063C
