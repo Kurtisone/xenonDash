@@ -157,10 +157,15 @@ std::set<std::string> g_mounted;  // noms de montage actifs ("DASHUSER")
 u32 XamUserGetName_entry(u32 user_index, mapped_string buffer, u32 buffer_len) {
   if (user_index >= 4) return X_E_INVALIDARG;
   if (user_index) return X_E_NO_SUCH_USER;
-  auto name = Gamertag();
   uint32_t n = std::min<uint32_t>(buffer_len, 16);
   if (n == 0) return X_E_SUCCESS;
+  // Console neuve (aucun profil cree) : SUCCES avec une chaine vide, jamais une erreur. Renvoyer
+  // une erreur laissait le Dashboard lire un tampon qu'il n'avait pas initialise et afficher des
+  // caracteres poubelle ; le tampon vide, lui, est le cas normal d'un nom absent.
+  const bool have_profile = REXCVAR_GET(dash_auto_profile) || ProfileExistsOnDisk();
   std::memset(buffer, 0, n);
+  if (!have_profile) return X_E_SUCCESS;
+  auto name = Gamertag();
   std::memcpy(buffer, name.data(), std::min<size_t>(name.size(), n - 1));
   return X_E_SUCCESS;
 }
@@ -168,7 +173,9 @@ u32 XamUserGetName_entry(u32 user_index, mapped_string buffer, u32 buffer_len) {
 u32 XamUserGetGamerTag_entry(u32 user_index, mapped_wstring buffer, u32 buffer_len) {
   if (user_index >= 4) return X_E_INVALIDARG;
   if (user_index) return X_E_NO_SUCH_USER;
-  auto name = Gamertag();
+  // Meme regle que XamUserGetName : chaine vide (et succes) sur une console neuve.
+  const bool have_profile = REXCVAR_GET(dash_auto_profile) || ProfileExistsOnDisk();
+  auto name = have_profile ? Gamertag() : std::string();
   uint32_t n = std::min<uint32_t>(buffer_len, 16);
   auto* out = reinterpret_cast<be<uint16_t>*>(static_cast<char16_t*>(buffer));
   for (uint32_t i = 0; i < n; i++) {
