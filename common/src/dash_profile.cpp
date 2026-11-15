@@ -48,6 +48,12 @@ REXCVAR_DEFINE_INT32(dash_gamerscore, -1, "Dash",
 REXCVAR_DEFINE_INT32(dash_gamerpic, 1, "Dash",
                      "Image de joueur par défaut de la console (0 à 12), si profiles/<XUID>/gamerpic.png est absent");
 REXCVAR_DEFINE_DOUBLE(dash_reputation, 0.0, "Dash", "Réputation en étoiles (0 à 5)");
+// Comportement d'une console neuve : aucun profil tant que l'utilisateur n'en a pas créé.
+// Avant, le HLE présentait toujours un profil « Joueur », si bien qu'un premier lancement
+// ressemblait à une console déjà configurée.
+REXCVAR_DEFINE_BOOL(dash_auto_profile, false, "Dash",
+                    "Présenter un profil local automatiquement (comportement d'une console déjà "
+                    "configurée) ; false = console neuve, aucun profil");
 REXCVAR_DEFINE_INT32(dash_gamerzone, 1, "Dash",
                      "Zone : 0 aucune, 1 Recreation, 2 Pro, 3 Family, 4 Underground");
 
@@ -116,6 +122,28 @@ bool FillLocalAccount(uint8_t* account) {
 
 uint64_t LocalXuid() { return system::kernel_state()->user_profile()->xuid(); }
 
+// Un profil a-t-il deja ete cree ? On ne peut PAS se fier a la presence de
+// profiles/<XUID>/ : XamProfileOpen cree ce dossier des le demarrage (il est appele AVANT
+// l'enumeration, verifie au journal), donc il existe meme sur une console neuve. On lit un
+// marqueur explicite profiles/<XUID>/.created.
+//
+// Limite connue : aucun hook de *creation* de profil n'existe encore (le parcours par XAM est
+// le palier N4/N5, hors de ce fichier). Tant qu'il n'y en a pas, le marqueur n'est jamais pose :
+// le Dashboard ne presente donc aucun profil, ce qui est le comportement voulu d'une console
+// neuve, mais il le garde apres une creation. Poser le marqueur a la creation de profil est le
+// complement a faire quand ce parcours sera actif.
+bool ProfileExistsOnDisk() {
+  std::error_code ec;
+  auto dir = std::filesystem::absolute(REXCVAR_GET(game_data_root)) / "profiles";
+  // 1. Marqueur explicite du profil local.
+  if (std::filesystem::is_regular_file(dir / fmt::format("{:016X}", LocalXuid()) / ".created", ec)) return true;
+  // 2. Marqueur d'un autre profil (creation ulterieure, XUID different du runtime).
+  for (auto& e : std::filesystem::directory_iterator(dir, std::filesystem::directory_options::skip_permission_denied, ec)) {
+    if (e.is_directory(ec) && std::filesystem::is_regular_file(e.path() / ".created", ec)) return true;
+  }
+  return false;
+}
+
 std::filesystem::path ProfileDir(uint64_t xuid) {
   return std::filesystem::absolute(REXCVAR_GET(game_data_root)) / "profiles" /
          fmt::format("{:016X}", xuid);
@@ -159,7 +187,10 @@ u32 XamProfileCreateEnumerator_entry(u32 device_id, mapped_u32 handle_out) {
   auto result = e->Initialize(0xFF, 0xFE, 0x23001, 0x23003, 0);
   if (XFAILED(result)) return result;
 
-  if (device_id == 0 || device_id == kHddDeviceId) {
+  // Console neuve : aucun profil presentable. On en presente un si l'utilisateur l'a demande
+  // (dash_auto_profile) ou si un profil a deja ete cree sur le disque (profiles/<XUID>/).
+  const bool present = REXCVAR_GET(dash_auto_profile) || ProfileExistsOnDisk();
+  if (present && (device_id == 0 || device_id == kHddDeviceId)) {
     auto* item = reinterpret_cast<ProfileEnumResult*>(e->AppendItem());
     std::memset(item, 0, sizeof(*item));
     item->xuid_offline = LocalXuid();
@@ -168,7 +199,8 @@ u32 XamProfileCreateEnumerator_entry(u32 device_id, mapped_u32 handle_out) {
     for (size_t i = 0; i < name.size(); i++) item->account.gamertag[i] = uint8_t(name[i]);
   }
   *handle_out = e->handle();
-  REXLOG_INFO("[dash] XamProfileCreateEnumerator(device={}) -> 1 profil '{}'", device_id, Gamertag());
+  REXLOG_INFO("[dash] XamProfileCreateEnumerator(device={}) -> {}", device_id,
+              present ? fmt::format("1 profil '{}'", Gamertag()) : "aucun profil (console neuve)");
   return X_ERROR_SUCCESS;
 }
 
