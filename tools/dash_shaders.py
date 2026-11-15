@@ -48,12 +48,19 @@ def xenos_missing(root):
     return [n for n in need if not os.path.exists(os.path.join(root, n))]
 
 
+# Sortie de xxhsum selon la version : « XXH3_<hex>  fichier » (<= 0.8.1) ou « XXH3 (fichier) = <hex> » (>= 0.8.2).
+_XXH3_RE = re.compile(r"XXH3_([0-9a-fA-F]{16})|=\s*([0-9a-fA-F]{16})")
+
+
 def xxh3(data):
     with tempfile.NamedTemporaryFile() as f:
         f.write(data)
         f.flush()
         out = subprocess.run([xxhsum_bin(), "-H3", f.name], capture_output=True, text=True, check=True).stdout
-    return int(out.split("_")[1].split()[0], 16)
+    m = _XXH3_RE.search(out)
+    if not m:
+        raise RuntimeError(f"sortie de xxhsum illisible : {out!r}")
+    return int(m.group(1) or m.group(2), 16)
 
 
 def microcode_key(container):
