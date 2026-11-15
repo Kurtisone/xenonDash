@@ -5,6 +5,7 @@
 #include <cstdlib>
 
 #include "dash_app_base.h"
+#include "trace_refcount.h"
 
 class DashApp : public xenondash::DashAppBase {
  public:
@@ -12,6 +13,13 @@ class DashApp : public xenondash::DashAppBase {
 
   static std::unique_ptr<rex::ui::WindowedApp> Create(rex::ui::WindowedAppContext& ctx) {
     return std::unique_ptr<DashApp>(new DashApp(ctx, "dash", PPCImageConfig, "dash.xex"));
+  }
+
+  // Instrumentation temporaire du compteur de references (DASH_TRACE_REFCOUNT=1) : voir
+  // diagnostic_gel_13604.md. A retirer une fois le plantage identifie.
+  void OnPostSetup() override {
+    xenondash::DashAppBase::OnPostSetup();
+    dash::trace::ArmIfRequested();
   }
 
 #ifdef DASH_NATIVE_GPU
