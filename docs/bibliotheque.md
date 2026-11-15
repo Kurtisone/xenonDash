@@ -1,6 +1,6 @@
 # Bibliothèque de jeux : formats et inventaire
 
-Date : 2026-11-12. L'utilisateur dépose ses jeux, sous n'importe quel format, dans un dossier ; XenonDash les identifie et le Dashboard NXE
+Date : 2026-11-12. L'utilisateur dépose ses jeux, sous n'importe quel format, dans un dossier ; XenonDash les identifie et le Dashboard Kinect
 (Games Library > My Games) les voit. Deux outils Python sans dépendance obligatoire : `tools/xcontainer.py` (lecture des formats) et
 `tools/game_library.py` (inventaire). Aucun fichier de jeu n'est copié ni modifié ; aucun fichier de jeu ou de Microsoft n'est versionné.
 

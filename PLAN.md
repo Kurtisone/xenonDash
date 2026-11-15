@@ -3,7 +3,7 @@
 ## Objectif
 
 **Une version par interface** (décision du 2026-11-06) : la plus récente de chaque génération —
-**Blades** (2.0.6770, fait), **NXE** (dernière version NXE avant Metro, à identifier) et **Metro** (2.0.17559) —
+**Blades** (2.0.6770, fait), **Kinect** (2.0.13604) et **Metro** (2.0.17559) —
 recompilée en natif, livrée sous forme d'**un AppImage par interface**, capable de **lancer les jeux**. Les fichiers Microsoft (firmware, XEX, polices)
 ne sont jamais versionnés : l'AppImage les importe depuis une mise à jour officielle fournie par
 l'utilisateur au premier lancement.
@@ -15,9 +15,9 @@ l'utilisateur au premier lancement.
 | Runtime | **Garder ReXGlue, en fork** (`third_party/rexglue-sdk` → dépôt Forgejo `rexglue-sdk`, branche `xenondash`) | Il fournit noyau HLE + GPU Xenos/Vulkan + audio + entrées. Le remplacer = réécrire Xenia. Nos 3 correctifs sont des commits du fork (**fait** : sous-module git, branche `xenondash`). Réévaluer seulement si un blocage du SDK devient insoluble. |
 | XAM | **Recompilé** (module DLL ReXGlue) quand un `xam.xex` complet et déchiffrable de la **même version** existe ; sinon **émulation haut niveau** (HLE ReXGlue + `dash_*.cpp`) | Mélanger Dashboard et XAM de versions différentes n'a jamais existé sur console. |
 | Versions Blades (≤ 7258) | HLE pour l'instant (XAM 6770 = base 1888 indéchiffrable + delta) ; recompilation de XAM si une base déchiffrable est obtenue | — |
-| Versions NXE/Metro avec XAM complet (17559, autres mises à jour complètes) | Dashboard **et** XAM recompilés | Écrans XAM d'origine (succès, Guide…) au lieu des remplaçants ImGui. |
-| Versions à porter | **Une par interface** (Blades 6770, NXE la plus récente, Metro 17559) ; les autres versions (6717, 7258, 5759, 4532, 2255) restent en l'état, sans effort supplémentaire | Les versions d'une même interface diffèrent peu ; l'effort va aux trois interfaces. |
-| Natif maximal, zéro émulation | Décision du 2026-11-06 : (1) **GPU** : remplacer l'émulation Xenos (processeur de commandes → Vulkan) par un **rendu natif au niveau D3D** : les fonctions D3D de la XDK liées statiquement dans dash.xex/xam.xex sont remplacées (REX_HOOK) par une implémentation Vulkan, shaders traduits hors ligne (XenosRecomp), comme UnleashedRecomp ; (2) **XAM** : recompilé partout où un xam.xex complet existe (NXE 13604, Metro 17559 ; Blades si NAND) ; (3) **noyau** : réimplémentation native (déjà le cas, ce n'est pas de l'émulation) ; (4) **jeux** : uniquement des ports natifs, Xenia retiré du plan (option désactivée par défaut). | Demande de l'utilisateur. L'espace d'adressage invité big-endian reste : il fait partie du code recompilé, pas d'une émulation. Étude de faisabilité du rendu D3D natif : [docs/rendu_natif.md](docs/rendu_natif.md) ; **premier jalon atteint sur 6770 (§11 du document : écran Games rendu nativement par `native_gpu/`, option `DASH_NATIVE_GPU`, ≈ 50 images/s contre ≈ 12 avec l'émulation sous lavapipe)**. |
+| Versions Kinect/Metro avec XAM complet (13604, 17559, autres mises à jour complètes) | Dashboard **et** XAM recompilés | Écrans XAM d'origine (succès, Guide…) au lieu des remplaçants ImGui. |
+| Versions à porter | **Une par interface** (Blades 6770, Kinect 13604, Metro 17559) ; les autres versions (6717, 7258, 5759, 4532, 2255) restent en l'état, sans effort supplémentaire | Les versions d'une même interface diffèrent peu ; l'effort va aux trois interfaces. |
+| Natif maximal, zéro émulation | Décision du 2026-11-06 : (1) **GPU** : remplacer l'émulation Xenos (processeur de commandes → Vulkan) par un **rendu natif au niveau D3D** : les fonctions D3D de la XDK liées statiquement dans dash.xex/xam.xex sont remplacées (REX_HOOK) par une implémentation Vulkan, shaders traduits hors ligne (XenosRecomp), comme UnleashedRecomp ; (2) **XAM** : recompilé partout où un xam.xex complet existe (Kinect 13604, Metro 17559 ; Blades si NAND) ; (3) **noyau** : réimplémentation native (déjà le cas, ce n'est pas de l'émulation) ; (4) **jeux** : uniquement des ports natifs, Xenia retiré du plan (option désactivée par défaut). | Demande de l'utilisateur. L'espace d'adressage invité big-endian reste : il fait partie du code recompilé, pas d'une émulation. Étude de faisabilité du rendu D3D natif : [docs/rendu_natif.md](docs/rendu_natif.md) ; **premier jalon atteint sur 6770 (§11 du document : écran Games rendu nativement par `native_gpu/`, option `DASH_NATIVE_GPU`, ≈ 50 images/s contre ≈ 12 avec l'émulation sous lavapipe)**. |
 | Licence et P8 (2026-11-08) | XenonDash sous **GPL-3.0** (reprise du code de Skate1Native) ; **zéro émulation stricte** : un jeu sans rendu natif n'est pas lançable ; l'utilisateur a l'**accord de TekRantGaming** pour reprendre le code de TrialsReVolution. | Décisions de l'utilisateur. |
 | Lancement des jeux | `XamLoaderLaunchTitle` → lanceur : **port natif enregistré** (ex. Skate1Recompiled) pour ce TitleID, sinon **Xenia** (Linux) avec le XEX/ISO ; retour au Dashboard à la fin du jeu | Un jeu ne s'exécute nativement que s'il est lui-même recompilé. |
 | Modèle d'exécution | Les tâches sont confiées à des agents **Sonnet** ; revue et intégration par la session principale | Demande de l'utilisateur (coût). |
@@ -113,10 +113,10 @@ l'utilisateur au premier lancement.
   (périphériques, stubs noyau), 2-3 j ; 3) générateur de redirections + `XamShow*UI`, 1-2 j ; 4) profil/succès via XAM,
   3-5 j ; 5) rendu XUI de XAM + manette, 2-4 j ; 6) retrait d'ImGui, captures, AppImage, 1 j. À court terme : profil et
   Games/My Games du 17559 en HLE (comme 6770), puis AppImage Metro.
-- **NXE 2.0.13604 (HLE, FAIT en partie, 2026-11-06)** : interface NXE affichée et pilotée au clavier, AppImage OK
+- **Kinect 2.0.13604 (HLE, FAIT en partie, 2026-11-06)** : interface Kinect affichée et pilotée au clavier, AppImage OK
   (`tools/xex_rekey.py` : le `xam.xex` 13604 est chiffré avec la clé XEX1 ; polices 6770 en substitution) ; profil, Recent Games, Achievements, disque et
   lancement/retour de Skate **faits** (P4b, 2026-11-12 ; reste le bouton Play Game du hub, non câblé), puis recompilation de XAM 13604 (XEX désormais décodable).
-  Détail : docs/technique.md, « Dashboard NXE 2.0.13604 ». **Découverte** : les `xam_*.xex` Blades de XeBuilds (6717, 7258...) se
+  Détail : docs/technique.md, « Dashboard Kinect 2.0.13604 ». **Découverte** : les `xam_*.xex` Blades de XeBuilds (6717, 7258...) se
   déchiffrent aussi avec la clé XEX1 : XAM Blades recompilable (à explorer ; 6770 reste base 1888 + delta).
 - Ensuite : autres mises à jour complètes NXE/Metro.
 
@@ -143,7 +143,7 @@ l'utilisateur au premier lancement.
   non essayées) ; commande Xenia non testée (Xenia absent) ; autres versions (7258, 5759, 4532) non rebuildées avec le
   code P5b ; entrées du lanceur F5 en ImGui (police par défaut) et non en XUI.
 
-### P6 — AppImage (FAIT pour 6770, 6717 et NXE 13604)
+### P6 — AppImage (FAIT pour 6770, 6717 et Kinect 13604)
 - `tools/make_appimage.sh <version>` : `appimagetool` (téléchargé dans `work/appimage-tools/`), binaire + `librexruntime.so`
   + `librexgpu-xenos.so`, `AppRun`, `.desktop`, icône originale ; aucun fichier Microsoft embarqué.
 - Premier lancement : import de la mise à jour officielle (dialogue zenity/kdialog, console ou `--import`) via les
@@ -195,16 +195,16 @@ TrialsReVolution : Trials HD/Evolution/Fusion) sont fusionnés dans XenonDash.
 - Étapes : (1) inventaire des correctifs des trois projets et de leurs licences ; (2) SDK unifié ; (3) extraction du rendu
   natif de Skate en bibliothèque, Dashboard 6770 dessus (FAIT, voir ci-dessus) ; (4) format de recette + Skate porté en recette, compilé et lancé
   depuis le Dashboard (FAIT) ; (5) Trials ; (6) recompilation générique.
-- **Bibliothèque de jeux, recompilation générique et NXE (2026-11-13, étape 6 en partie)** :
+- **Bibliothèque de jeux, recompilation générique et Kinect (2026-11-13, étape 6 en partie)** :
   - *Bibliothèque* (FAIT) : dossier de jeux `~/XenonDash/Games` (ou `$XENONDASH_GAMES_DIR`) créé au premier lancement de l'AppImage ; `tools/xcontainer.py` lit dossier extrait, XEX nu,
     ISO XDVDFS, paquets STFS (XBLA) et GOD/SVOD ; `tools/game_library.py` inventorie (nom, icône, `games.auto.toml`). ISO et GOD validés sur fichiers synthétiques seulement. Détail : [docs/bibliotheque.md](docs/bibliotheque.md).
   - *Recompilateur générique* (FAIT pour la XDK 5632) : jeu sans recette -> découverte statique des fonctions (`tools/func_discover.py`), fonctions D3D et disposition du périphérique retrouvées par motif
     (`tools/d3d_match.py`), façade `games/_generic/`. **Skate sans recette ni liste manuelle atteint son écran-titre en natif** (1 031 s). **Trials Fusion (XDK 21256) : construit mais image noire** (shaders liés hors
     de `Set*Shader`) : famille marquée expérimentale, jeu refusé avec motif. Dashboards 13604/17559 : 9 rôles D3D sur 11. Détail : [docs/recompilateur_generique.md](docs/recompilateur_generique.md).
-  - *NXE 13604* (FAIT en grande partie) : registre fusionné (`games.toml` + `games.auto.toml`), scan au démarrage (F6), **Game Library listant tous les jeux sans disque** (éléments d'énumération de 512 octets),
+  - *Kinect 13604* (FAIT en grande partie) : registre fusionné (`games.toml` + `games.auto.toml`), scan au démarrage (F6), **Game Library listant tous les jeux sans disque** (éléments d'énumération de 512 octets),
     Play Game câblé (`XamLoaderGetMediaInfoEx`), progression de construction à l'écran, AppImage embarquant la chaîne de recompilation (49,9 Mo ; clang, cmake, ninja et python 3.11+ de l'hôte). Bout en bout vérifié
     avec Skate en recette (`dashboards/2.0.13604.0/e2e_jeux.sh`). Détail : [docs/nxe_jeux.md](docs/nxe_jeux.md).
-  - *NXE : XAM, HUD et profil (2026-11-14, FAIT en grande partie)* : XAM 13604 recompilé et 8 modules XUI du flash (`hud`, `vk`, `signin`, `createprofile`, `gamerprofile`, `deviceselector`, `ximecore`, ressources `huduiskin`) chargés à la demande ;
+  - *Kinect : XAM, HUD et profil (2026-11-14, FAIT en grande partie)* : XAM 13604 recompilé et 8 modules XUI du flash (`hud`, `vk`, `signin`, `createprofile`, `gamerprofile`, `deviceselector`, `ximecore`, ressources `huduiskin`) chargés à la demande ;
     **rendu natif du Dashboard 13604** (`ngpu_core`, façade par profil, parité ≈ 2/255) et **du HUD de XAM** (copie D3D9 2099 de XAM interceptée, second contexte de rendu, superposition alpha) : vraie boîte de message, vrai clavier virtuel,
     création de profil et connexion par les fenêtres Xbox (pilote STFS minimal côté noyau, profil local hors ligne, aucune clé de console), parcours « aucun profil » (`DASH_PROFILE_MODE=xam`). AppImage 13604 native, shaders générés à l'import.
     Reste : code PIN d'un profil existant, `XamUserReadProfileSettings`, `DASH_PROFILE_MODE=xam` par défaut et AppImage de la variante `-xam`, retrait des fenêtres ImGui, avatar. Détail : [docs/xam_recompile.md](docs/xam_recompile.md), [docs/ngpu_core.md](docs/ngpu_core.md), [docs/REPRISE.md](docs/REPRISE.md).

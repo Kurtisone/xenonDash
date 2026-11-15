@@ -1,9 +1,9 @@
 # XenonDash
 
-Le Dashboard de la Xbox 360 (l'interface NXE : Welcome, Xbox LIVE, My Xbox, Game Library) qui tourne **nativement sous Linux**, sans émulateur,
+Le Dashboard de la Xbox 360 (l'interface Kinect : Welcome, Xbox LIVE, My Xbox, Game Library) qui tourne **nativement sous Linux**, sans émulateur,
 avec une bibliothèque de jeux qui se remplit toute seule et des jeux recompilés pour votre machine au premier lancement.
 
-> **Projet en développement.** Le Dashboard NXE (2.0.13604) s'affiche et se pilote ; un seul jeu est validé de bout en bout (voir « Ce qui marche »).
+> **Projet en développement.** Le Dashboard Kinect (2.0.13604) s'affiche et se pilote ; un seul jeu est validé de bout en bout (voir « Ce qui marche »).
 > XenonDash n'est affilié ni à Microsoft ni à Xbox. Il ne contient **aucun fichier Microsoft ni aucun jeu** : vous fournissez les vôtres.
 
 ## Ce qu'il vous faut
@@ -48,7 +48,7 @@ Un jeu que XenonDash ne sait pas faire fonctionner nativement est **refusé avec
 
 | | État |
 |---|---|
-| Dashboard NXE : hub, My Xbox, Xbox LIVE (hors ligne), Game Library, succès, navigation | fonctionne |
+| Dashboard Kinect : hub, My Xbox, Xbox LIVE (hors ligne), Game Library, succès, navigation | fonctionne |
 | Profil local « Joueur » créé automatiquement | fonctionne |
 | Création de profil comme sur une vraie console (clavier virtuel Xbox, fenêtre de connexion) | **en développement**, pas encore dans l'AppImage |
 | Éditeur d'avatar | non disponible (nécessite un paquet que le firmware de base ne contient pas) |

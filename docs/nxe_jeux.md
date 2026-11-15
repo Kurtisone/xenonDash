@@ -1,6 +1,6 @@
-# Jeux depuis le Dashboard NXE 2.0.13604 (lot C)
+# Jeux depuis le Dashboard Kinect 2.0.13604 (lot C)
 
-Date : 2026-11-12. Tout se passe depuis le Dashboard : l'AppImage NXE crée un dossier de jeux, les jeux déposés y sont reconnus (outils
+Date : 2026-11-12. Tout se passe depuis le Dashboard : l'AppImage Kinect crée un dossier de jeux, les jeux déposés y sont reconnus (outils
 `tools/xcontainer.py` et `tools/game_library.py`, voir [bibliotheque.md](bibliotheque.md)), A sur un jeu le recompile en natif si nécessaire
 (progression à l'écran) puis le lance ; on revient au Dashboard à la fin du jeu. Aucune ligne de commande, aucun `games.toml` à écrire, aucune émulation.
 
@@ -92,7 +92,7 @@ Test de bout en bout `e2e_jeux.sh` (AppImage complète, HOME vierge, firmware im
 - Skate natif à l'écran (`07_jeu.png`), jeu tué par PID, « retour au Dashboard après le jeu 45410813 » et Dashboard affiché (`08_retour_dashboard.png`), 0 FATAL ;
 - refus : jeu dont la source est inutilisable -> fenêtre rouge sur un Dashboard relancé et utilisable (capture hors AppImage, Dashboard de développement).
 
-Relance du Dashboard : le hub NXE prend `XamLoaderLaunchTitle*` pour un lancement réel et reste noir (écran noir de plusieurs minutes pendant la construction, constaté), quoi que renvoie le
+Relance du Dashboard : le hub Kinect prend `XamLoaderLaunchTitle*` pour un lancement réel et reste noir (écran noir de plusieurs minutes pendant la construction, constaté), quoi que renvoie le
 hook (`E_FAIL`). Pour un appel venu du hub, `LaunchGame` relance donc le Dashboard tout de suite (superviseur détaché, comme au retour d'un jeu) et lui passe l'état par
 `~/.local/share/xenondash/current_build.json` (pid, cache de la construction en cours, ou message de refus à afficher une fois) ; la nouvelle instance reprend le suivi (`ResumeBuild`, `progress.json`)
 et lance le jeu seule à la fin. Un lancement par F5 garde le suivi dans le même processus. Vérifié : reprise du suivi puis échec simulé (construction tuée par PID : message, fichier d'état supprimé).

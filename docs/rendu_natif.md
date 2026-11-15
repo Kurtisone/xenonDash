@@ -1,6 +1,6 @@
 # Rendu natif au niveau D3D (zéro émulation du GPU) : étude de faisabilité
 
-Date : 2026-11-06. Périmètre : dash.xex **2.0.6770.0** (Blades) analysé en détail ; 13604 (NXE) et 17559 (Metro)
+Date : 2026-11-06. Périmètre : dash.xex **2.0.6770.0** (Blades) analysé en détail ; 13604 (Kinect) et 17559 (Metro)
 extrapolés à partir de la 17559 déjà portée (partiellement) et des images PE présentes dans `work/port/`.
 Méthode : analyse statique de `work/dash.pe` (image décompressée), du code généré, des imports du noyau et des
 sources publiques lues en ligne (aucun dépôt cloné, aucun code tiers exécuté). Outil : `tools/analyse_d3d.py`
@@ -290,9 +290,9 @@ Principes :
 | A8 | Mise au point visuelle contre l'oracle (plugin `xenos` actuel), correctifs, retrait de l'émulation | 6 |
 | **Total 6770** | | **51** *(55 avant l'essai)* |
 
-### 2.0.13604.0 (NXE)
+### 2.0.13604.0 (Kinect)
 
-Réutilise A2-A6 ; coût : nouvelle dérivation de D3D (signatures, offsets), nouveaux effets NXE (flou, avatars non
+Réutilise A2-A6 ; coût : nouvelle dérivation de D3D (signatures, offsets), nouveaux effets Kinect (flou, avatars non
 supportés d'emblée, tuiles), ≈ 230-260 shaders (extrapolation à partir de la 7258 : 246 conteneurs).
 Estimation : **+12 jours** *(14 avant l'essai §10)* (cartographie 3, shaders 3, effets/textures 4, mise au point 2). Le dash 13604 n'est pas
 disponible dans `work/` : estimation non mesurée.

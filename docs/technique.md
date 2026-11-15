@@ -7,7 +7,7 @@
 
 Recompilation statique de `dash.xex` en C++ natif avec [ReXGlue](https://github.com/rexglue/rexglue-sdk) (runtime dérivé de Xenia)
 et des outils de [XenonRecomp](https://github.com/hedge-dev/XenonRecomp). Ce document a été écrit à partir du Dashboard Blades 2.0.6770.0 ; les sections
-suivantes couvrent les autres versions. **Version prioritaire aujourd'hui : NXE 2.0.13604** (rendu natif, XAM et HUD recompilés, bibliothèque de jeux) : voir
+suivantes couvrent les autres versions. **Version prioritaire aujourd'hui : Kinect 2.0.13604** (rendu natif, XAM et HUD recompilés, bibliothèque de jeux) : voir
 [xam_recompile.md](xam_recompile.md), [ngpu_core.md](ngpu_core.md) et [nxe_jeux.md](nxe_jeux.md). Les sections « Mise en place », « Contrôles » et « État actuel » ci-dessous décrivent surtout le 6770.
 
 ## Mise en place
@@ -143,7 +143,7 @@ l'archive XeBuilds ne contient pas 5759, 4532 ni 2255, on y utilise les polices 
 | 2.0.7258.0 | **partiel** : démarre et s'affiche (interface « Xbox 360 / Xbox Live » en tuiles, type NXE avant la lettre, **pas** les Blades), profil détecté (« 1 Profile Found, Signed In Locally »), navigation vers Game Library / Recent Games | import de fonction **sans thunk** (`XamVoiceSubmitPacket`, adresse 0) : correctif du SDK (`codegen` l'ignore) sans lequel `No function registered at <entrée>` ; Achievements/Played Games non atteints (écran de profil derrière la tuile « Sign In », non géré en HLE) ; artefacts roses de lavapipe. Captures : `dashboards/2.0.7258.0/runs/preuves/` |
 | 2.0.5759.0 | **partiel** : codegen (12 cibles, 299 fonctions par pointeur) et compilation OK, **écran noir** au démarrage | déréférencement nul (invité `0x8`) pendant l'initialisation XUI, après le second `XamProfileCreateEnumerator` (`sub_9226CE00`, message XUI vers un objet dont le champ `+12` est nul) ; non résolu. Ce Dashboard ouvre `media:\gamercrd.xzp` (ressource de `xam.xex`, absente de la flash) : l'outil en extrait désormais une version convertie de XAM 17559 (format de scènes probablement incompatible) |
 | 2.0.4532.0 | **partiel** : codegen (10 cibles, 285 fonctions par pointeur) et compilation OK, écran noir | même symptôme que 5759 |
-| 2.0.13604.0 | **NXE affichée (HLE)** : codegen (32 640 fonctions) et compilation OK, interface NXE (Xbox LIVE / My Xbox / Welcome, tuiles, texte, Game Library) pilotée au clavier ; AppImage OK ; « Recent Games » reste sur son indicateur d'attente, profil non montré dans le hub | voir « Dashboard NXE 2.0.13604 ». Captures : `dashboards/2.0.13604.0/runs/preuves/nxe_*.png` |
+| 2.0.13604.0 | **Kinect affichée (HLE)** : codegen (32 640 fonctions) et compilation OK, interface Kinect (Xbox LIVE / My Xbox / Welcome, tuiles, texte, Game Library) pilotée au clavier ; AppImage OK ; « Recent Games » reste sur son indicateur d'attente, profil non montré dans le hub | voir « Dashboard Kinect 2.0.13604 ». Captures : `dashboards/2.0.13604.0/runs/preuves/nxe_*.png` |
 | 2.0.17559.0 | **P4 palier 1 OK (HLE)** : codegen (38 105 fonctions) et compilation OK, **l'interface Metro s'affiche** (onglets home/games/apps/settings, tuiles, navigation clavier) ; profil non affiché ; variante `dashboards/2.0.17559.0-xam/` avec XAM recompilé chargé dans le processus (prototype) | voir « Dashboard 2.0.17559 et XAM recompilé ». Captures : `dashboards/2.0.17559.0/runs/preuves/p4_*.png` |
 | 2.0.2255.0 | **impossible** | la mise à jour ne contient que des deltas `.xexp` (dash compris) appliqués sur la base 1888, dont les modules sont chiffrés et dont on ne dispose pas de clé ; l'outil s'arrête proprement (« dash.xex introuvable ») |
 
@@ -154,7 +154,7 @@ termine par un `b` vers sa fonction parente : le point d'arrivée est déclaré 
 dans le projet, extraction de la ressource `gamercrd` de XAM. 6770 en avait aussi une (`0x9222D328`), ajoutée à
 son `overrides.toml` ; Achievements revérifié à l'écran après reconstruction.
 
-## Dashboard NXE 2.0.13604 (dernière NXE avant Metro)
+## Dashboard Kinect 2.0.13604 (dernière version avant Metro)
 
 `tools/port_dashboard.sh firmware/2.0.13604.0 2.0.13604.0` (paquet officiel `su20076000_00000000`, sha256 `a2e9b70c…`, qui
 contient `$flash_dash.xex` **et** `$flash_xam.xex` complets, sans delta) : 3 itérations de codegen (**32 640 fonctions**,
@@ -494,9 +494,9 @@ Prérequis : SDK installé dans `sdk/` (branche `unified`), `tools/build_xenosre
 Au premier lancement le Dashboard lance la construction (processus détaché, il reste utilisable, fenêtre de progression, journal `<cache>/build.log`) puis lance le jeu ; ensuite
 le binaire du cache est lancé directement (retour au Dashboard à la fin du jeu).
 
-## Bibliothèque de jeux et recompilateur générique (NXE)
+## Bibliothèque de jeux et recompilateur générique (Kinect 2.0.13604)
 
-Parcours visé, depuis le Dashboard NXE 2.0.13604 et son AppImage, sans ligne de commande :
+Parcours visé, depuis le Dashboard Kinect 2.0.13604 et son AppImage, sans ligne de commande :
 
 1. Au premier lancement, l'AppImage crée `~/XenonDash/Games` (`$XENONDASH_GAMES_DIR` ou `--games-dir` pour un autre dossier).
 2. On y dépose ses jeux : dossier extrait (`default.xex`), XEX nu, ISO, paquet XBLA (STFS, y compris l'arborescence `<TitleID>/000D0000/<paquet>`), Games on Demand. Rien n'est copié ni modifié.
@@ -510,7 +510,7 @@ Prérequis sur la machine : `python3` (3.11+), `clang`, `cmake`, `ninja`, un GPU
 | Élément | État |
 |---|---|
 | Formats | dossier, XEX, paquet XBLA : validés sur fichiers réels ; ISO et GOD : sur fichiers synthétiques seulement ([docs/bibliotheque.md](bibliotheque.md)) |
-| Game Library NXE | tous les jeux listés sans disque ; A/Play Game transmet le bon TitleID ; tous étiquetés « Arcade Game » ([docs/nxe_jeux.md](nxe_jeux.md)) |
+| Game Library Kinect | tous les jeux listés sans disque ; A/Play Game transmet le bon TitleID ; tous étiquetés « Arcade Game » ([docs/nxe_jeux.md](nxe_jeux.md)) |
 | Jeu avec recette (Skate) | bout en bout vérifié sous AppImage : dépôt, Game Library, construction, jeu natif, retour |
 | Jeu sans recette, XDK 5632 (Skate en mode générique) | écran-titre natif atteint sans aucune aide manuelle ; seul jeu validé à ce jour |
 | Jeu sans recette, XDK tardive (Trials Fusion, 21256) | refusé (« signatures expérimentales ») : la construction aboutit mais l'image est noire |
@@ -715,7 +715,7 @@ Contenu de `dashboards/2.0.6770.0/assets/flash/` (monté en `\SystemRoot` / `med
 - `shrdres.xzp` : ressource de `xam.xex` 2.0.17559, convertie (voir « Mise en place »).
 - `XenonJKLatin.xtt`, `XenonCLatin.xtt` et les modules `*.xex` de la flash 6770 : archive
   *XeBuilds* (dossier `6770`, sans aucune donnée propre à une console). Seul son `xam.xex` ne se
-  déchiffre ni avec la clé retail ni avec la clé devkit mais il se déchiffre avec la clé XEX1 (`tools/xex_rekey.py`, voir NXE 13604) ; non exploité.
+  déchiffre ni avec la clé retail ni avec la clé devkit mais il se déchiffre avec la clé XEX1 (`tools/xex_rekey.py`, voir Kinect 13604) ; non exploité.
 
 Ressources partagées : le Dashboard construit `sharedres://X` via `XamBuildLegacySystemResourceLocator`.
 Le localisateur du SDK, `file://media:/shrdres.xzp#X`, est coupé à la barre oblique par ce XUI
@@ -734,9 +734,9 @@ Sous Xvfb, RADV ne peut pas présenter (pas de DRI3) : utiliser lavapipe :
 - `XboxKrnlBaseVersion` (variable noyau) non implémentée.
 - **Dashboard 6770 (HLE)** : un seul profil, toujours connecté localement (pas d'écran de connexion ni de création de profil :
   `XamShowSigninUIp`, `XamShowCreateProfileUI`, `XamUserLogon` restent en stub). Réputation et zone
-  sont des valeurs fixées par option. **NXE 13604, variante `-xam`** : connexion et création de profil par les vraies fenêtres Xbox
+  sont des valeurs fixées par option. **Kinect 13604, variante `-xam`** : connexion et création de profil par les vraies fenêtres Xbox
   (`DASH_PROFILE_MODE=xam`, voir [xam_recompile.md](xam_recompile.md), palier N4) ; code PIN d'un profil existant et `XamUserReadProfileSettings` non résolus.
-- **NXE 13604, rendu natif** : pas de superposition ImGui (écran de progression de construction des jeux, lanceur F5, succès de remplacement : non affichés) ;
+- **Kinect 13604, rendu natif** : pas de superposition ImGui (écran de progression de construction des jeux, lanceur F5, succès de remplacement : non affichés) ;
   72 shaders du Dashboard non traduits à l'import, 3 vertex shaders à texture ([ngpu_core.md](ngpu_core.md) §8).
 - Icônes partagées (Ⓖ, boutons, zones) : ce sont celles du XAM **17559**, d'un style plus récent que
   la 6770. Celles d'origine sont dans le `xam.xex` de base 2.0.1888 (+ `xam.xexp` de la 6770) ;

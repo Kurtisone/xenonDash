@@ -263,7 +263,7 @@ Le correctif `tools/xam_unimpl_patch.py` reste à relancer après chaque `rexglu
 
 ## Palier D : le hub s'affiche avec XAM chargé
 
-Résultat : le hub NXE s'affiche avec `DASH_XAM_MODULE=2` (captures hors dépôt : `runs/f1.png` à 60 s, `runs/f2.png` à 100 s).
+Résultat : le hub Kinect s'affiche avec `DASH_XAM_MODULE=2` (captures hors dépôt : `runs/f1.png` à 60 s, `runs/f2.png` à 100 s).
 Le processus est vivant, les 9 threads système de XAM sont créés, aucun `FATAL`, aucun SIGSEGV.
 
 ### Cause du hub noir (établie)
@@ -1010,7 +1010,7 @@ Modifiés : `dashboards/2.0.13604.0-xam/{CMakeLists.txt,dash_manifest.toml}`, `c
 
 ## Palier N4 : création de profil, connexion et parcours « premier lancement sans profil » par XAM recompilé
 
-**Atteint** (captures regardées, scratchpad non versionné) : avec `DASH_XAM_MODULE=2` et `DASH_PROFILE_MODE=xam`, le hub NXE démarre sans aucun profil
+**Atteint** (captures regardées, scratchpad non versionné) : avec `DASH_XAM_MODULE=2` et `DASH_PROFILE_MODE=xam`, le hub Kinect démarre sans aucun profil
 (tuile « Sign In / No Profiles Found », `m2_1.png`) ; A sur la tuile ouvre la scène « Sign In » du Dashboard (« Create Profile », `m3_5.png`), puis
 `XamShowCreateProfileUI` ouvre la vraie fenêtre « Enter Profile Name » de `createprofile.xex` avec le clavier de `vk.xex` (`m3_14.png`) ; la création
 est **effective** (`XamProfileCreate` puis `XamProfileGetCreationStatus` = 0), XAM connecte le profil (`XamUserLogon`), le Dashboard reçoit la

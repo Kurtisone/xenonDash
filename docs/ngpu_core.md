@@ -149,7 +149,7 @@ tools/port_dashboard.sh firmware/2.0.6770.0 2.0.6770.0 --stages build,smoke     
 (Le build natif avec une version de SDK différente de celle du `librexgpu-xenos.so` copié dans son dossier plante au démarrage de l'oracle : utiliser le build par défaut pour l'oracle.)
 
 
-## 8. Dashboard NXE 2.0.13604 (palier N1, 2026-11-13) : rendu natif sans plugin `xenos`
+## 8. Dashboard Kinect 2.0.13604 (palier N1, 2026-11-13) : rendu natif sans plugin `xenos`
 
 `-DDASH_NATIVE_GPU=ON` sur `dashboards/2.0.13604.0` : aucun plugin GPU, aucun lecteur de tampon de commandes ; le plugin `xenos` ne sert plus que d'**oracle**
 (`DASH_NGPU_DISABLE=1 --gpu_plugin=xenos` dans un build natif, ou un build `-DDASH_NATIVE_GPU=OFF`). **Option ON par défaut** depuis l'AppImage native (§8.7) ;
