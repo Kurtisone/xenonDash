@@ -208,6 +208,12 @@ et `p6_2.0.13604.0.png` (AppImage).
   ou `--dash_launch`. L'automatisation clavier sous lavapipe est instable (répétition de touches : une touche peut faire
   défiler plusieurs lames), exécuter sous gdb (`DASH_GDB=1`) et vérifier chaque écran.
 - Restent : glyphe Ⓖ manquant (carré), `DASHUSER:\ThematicSkin`/`VisionEffect` absents, XAM 13604 non recompilé.
+  *Cause établie (2026-11-15)* : l'élément XUI `GamerScoreIcon` est un `XuiText` contenant `U+E00A`
+  (zone privée Unicode, comme 517 autres icônes du Dashboard). Les polices sont bien utilisées pour ce texte
+  (sans elles, « Joueur » et « 0 » disparaissent), mais le point de code est absent des trois `.xtt` fournis :
+  remplacer `XenonCLatin` par `XenonJKLatin` donne un rendu identique au pixel. Les `.xttp1/.xttp2` ne comblent
+  rien (jamais demandés : 0 occurrence dans `strace`). Il faut la police d'origine de la NAND ; la mise à jour
+  système ne fournit que les correctifs `.xttp`.
 
 ## Dashboard 2.0.17559 et XAM recompilé (phase P4)
 
