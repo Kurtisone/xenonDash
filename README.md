@@ -67,16 +67,24 @@ Un jeu que XenonDash ne sait pas faire fonctionner nativement est **refusé avec
 
 | Touche | Manette |
 |---|---|
-| Flèches | Croix directionnelle |
-| Entrée ou Espace | A |
-| Échap ou Retour arrière | B |
-| X / Y | X / Y |
-| Q et E (AZERTY : A et E) | LB / RB, pour changer d'onglet |
-| Tab / P | Back / Start |
-| WASD (AZERTY : ZQSD) | Stick gauche |
-| F6 | Rescanner le dossier de jeux |
+| `Espace` ou `;` | **A** (valider) |
+| `Backspace` ou `'` | **B** (retour) |
+| `L` / `P` | X / Y |
+| `1` / `3` | LB / RB, pour changer d'onglet |
+| `Z` ou `Tab` | Back |
+| `Entrée` ou `X` | Start |
+| `W` `A` `S` `D` (AZERTY : `Z` `Q` `S` `D`) | Stick gauche |
+| Flèches | Stick droit |
+| `Shift` + flèches | Croix directionnelle |
+| `F6` | Rescanner le dossier de jeux |
+
+> **Attention** : `Entrée` est **Start**, pas A, et `Échap` n'est lié à rien. Suivre
+> l'ancienne version de ce tableau (Entrée = A, Échap = B) donne l'impression que le
+> Dashboard ne répond plus : rien ne se valide, rien ne se ferme.
 
 Les touches se redéfinissent : `--keybind_a=Return,Space`, `--keybind_right_shoulder=E`, etc.
+Le nom d'une touche suit les *keysyms* X11 (`space`, `semicolon`, `apostrophe`, `Return`,
+`BackSpace`, `Tab`, `Escape`, `Down`...).
 
 ## En cas de problème
 
