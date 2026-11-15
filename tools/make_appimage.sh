@@ -2,6 +2,8 @@
 # Construit out/appimage/XenonDash-<version>-x86_64.AppImage (phase P6 ; voir docs/technique.md, « AppImage »).
 # usage: tools/make_appimage.sh <version> [--no-strip] [--no-build-tools]
 # --no-build-tools : sans les outils de recompilation de jeux (SDK, ngpu_core, XenosRecomp...) : AppImage légère, sans « Play Game »
+# --no-toolchain : sans clang/cmake/ninja embarqués (les jeux devront être recompilés ailleurs) ;
+#                 par défaut la toolchain est embarquée si elle est trouvée sur la machine de build
 # pour les jeux à recompiler.
 # Le binaire dash (déjà compilé : preset linux-amd64-relwithdebinfo) et les bibliothèques du SDK sont embarqués ;
 # AUCUN fichier Microsoft (dash.xex, polices, modules, shrdres) : import au premier lancement.
@@ -11,10 +13,11 @@
 # usr/share/xenondash/gpu (native : plus de plugin xenos, shaders SPIR-V générés à l'import ; xenos : émulation, comme avant).
 set -eu
 V=${1:?usage: tools/make_appimage.sh <version> [--no-strip] [--no-build-tools]}
-STRIP=1; BUILD_TOOLS=1
-for a in "${2:-}" "${3:-}"; do
+STRIP=1; BUILD_TOOLS=1; TOOLCHAIN=1
+for a in "${2:-}" "${3:-}" "${4:-}"; do
   [ "$a" = "--no-strip" ] && STRIP=0
   [ "$a" = "--no-build-tools" ] && BUILD_TOOLS=0
+  [ "$a" = "--no-toolchain" ] && TOOLCHAIN=0
 done
 R=$(cd "$(dirname "$0")/.." && pwd)
 BDIR=$R/dashboards/$V/out/build
@@ -64,6 +67,17 @@ for f in port_dashboard.py stfs.py xex_resource.py xex_rekey.py xzp_alias.py d3d
 # (tout ce que le moteur de recettes appelle sous tools/ doit y figurer : tous les *.py, les dossiers de données, le gabarit).
 TOOLS_DIRS="d3d_signatures templates"          # dossiers de tools/ copiés en entier
 ROOT_DIRS="games ngpu_core native_gpu patches" # dossiers du dépôt copiés en entier (recettes, rendu natif, correctifs XenosRecomp)
+# Toolchain de compilation (clang, clang++, cmake, ninja) : permet de recompiler un jeu depuis
+# l'AppImage, sans rien installer sur l'hôte. ~290 Mo : c'est le prix d'un clang autonome
+# (libLLVM + libclang-cpp). --no-toolchain pour l'omettre.
+if [ $BUILD_TOOLS = 1 ] && [ $TOOLCHAIN = 1 ]; then
+  if command -v clang >/dev/null 2>&1 && command -v cmake >/dev/null 2>&1 && command -v ninja >/dev/null 2>&1; then
+    python3 "$R/tools/appimage/embed_toolchain.py" /usr "$S/toolchain" || \
+      echo "avertissement : toolchain non embarquée (les jeux ne pourront pas être recompilés depuis l'AppImage)" >&2
+  else
+    echo "avertissement : clang/cmake/ninja absents de la machine de build : toolchain non embarquée" >&2
+  fi
+fi
 if [ $BUILD_TOOLS = 1 ]; then
   for need in sdk/bin/rexglue sdk/include sdk/lib work/XenosRecomp-unified/build/XenosRecomp/XenosRecomp; do
     [ -e "$R/$need" ] || { echo "manquant : $need (voir tools/build_xenosrecomp.sh et le SDK installé dans sdk/) ; --no-build-tools pour s'en passer" >&2; exit 1; }

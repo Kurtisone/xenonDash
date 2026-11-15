@@ -71,6 +71,54 @@ do_import() {
   python3 -I "$SHARE/tools/xenondash_import.py" "$@" --games-example "$SHARE/games.example.toml"
 }
 
+# Cherche les fichiers de l'import a cote de l'AppImage (dossier de l'AppImage = $HERE).
+# Renseigne UPDATE / MODULES / FONTS / XAM si vides. Ne demande rien : l'utilisateur pose ses
+# fichiers et lance, sans dialogue (demande explicite).
+detect_side_files() {
+  [ -n "$UPDATE" ] && return 0
+  # 1. Dossier $SystemUpdate (ou tout dossier contenant des $flash_*/dash.xex)
+  for d in "$HERE/\$SystemUpdate" "$HERE/SystemUpdate" "$HERE"/firmware/* "$HERE"/*; do
+    [ -d "$d" ] || continue
+    if [ -f "$d/dash.xex" ] || [ -f "$d/\$flash_dash.xex" ] || [ -n "$(ls "$d"/\$flash_*.xex 2>/dev/null | head -1)" ]; then
+      UPDATE=$d; break
+    fi
+  done
+  # 2. Paquet STFS a la racine
+  [ -z "$UPDATE" ] && for f in "$HERE"/su20076000_* "$HERE"/*STFS*; do
+    [ -f "$f" ] && UPDATE=$f && break
+  done
+  # 3. Archive zip d'une mise a jour : dezippee une fois dans le cache
+  if [ -z "$UPDATE" ]; then
+    for z in "$HERE"/*.zip "$HERE"/*SystemUpdate*.zip; do
+      [ -f "$z" ] || continue
+      CACHE=${XENONDASH_DATA:-${XDG_DATA_HOME:-$HOME/.local/share}/xenondash}/cache/$(basename "$z" .zip)
+      if [ ! -d "$CACHE/\$SystemUpdate" ] && [ ! -f "$CACHE/dash.xex" ]; then
+        echo "XenonDash : dezippage de $(basename "$z") (une seule fois)" >&2
+        mkdir -p "$CACHE" && unzip -qo "$z" -d "$CACHE" 2>/dev/null
+      fi
+      if [ -d "$CACHE/\$SystemUpdate" ]; then UPDATE=$CACHE/\$SystemUpdate
+      elif [ -f "$CACHE/dash.xex" ]; then UPDATE=$CACHE; fi
+      [ -n "$UPDATE" ] && break
+    done
+  fi
+  # 4. Polices : dossier « polices »/« fonts » ou fichiers .xtt a la racine
+  if [ -z "$FONTS" ]; then
+    for d in "$HERE"/*font* "$HERE"/*police* "$HERE"/*Segoe*; do
+      [ -d "$d" ] && ls "$d"/*.xtt >/dev/null 2>&1 && FONTS=$d && break
+    done
+    [ -z "$FONTS" ] && [ -n "$(ls "$HERE"/*.xtt 2>/dev/null | head -1)" ] && FONTS=$HERE
+  fi
+  # 5. xam.xex complet pour shrdres (dossier 17559 a cote)
+  if [ -z "$XAM" ]; then
+    for c in "$HERE"/\$flash_xam.xex "$HERE"/xam.xex "$HERE"/*/\$flash_xam.xex "$HERE"/*/xam.xex; do
+      [ -f "$c" ] && XAM=$c && break
+    done
+  fi
+  if [ -n "$UPDATE" ]; then
+    echo "XenonDash : detecte a cote de l'AppImage : $UPDATE${FONTS:+ | polices : $FONTS}${XAM:+ | xam : $XAM}" >&2
+  fi
+}
+
 ready() { [ -f "$DATA/.ready" ] && [ -f "$DATA/dash.xex" ]; }
 
 # Racine des outils de recompilation : l'AppImage est montée en lecture seule à un chemin qui change à chaque lancement ;
@@ -83,11 +131,26 @@ if [ -x "$XRE/XenosRecomp" ]; then
   export XD_XENOSRECOMP=$XRE/XenosRecomp
   LD_LIBRARY_PATH=$XRE${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}; export LD_LIBRARY_PATH
 fi
+# Toolchain embarquée (clang, clang++, cmake, ninja) : permet à « Play Game » de recompiler un jeu
+# sans rien installer. Les chemins sont relatifs à $LINK (lien stable vers le contenu monté).
+TC=$LINK/toolchain
+if [ -x "$TC/bin/clang" ] && [ -x "$TC/bin/cmake" ] && [ -x "$TC/bin/ninja" ]; then
+  PATH=$TC/bin:$PATH; export PATH
+  LD_LIBRARY_PATH=$TC/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}; export LD_LIBRARY_PATH
+  # clang embarqué : ses en-têtes et les en-têtes C++ sont dans la toolchain, pas sur l'hôte.
+  export CC=$TC/bin/clang CXX=$TC/bin/clang++
+  export CFLAGS="-resource-dir=$TC/lib/clang/20 --gcc-toolchain=/usr -isystem $TC/include/c++ -isystem $TC/include/x86_64-linux-gnu/c++"
+  export CXXFLAGS=$CFLAGS
+  # cmake a besoin de ses modules (CMAKE_ROOT), embarqués sous toolchain/share/cmake-*
+  for d in "$TC"/share/cmake-*; do [ -d "$d" ] && CMAKE_ROOT=$d && export CMAKE_ROOT && break; done
+fi
+
 # xxhsum (XXH3 des shaders) : embarqué dans l'AppImage (tools/xxhsum), sinon celui du système
 [ -x "$SHARE/tools/xxhsum" ] && export XD_XXHSUM=$SHARE/tools/xxhsum
 
 IMPORTED=0
 if [ "$REIMPORT" = 1 ] || [ -n "$UPDATE" ] || ! ready; then
+  detect_side_files
   if [ -z "$UPDATE" ]; then
     echo "XenonDash $VERSION : premier lancement, import de la mise à jour système officielle." >&2
     UPDATE=$(ask "Mise à jour système $VERSION (dossier \$SystemUpdate, paquet STFS su20076000_00000000 ou dossier de fichiers extraits)" 1)
@@ -95,7 +158,7 @@ if [ "$REIMPORT" = 1 ] || [ -n "$UPDATE" ] || ! ready; then
       echo "Aucune mise à jour indiquée. Relancer avec : $0 --import <chemin>  (voir --help)" >&2
       exit 1
     fi
-    [ -z "$MODULES" ] && MODULES=$(ask "Optionnel : modules/polices complets $VERSION (archive XeBuilds). Annuler / laisser vide pour passer" 0)
+    [ -z "$MODULES" ] && [ -z "$FONTS" ] && MODULES=$(ask "Optionnel : modules/polices complets $VERSION (archive XeBuilds). Annuler / laisser vide pour passer" 0)
     [ -z "$XAM" ] && XAM=$(ask "Optionnel : dossier d'une mise à jour récente (17559) contenant \$flash_xam.xex (pour les icônes). Vide pour passer" 0)
   fi
   [ -d "$XAM" ] && for c in "$XAM/\$flash_xam.xex" "$XAM/xam.xex"; do [ -f "$c" ] && XAM=$c && break; done
