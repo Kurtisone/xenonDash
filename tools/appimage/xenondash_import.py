@@ -125,6 +125,8 @@ def main():
     ap.add_argument("root", help="game_data_root à remplir (~/.local/share/xenondash/<version>)")
     ap.add_argument("update", nargs="?", help="dossier $SystemUpdate / mise à jour extraite, paquet STFS ou dash.xex")
     ap.add_argument("--modules", help="modules et polices complets de la version (archive XeBuilds)")
+    ap.add_argument("--fonts-dir", help="dossier de polices XenonCLatin/XenonJKLatin/XenonSCLatin.xtt "
+                                       "(sans les modules .xex d'une archive XeBuilds)")
     ap.add_argument("--shrdres-xam", help="xam.xex complet (mise à jour récente, ex. 17559) d'où tirer shrdres.xzp")
     ap.add_argument("--games-example", help="modèle de games.toml")
     ap.add_argument("--native-shaders", action="store_true", help="générer les shaders SPIR-V du rendu natif (si nécessaire)")
@@ -143,7 +145,8 @@ def main():
     os.makedirs(root, exist_ok=True)
     tmp = tempfile.mkdtemp(prefix="xenondash-import-")
     try:
-        ns = types.SimpleNamespace(source=a.update, flash_dir=a.modules, shrdres=None, shrdres_xam=a.shrdres_xam)
+        ns = types.SimpleNamespace(source=a.update, flash_dir=a.modules, fonts_dir=a.fonts_dir, shrdres=None,
+                                   shrdres_xam=a.shrdres_xam)
         ctx = {"dest": os.path.join(tmp, "proj"), "work": os.path.join(tmp, "work")}
         os.makedirs(ctx["work"])
         for name, fn in (("extract", pd.stage_extract), ("assets", pd.stage_assets)):

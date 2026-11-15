@@ -18,6 +18,7 @@ Données : $DATA
   --import <mise_à_jour>       importe la mise à jour système officielle (dossier \$SystemUpdate, paquet STFS
                                su20076000_00000000 ou dash.xex) puis lance le Dashboard
   --modules <dossier>          modules/polices complets de la version (archive XeBuilds), avec --import
+  --fonts-dir <dossier>        polices XenonCLatin/XenonJKLatin/XenonSCLatin.xtt seules (sans les modules .xex), avec --import
   --shrdres-xam <xam.xex>      xam.xex complet d'une mise à jour récente (ex. 17559) pour shrdres.xzp, avec --import
   --reimport                   refait l'import (profils et games.toml conservés)
   --regen-shaders              refait les shaders SPIR-V du rendu natif (dash.xex et xam.xex importés), puis quitte
@@ -29,7 +30,7 @@ Sans option et sans données, une fenêtre (zenity/kdialog) ou la console demand
 USG
 }
 
-UPDATE= MODULES= XAM= REIMPORT=0 GAMES_ONLY=0 REGEN_SHADERS=0
+UPDATE= MODULES= XAM= FONTS= REIMPORT=0 GAMES_ONLY=0 REGEN_SHADERS=0
 while [ $# -gt 0 ]; do
   case $1 in
     --help|-h) usage; exit 0;;
@@ -38,6 +39,8 @@ while [ $# -gt 0 ]; do
     --import=*) UPDATE=${1#*=}; shift;;
     --modules) MODULES=$2; shift 2;;
     --modules=*) MODULES=${1#*=}; shift;;
+    --fonts-dir) FONTS=$2; shift 2;;
+    --fonts-dir=*) FONTS=${1#*=}; shift;;
     --shrdres-xam) XAM=$2; shift 2;;
     --shrdres-xam=*) XAM=${1#*=}; shift;;
     --reimport) REIMPORT=1; shift;;
@@ -59,10 +62,11 @@ ask() {
 }
 
 do_import() {
-  d=$1; u=$2; m=$3; x=$4
+  d=$1; u=$2; m=$3; x=$4; f=${5:-}
   set -- "$d" "$u"
   [ -n "$m" ] && set -- "$@" --modules "$m"
   [ -n "$x" ] && set -- "$@" --shrdres-xam "$x"
+  [ -n "$f" ] && set -- "$@" --fonts-dir "$f"
   [ "$GPU" = native ] && set -- "$@" --native-shaders
   python3 -I "$SHARE/tools/xenondash_import.py" "$@" --games-example "$SHARE/games.example.toml"
 }
@@ -95,7 +99,7 @@ if [ "$REIMPORT" = 1 ] || [ -n "$UPDATE" ] || ! ready; then
     [ -z "$XAM" ] && XAM=$(ask "Optionnel : dossier d'une mise à jour récente (17559) contenant \$flash_xam.xex (pour les icônes). Vide pour passer" 0)
   fi
   [ -d "$XAM" ] && for c in "$XAM/\$flash_xam.xex" "$XAM/xam.xex"; do [ -f "$c" ] && XAM=$c && break; done
-  do_import "$DATA" "$UPDATE" "$MODULES" "$XAM" || { echo "Import en échec (voir ci-dessus)." >&2; exit 1; }
+  do_import "$DATA" "$UPDATE" "$MODULES" "$XAM" "$FONTS" || { echo "Import en échec (voir ci-dessus)." >&2; exit 1; }
   IMPORTED=1
 fi
 

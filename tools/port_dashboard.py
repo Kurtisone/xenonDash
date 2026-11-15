@@ -37,7 +37,8 @@ XEXINFO = os.path.join(TOOLS, "xexinfo", "build", "xexinfo")
 STAGES = ["extract", "assets", "pe", "scaffold", "codegen", "build", "smoke", "compare"]
 
 # Polices : nom canonique dans la flash console (XeBuilds les fournit en minuscules)
-FONT_NAMES = {"xenonclatin.xtt": "XenonCLatin.xtt", "xenonjklatin.xtt": "XenonJKLatin.xtt"}
+FONT_NAMES = {"xenonclatin.xtt": "XenonCLatin.xtt", "xenonjklatin.xtt": "XenonJKLatin.xtt",
+              "xenonsclatin.xtt": "XenonSCLatin.xtt"}  # SCLatin : referencee par dash.xex 13604
 # Ressources de xam.xex à fournir aussi comme media:\<nom>.xzp (convertie comme shrdres.xzp)
 XAM_XZP_RESOURCES = ["gamercrd"]
 # Gabarit : fichiers copiés s'ils n'existent pas encore (relatif au gabarit -> relatif au projet)
