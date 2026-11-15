@@ -239,6 +239,10 @@ u32 XamProfileClose_entry(mapped_string mount_name) {
 // --- Image du joueur ---------------------------------------------------------
 
 constexpr uint32_t kTileTypeGamerTile = 2;       // image du joueur (64x64)
+// Type 10 : observe dans dash.xex 2.0.13604 pour les tuiles du hub, tile_id = XUID du profil
+// (0xb13e07dff9ab6772). Non documente par la XDK ; traite comme une tuile de joueur (meme image
+// que le type 2) plutot que de renvoyer FILE_NOT_FOUND, ce qui laissait la tuile blanche.
+constexpr uint32_t kTileTypeHubGamerTile = 10;
 constexpr uint32_t kTileTypeGamerTileSmall = 3;  // petite image (32x32)
 constexpr uint32_t kDashTitleId = 0xFFFE07D1;
 constexpr uint32_t kErrorInsufficientBuffer = 122;
@@ -309,7 +313,8 @@ u32 XamReadTileEx_entry(u32 tile_type, u32 title_id, u64 tile_id, u32 user_index
   X_RESULT result = X_ERROR_FILE_NOT_FOUND;
   uint32_t length = 0;
   // Image du joueur (types 2/3), icône de jeu (1) ou de succès (0) : même recherche que XamReadTile.
-  bool gamer_tile = tile_type == kTileTypeGamerTile || tile_type == kTileTypeGamerTileSmall;
+  bool gamer_tile = tile_type == kTileTypeGamerTile || tile_type == kTileTypeGamerTileSmall ||
+                     tile_type == kTileTypeHubGamerTile;
   auto png = (gamer_tile && (title_id != kDashTitleId || user_index != 0))
                  ? std::vector<uint8_t>{}
                  : achievements::FindTile(tile_type, title_id, tile_id);

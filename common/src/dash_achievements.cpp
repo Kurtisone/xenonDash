@@ -294,6 +294,12 @@ std::vector<uint8_t> FindTile(uint32_t type, uint32_t title_id, uint64_t tile_id
   if (type == kTileGamer || type == kTileGamerSmall) {
     return profile::LoadGamerPic(profile::LocalXuid(), type == kTileGamerSmall);
   }
+  // Type 10 (hub 13604) : le tile_id est le XUID du profil. On sert son image comme pour le type 2,
+  // sinon la tuile reste blanche (X_ERROR_FILE_NOT_FOUND observe 18 fois par session).
+  if (type == 10 && (!tile_id || tile_id == profile::LocalXuid())) {
+    auto pic = profile::LoadGamerPic(profile::LocalXuid(), false);
+    if (!pic.empty()) return pic;
+  }
   std::lock_guard lock(g_mutex);
   if (auto* f = TitleGpd(title_id)) {
     uint64_t id = type == kTileGameIcon ? gpd::kTitleImageId : tile_id;
