@@ -10,6 +10,7 @@
 #include <functional>
 #include <map>
 #include <mutex>
+#include <vector>
 #include <memory>
 #include <string>
 #include <system_error>
@@ -129,6 +130,21 @@ void RunInSystemProcess(rex::system::KernelState* ks, std::function<int()> fn) {
   t->set_name("XAM load");
   t->Create();
   t->Wait(0, 0, 0, nullptr);
+}
+
+// Variante NON bloquante : le thread vit jusqu'a la fin du processus et l'appelant repart tout de
+// suite. Le chargement de XAM dans OnPostSetup bloquait le thread principal AVANT le premier dessin
+// du Dashboard : aucun appel D3D n'arrivait, donc aucun device Vulkan n'etait cree et l'ecran
+// restait noir (voir docs/xam_13604_compilation.md). Le thread doit rester reference : un
+// object_ref local le detruirait en fin de fonction.
+void RunInSystemProcessAsync(rex::system::KernelState* ks, std::function<int()> fn) {
+  static std::mutex mu;
+  static std::vector<rex::system::object_ref<SystemHostThread>> alive;  // vivants jusqu'a la fin
+  rex::system::object_ref<SystemHostThread> t(new SystemHostThread(ks, 256 * 1024, std::move(fn)));
+  t->set_name("XAM load");
+  t->Create();
+  std::lock_guard lock(mu);
+  alive.push_back(std::move(t));
 }
 
 }  // namespace dash::xamrt

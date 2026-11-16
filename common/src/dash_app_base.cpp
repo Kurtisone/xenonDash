@@ -32,6 +32,9 @@ void ApplyProfileSettings();
 namespace dash::disc {
 void Init();
 }
+namespace dash::hudui {
+void Init(rex::system::KernelState* ks, bool imgui_available);
+}  // namespace dash::hudui
 namespace dash::xamui {
 void Init(rex::ui::WindowedAppContext* app, rex::ui::ImGuiDrawer* imgui, rex::ui::ImmediateDrawer* immediate);
 bool IsOpen();
@@ -108,6 +111,10 @@ void DashAppBase::OnPostSetup() {
     input->SetActiveCallback(
         [drawer] { return !dash::xamui::IsOpen() && !drawer->GetIO().WantCaptureMouse; });
   }
+  // Palier N5 : progression de construction par les boîtes de message Xbox du HUD de XAM (rendu natif, sans
+  // superposition ImGui). Après xamui::Init : sans ImGui disponible (présentateur détaché), les fenêtres ImGui ne
+  // peuvent pas être dessinées ; avec plugin xenos elles restent seules et l'appel ne fait rien.
+  dash::hudui::Init(runtime()->kernel_state(), imgui_drawer() != nullptr);
   // La flash (\SystemRoot, \Device\Flash) est montée avant XAM : son point d'entrée lit ces chemins.
   dash::xamrt::MountFlash(runtime()->file_system(), game_data_root() / "flash");
   // P4 (prototype) : XAM recompilé comme module ReXGlue (voir docs/technique.md, « XAM recompilé »). Actif seulement si le projet
@@ -128,10 +135,19 @@ void DashAppBase::OnPostSetup() {
         dash::xamredir::Configure(ks, resolver, xam.get());
         return 0;
       };
-      if (run_entry) {
-        dash::xamrt::RunInSystemProcess(ks, load);
+      // Chargement ASYNCHRONE : le faire ici, sur le thread principal et avant le premier dessin,
+      // bloquait le Dashboard (aucun appel D3D -> aucun device Vulkan -> ecran noir, voir
+      // docs/xam_13604_compilation.md). On rend la main et XAM s'installe pendant que la boucle de
+      // rendu demarre. DASH_XAM_SYNC=1 retablit l'ancien comportement synchrone (diagnostic).
+      const bool sync = std::getenv("DASH_XAM_SYNC") != nullptr;
+      if (sync) {
+        if (run_entry) {
+          dash::xamrt::RunInSystemProcess(ks, load);
+        } else {
+          load();
+        }
       } else {
-        load();
+        dash::xamrt::RunInSystemProcessAsync(ks, load);
       }
     } else {
       REXLOG_WARN("[dash] DASH_XAM_MODULE défini mais le projet ne déclare pas de module xam.xex");

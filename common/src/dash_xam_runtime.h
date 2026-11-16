@@ -38,6 +38,8 @@ void MountXamDevices(rex::filesystem::VirtualFileSystem* vfs);
 // d'après KeGetCurrentProcessType() (== 2) : rex::system::XHostThread le place dans le processus titre (type 1), où
 // les objets de XAM ne sont jamais créés. Les threads créés par XAM (ExCreateThread, drapeau 2) sont déjà système.
 void RunInSystemProcess(rex::system::KernelState* ks, std::function<int()> fn);
+// Idem mais rend la main immediatement (chargement de XAM sans bloquer le premier dessin).
+void RunInSystemProcessAsync(rex::system::KernelState* ks, std::function<int()> fn);
 
 // Plage de l'image de XAM recompilé (adresses invitées). Le code de XAM voit KeGetCurrentProcessType() == 2 (processus
 // système) quel que soit le fil appelant : XAM n'existe qu'en une instance, initialisée dans le processus système, alors
