@@ -179,7 +179,34 @@ fabriquer. Toute implémentation doit rester dans la ligne du palier N4 : clé l
 `XeKeysObfuscate`/`UnObfuscate` locaux (déjà dans `common/src/kernel_obfuscate.cpp`), jamais de clé
 de console réelle.
 
-## Analyse gdb : les threads invités attendent des objets noyau
+## Correction : ce que montre vraiment l'écran
+
+Une capture de 690 Ko (`xam-demarrage.png`, prise à 00:56) montrait le Dashboard complet en vert,
+onglets Xbox LIVE / My Xbox / Welcome, tuiles Kinect. Elle laissait croire que la variante `-xam`
+s'affichait par moments.
+
+**C'est faux, et la mesure le prouve.** Le même binaire, lancé trois fois :
+
+| Mode | Variable d'environnement | Capture | Journal |
+|---|---|---|---|
+| A | *(aucune)* | **690 625 octets** — Dashboard affiché | 21 s, `xam.xex` **non chargé** |
+| B | `DASH_PROFILE_MODE=xam DASH_XAM_MODULE=2` | 3 073 octets — noir | 2 s, `xam.xex` chargé |
+| C | idem B | 3 073 octets — noir | 2 s (déterministe) |
+
+**`DASH_PROFILE_MODE=xam` est ce qui active les redirections** (`ProfileModeXam()` dans
+`dash_xam_redirect.cpp` : il faut la variable *et* `DASH_XAM_MODULE`). Sans la variable, le
+Dashboard répond par le **HLE** : XAM n'est même pas chargé, et l'interface s'affiche normalement.
+
+Donc la capture de 00:56 était le Dashboard en mode HLE, pas le XAM recompilé. Le noir est bien
+systématique dès que XAM pilote.
+
+### Conséquence pour le diagnostic
+
+Il faut comparer ce qui est comparable : « 21 s contre 2 s » n'oppose pas deux réglages du même
+chemin, mais **deux chemins différents** (HLE contre XAM). Le journal de 2 s est celui de XAM qui se
+charge puis se tait.
+
+## Analyse gdb## Analyse gdb : les threads invités attendent des objets noyau
 
 Mesure faite sur le processus **sain** (59 threads, état `S`, 6 s après le lancement, donc sans la
 perturbation qu'introduit un attach tardif — un attach sur un processus déjà mourant le fait
