@@ -6,6 +6,9 @@ avec une bibliothèque de jeux qui se remplit toute seule et des jeux recompilé
 > **Projet en développement.** Le Dashboard Kinect (2.0.13604) s'affiche et se pilote ; un seul jeu est validé de bout en bout (voir « Ce qui marche »).
 > XenonDash n'est affilié ni à Microsoft ni à Xbox. Il ne contient **aucun fichier Microsoft ni aucun jeu** : vous fournissez les vôtres.
 
+> **Vous voulez juste jouer ?** Le [guide du joueur](GUIDE.md) décrit tout : lancement, touches,
+> Guide (bouton Xbox), profils, jeux, pannes courantes. Le présent README va à l'essentiel.
+
 ## Ce qu'il vous faut
 
 - Un PC **Linux x86-64** avec un **GPU compatible Vulkan** (pilotes à jour). 16 Go de mémoire vive recommandés pour recompiler les jeux.

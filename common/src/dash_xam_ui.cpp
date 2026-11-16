@@ -69,6 +69,14 @@ void OpenLauncher();
 // DASH_TEST_XAMUI=<TitleID hexa> : ouvre l'écran de succès 20 s après le démarrage (test).
 void Init(ui::WindowedAppContext* app, ui::ImGuiDrawer* imgui, ui::ImmediateDrawer* immediate) {
   g_ctx = {app, imgui, immediate};
+  if (!imgui) {
+    // Rendu natif (DASH_NATIVE_GPU=ON) : le présentateur SDK est détaché, aucune superposition ImGui (docs/ngpu_core.md,
+    // « Non fait »). La progression de construction passe par le HUD de XAM (dash_xam_hud_ui.cpp) ; le lanceur F5 cède
+    // devant la Game Library du hub NXE. Un seul journal : Init est appelé une fois par instance.
+    REXLOG_INFO("[dash] interfaces ImGui indisponibles (rendu natif) : progression de construction -> HUD de XAM, "
+                "lanceur F5 -> Game Library du hub");
+    return;
+  }
   OpenLauncherHotkey();
   if (const char* test = std::getenv("DASH_TEST_XAMUI")) {
     uint32_t title = uint32_t(std::strtoul(test, nullptr, 16));
@@ -381,6 +389,13 @@ u32 XamShowAchievementsUI_entry(u32 user_index, u32 title_id) {
     new AchievementsDialog(g_ctx.imgui, g_ctx.immediate, std::move(view));  // se libère à Close()
   });
   return X_ERROR_SUCCESS;
+}
+
+// Ouverture des succes depuis un autre module (la lame Guide). Meme chemin que le crochet
+// XamShowAchievementsUI : l'interface s'ouvre par-dessus l'image, entrées du Dashboard suspendues.
+u32 OpenAchievementsForCurrentTitle() {
+  const u32 title = system::kernel_state()->title_id();
+  return XamShowAchievementsUI_entry(0, title);
 }
 
 }  // namespace dash::xamui

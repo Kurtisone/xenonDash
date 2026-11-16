@@ -16,6 +16,10 @@ namespace dash::achievements {
 int32_t GpdGamerscore();
 }
 
+namespace dash::xamui {
+rex::u32 OpenAchievementsForCurrentTitle();
+}
+
 namespace dash::profile {
 std::string Gamertag();
 bool ProfileExistsOnDisk();
@@ -39,13 +43,13 @@ bool FillCard(PlayerCard* card) {
 
 void PerformAction(int action) {
   switch (action) {
-    case kActionAchievements:
-      // Reutilise le HLE qui alimente deja les succes du jeu en cours.
-      REXLOG_INFO("[guide] succes du jeu en cours");
-      if (auto* rt = rex::Runtime::instance()) {
-        (void)rt;  // le HUD de succes s'ouvre par le meme chemin que XamShowAchievementsUI
-      }
+    case kActionAchievements: {
+      // Meme interface que le crochet XamShowAchievementsUI (dash_xam_ui.cpp) : c'est celle qui
+      // affiche les succes du jeu en cours en rendu natif.
+      const u32 r = dash::xamui::OpenAchievementsForCurrentTitle();
+      REXLOG_INFO("[guide] succes du jeu en cours -> {:08X}", uint32_t(r));
       break;
+    }
     case kActionProfile:
       REXLOG_INFO("[guide] creation de profil demandee");
       break;
