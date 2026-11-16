@@ -84,6 +84,17 @@ EOF
   demandés par la 13604). Voir `docs/technique.md`, « Non résolu ».
 - Le fork du SDK est le sous-module `third_party/rexglue-sdk` (branche `unified`) ; après modification : le reconstruire et le réinstaller dans `sdk/` (procédure dans `docs/xam_recompile.md`), puis commiter le sous-module PUIS le dépôt.
 
+## Profil : console neuve (2026-11-16)
+
+`dash_auto_profile` (défaut `false`) : sans profil créé, `XamProfileCreateEnumerator` n'énumère rien
+et `XamUserGetName`/`XamUserGetGamerTag` renvoient une **chaîne vide avec succès** (jamais une erreur :
+le Dashboard lirait alors un tampon non initialisé et afficherait des caractères poubelle). Le bandeau
+affiche donc le score seul, sans nom.
+
+Limite : aucun hook de *création* de profil n'existe (parcours XAM, ci-dessus). Le marqueur
+`profiles/<XUID>/.created` n'est donc jamais posé ; poser ce marqueur à la création est le complément
+à faire quand le parcours XAM fonctionnera.
+
 ## État du profil (palier N4, commité)
 Création de profil, connexion et parcours « aucun profil » fonctionnent avec les vraies fenêtres Xbox (`DASH_PROFILE_MODE=xam`, défaut OFF ; variante `dashboards/2.0.13604.0-xam/`) :
 pilote STFS minimal côté noyau, profil local hors ligne (XUID aléatoire, signature par une clé locale tirée au hasard), aucune clé de console. Détail : `docs/xam_recompile.md`.
@@ -91,6 +102,14 @@ pilote STFS minimal côté noyau, profil local hors ligne (XUID aléatoire, sign
 ## Suite, par ordre de priorité
 1. Profil existant choisi dans la liste : XAM demande « Enter Pass Code » (cause non établie) ; `XamUserReadProfileSettings(Ex)` redirigé vers XAM plante le Dashboard (lecture invitée de `0x7008004F`) : gamertag/Gamerscore du bandeau et contenu restent liés au profil HLE ; fenêtre « Save Profile » absente du parcours Dashboard.
 2. Rendre `DASH_PROFILE_MODE=xam` le défaut et livrer la variante `-xam` (XAM + HUD) en AppImage (aujourd'hui l'AppImage Kinect est la variante sans XAM recompilé, donc sans HUD).
+   *État au 2026-11-16, mesuré* : la variante `-xam` **compile** (8 modules `.so`, `dash` lié) et XAM
+   **se charge** (`module xam.xex recompilé : chargé`, redirections actives dont
+   `XamShowCreateProfileUI`). Mais l'écran est **noir** : `Unhandled guest access violation: write of
+   guest 0x301A0000` pendant l'initialisation, hors de la plage d'image de XAM. Aucun FATAL, le
+   processus survit. Les obstacles de compilation et leurs contournements (clé XEX1, chevauchement
+   `signin`/`createprofile`, `dll_targets.cmake` et `module_registry.cpp` écrasés à chaque passe,
+   `game:\xam.xex` lu depuis `assets/xam.xex`) sont dans `docs/xam_13604_compilation.md`.
+   C'est donc l'écriture à `0x301A0000` qu'il faut lever avant tout le reste.
 3. Avec le rendu natif (AppImage Kinect livrée) les fenêtres ImGui (progression de construction des jeux, liste F5, succès de remplacement) ne sont plus dessinées ; la recompilation d'un jeu n'a donc plus d'écran de progression visible. Les remplacer par des fenêtres du HUD de XAM (boîte de message avec progression, ou scène dédiée), ce que l'utilisateur veut de toute façon (pas de menus façon Xenia-canary).
    *Nuance (2026-11-15)* : ce n'est pas ce qui bloque l'utilisateur au quotidien. La navigation, les
    onglets et Game Library fonctionnent ; l'absence d'écran de progression ne se voit qu'au premier
