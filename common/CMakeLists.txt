@@ -20,6 +20,8 @@ add_library(xenondash_common OBJECT
     src/kernel_stubs.cpp
     src/kernel_timers.cpp
     src/xam_kernel_stubs.cpp
+    src/dash_guide.cpp
+    src/dash_guide_actions.cpp
     src/kernel_audio_guard.cpp
     src/kernel_ob.cpp
     src/kernel_event_guard.cpp

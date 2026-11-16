@@ -15,7 +15,8 @@ if(NGPU_PROFILE STREQUAL "13604")
   set(NGPU_CORE ON)
   set(NGPU_PROFILE_FILE dash13604.h)
   set(NGPU_ENTRIES_FILE d3d13604_entries.inc)
-  set(NGPU_SOURCES src/d3d_trace.cpp src/null_gpu.cpp src/vk_backend.cpp src/front_profile.cpp)
+  set(NGPU_SOURCES src/d3d_trace.cpp src/null_gpu.cpp src/vk_backend.cpp src/front_profile.cpp
+                   src/dash_guide_front.cpp)
   # NGPU_HUD (defini par le projet avec XAM recompile) : facade du HUD de XAM (D3D 2099), crochets appeles par dash_xam (palier N2).
   option(NGPU_HUD "Facade du HUD de XAM recompile (hud_front.cpp)" OFF)
   if(NGPU_HUD)
@@ -38,6 +39,9 @@ find_package(Vulkan REQUIRED)
 target_include_directories(xenondash_native_gpu PRIVATE ${Vulkan_INCLUDE_DIRS})
 target_link_libraries(xenondash_native_gpu PUBLIC Vulkan::Vulkan)
 target_include_directories(xenondash_native_gpu PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src)
+# La lame Guide (common/src/dash_guide.h) est composee par la presentation : ce module a besoin de
+# son en-tete, pas de son implementation (liee par xenondash_common).
+target_include_directories(xenondash_native_gpu PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../common/src)
 target_compile_features(xenondash_native_gpu PUBLIC cxx_std_23)
 target_link_libraries(xenondash_native_gpu PUBLIC rex::runtime)
 if(NGPU_CORE)

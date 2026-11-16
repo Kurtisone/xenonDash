@@ -47,6 +47,10 @@
 namespace ngpu {
 // Superposition de l'overlay du HUD de XAM (hud_front.cpp, palier N2) : symbole faible, absent des builds sans HUD recompile.
 bool HudComposite(uint32_t* pixels, uint32_t w, uint32_t h) __attribute__((weak));
+
+// Lame Guide (bouton Xbox) : composee APRES le HUD, dans le meme tampon R10G10B10A2. Fournie par
+// dash_guide_front.cpp quand la lame est active. Renvoie true si l'image a ete modifiee.
+bool GuideComposite(uint32_t* pixels, uint32_t w, uint32_t h) __attribute__((weak));
 void NullGpuAttach(uint32_t dev);
 void NullGpuCompleteNow(uint8_t* base, uint32_t dev);
 void NextFrame();
@@ -800,6 +804,16 @@ NGPU_HOOK(NGP_Swap) {
         if (ngpu::HudComposite) {  // le HUD de XAM (boite de message...) est superpose a l'image du Dashboard
           composed.assign(pixels, pixels + size_t(renderer.presented_width()) * renderer.presented_height());
           if (ngpu::HudComposite(composed.data(), renderer.presented_width(), renderer.presented_height())) pixels = composed.data();
+        }
+        // Lame Guide (bouton Xbox) : composee dans l'image finale, comme le HUD de XAM.
+        // Voir common/src/dash_guide.cpp ; elle n'utilise ni ImGui (indisponible en rendu
+        // natif) ni Vulkan, seulement le tampon R10G10B10A2 ci-dessus.
+        if (ngpu::GuideComposite) {
+          if (composed.size() != size_t(renderer.presented_width()) * renderer.presented_height())
+            composed.assign(pixels, pixels + size_t(renderer.presented_width()) * renderer.presented_height());
+          if (ngpu::GuideComposite(composed.data(), renderer.presented_width(),
+                                   renderer.presented_height()))
+            pixels = composed.data();
         }
         if (const char* dm = std::getenv("DASH_NGPU_DUMP")) {  // "<image>:<fichier.ppm>" : image presentee par le noyau
           char* colon = nullptr;
