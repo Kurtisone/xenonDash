@@ -53,10 +53,15 @@ REX_HOOK_RAW(__imp__KeSetTimerEx) {
     ctx.r3.u64 = 0;
     return;
   }
-  if (ctx.r6.u32) REXLOG_WARN("[kernel] KeSetTimerEx : DPC 0x{:08X} ignoré", ctx.r6.u32);
+  // KeSetTimerEx(timer, dueTime, period, dpc, dpcContext) : le DPC doit etre TRANSMIS. Il etait
+  // ignore (0, 0) : la routine differee de XAM n'etait donc jamais appelee, et son initialisation
+  // restait bloquee (« KeSetTimerEx : DPC 0x81CA9234 ignore », puis plus rien pendant que le
+  // processus vit). Les registres au-dela de r6 ne sont pas accessibles par ce hook : le contexte
+  // du DPC est donc 0, ce qui est le cas courant (XAM passe son contexte par le TimerContext).
+  const uint32_t dpc = ctx.r6.u32;
   const uint8_t was_set = t->header.inserted;
   timer->Cancel();
-  timer->SetTimer(static_cast<int64_t>(ctx.r4.s64), ctx.r5.u32, 0, 0, false);
+  timer->SetTimer(static_cast<int64_t>(ctx.r4.s64), ctx.r5.u32, dpc, 0, false);
   t->header.inserted = 1;
   ctx.r3.u64 = was_set ? 1 : 0;
 }
