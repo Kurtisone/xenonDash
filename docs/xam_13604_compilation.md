@@ -179,7 +179,61 @@ fabriquer. Toute implémentation doit rester dans la ligne du palier N4 : clé l
 `XeKeysObfuscate`/`UnObfuscate` locaux (déjà dans `common/src/kernel_obfuscate.cpp`), jamais de clé
 de console réelle.
 
-## Ce qu'il faudrait pour aboutir
+## Analyse gdb : les threads invités attendent des objets noyau
+
+Mesure faite sur le processus **sain** (59 threads, état `S`, 6 s après le lancement, donc sans la
+perturbation qu'introduit un attach tardif — un attach sur un processus déjà mourant le fait
+planter et on ne lit que des piles `do_exit`).
+
+### Ce que montrent les piles
+
+Presque tous les threads invités sont dans le **même état** :
+
+```
+pthread_cond_wait
+  rex::thread::PosixConditionBase::WaitUntil
+    rex::system::XObject::Wait
+      rex::kernel::xboxkrnl::xeKeWaitForSingleObject
+```
+
+Un seul attend via `xeNtWaitForMultipleObjectsEx` (`XObject::WaitMultiple`). Aucun n'exécute de
+code recompilé : ils sont **tous** dans l'attente d'un objet noyau.
+
+Le thread principal, lui, est dans `SDL_WaitEventTimeout` — état **normal** de la boucle X11, pas
+un blocage.
+
+### Ce que ça signifie
+
+XAM a créé ses threads et chacun attend un événement, un mutant ou un sémaphore que **rien ne
+signalera** : le code qui les signalerait est celui de XAM, et il est lui-même en attente. C'est un
+interblocage d'initialisation, pas une fonction manquante.
+
+C'est cohérent avec tout ce qui précède : implémenter cinq stubs n'a rien débloqué, parce que le
+problème n'est pas « une fonction renvoie la mauvaise valeur » mais « des objets de synchronisation
+ne sont jamais signalés ».
+
+### Fausses pistes écartées par la mesure
+
+| Piste | Pourquoi elle est écartée |
+|---|---|
+| `null_gpu.cpp` (le « GPU nul ») | ce n'est pas un repli dégradé : c'est le fil qui publie en continu le compteur de fence pour que le D3D invité **ne bloque jamais**. Il fait son travail. |
+| thread principal bloqué | il attend X11, ce qui est son état normal |
+| stubs noyau | cinq implémentés, aucun ne débloque (les stubs disparaissent des appels, l'écran reste noir) |
+
+### Où chercher maintenant
+
+Il faut identifier **quel objet** chaque thread attend, et qui devrait le signaler. Deux moyens :
+
+1. **`XObject::Wait` instrumenté** : journaliser le handle et le type d'objet (événement, mutant,
+   sémaphore) à chaque attente bloquante, avec le thread. Quelques lignes dans le SDK, et la carte
+   des dépendances apparaît.
+2. **Comparer avec `signin.xex`** : la doc indique qu'il quitte après `XamInputGetState = 0x48F`
+   (périphérique non connecté). Vérifier si l'un des objets attendus est celui que `signin`
+   signalerait normalement.
+
+La piste 1 est la plus directe : c'est de l'instrumentation, pas de la devinette.
+
+## Ce qu'il faudrait pour aboutir## Ce qu'il faudrait pour aboutir
 
 1. **Instrumenter le blocage** : `gdb` sur les threads invités au moment où le journal s'arrête,
    pour savoir lequel attend quoi. Le thread principal n'est pas le coupable (vérifié).
