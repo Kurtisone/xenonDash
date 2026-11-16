@@ -66,6 +66,11 @@ EOF
 - Tas invités 0x8… et 0x9… : deux vues du même fichier (alias) ; le SDK sépare maintenant les tas par défaut (`REX_ALIAS_XEX_HEAPS=1` rétablit l'ancien mode).
 - Table de fonctions d'un module recompilé : `function_table_base` par module, sans recouvrement en adresses PHYSIQUES.
 - `/tmp` est un tmpfs (11 Go libres) : caches de jeu et journaux volumineux à supprimer par nom ; core dumps désactivés.
+- **`dash.log` n'est pas stdout.** Les lignes du noyau de rendu (`[ngpu] noyau ngpu_core sur …`,
+  `[ngpu] Vulkan : …`) et une partie des diagnostics vont sur **stderr**, pas dans le fichier
+  `dash.log` de `out/build/…/logs/`. Chercher `ngpu` dans `dash.log` fait conclure à tort que le
+  rendu natif ne s'initialise pas : rediriger la sortie du processus (`> run.out 2>&1`) et lire
+  les deux. Erreur commise et corrigée le 2026-11-16.
 - `pgrep -f` se retrouve lui-même dans une boucle d'attente `while pgrep -f ...` : toute attente doit avoir un délai maximal.
   Même piège avec un `pkill -f <motif>` dont la ligne de commande contient le motif : il se tue lui-même.
 - **Touches : ne pas se fier au tableau du README, il a été faux jusqu'au 2026-11-15.** Le mappage
@@ -102,14 +107,27 @@ pilote STFS minimal côté noyau, profil local hors ligne (XUID aléatoire, sign
 ## Suite, par ordre de priorité
 1. Profil existant choisi dans la liste : XAM demande « Enter Pass Code » (cause non établie) ; `XamUserReadProfileSettings(Ex)` redirigé vers XAM plante le Dashboard (lecture invitée de `0x7008004F`) : gamertag/Gamerscore du bandeau et contenu restent liés au profil HLE ; fenêtre « Save Profile » absente du parcours Dashboard.
 2. Rendre `DASH_PROFILE_MODE=xam` le défaut et livrer la variante `-xam` (XAM + HUD) en AppImage (aujourd'hui l'AppImage Kinect est la variante sans XAM recompilé, donc sans HUD).
-   *État au 2026-11-16, mesuré* : la variante `-xam` **compile** (8 modules `.so`, `dash` lié) et XAM
-   **se charge** (`module xam.xex recompilé : chargé`, redirections actives dont
-   `XamShowCreateProfileUI`). Mais l'écran est **noir** : `Unhandled guest access violation: write of
-   guest 0x301A0000` pendant l'initialisation, hors de la plage d'image de XAM. Aucun FATAL, le
-   processus survit. Les obstacles de compilation et leurs contournements (clé XEX1, chevauchement
-   `signin`/`createprofile`, `dll_targets.cmake` et `module_registry.cpp` écrasés à chaque passe,
-   `game:\xam.xex` lu depuis `assets/xam.xex`) sont dans `docs/xam_13604_compilation.md`.
-   C'est donc l'écriture à `0x301A0000` qu'il faut lever avant tout le reste.
+   *État au 2026-11-16 (soir), mesuré* : la variante `-xam` **compile** (8 modules `.so`, `dash` lié),
+   XAM **se charge** et son rendu natif **s'initialise** (`[ngpu] noyau ngpu_core sur llvmpipe`, sur
+   **stderr** — jamais dans `dash.log`, ne pas s'y tromper). L'écran reste **noir** : le journal
+   s'arrete apres ~3 s alors que le processus vit, et le thread principal attend des evenements X11
+   sans qu'aucun thread invite ne lui demande de presenter. Detail, mesures et pistes dans
+   `docs/xam_13604_compilation.md`.
+
+   Quatre defauts reels ont ete corriges en chemin (tous mesures) :
+
+   - **gestionnaire de faute du SDK** (`third_party/rexglue-sdk`, branche **`unified`**, commit
+     `7348c20`) : `AccessViolationCallback` refusait tout heap autre que `kGuestPhysical`, alors que
+     `SystemHeapAlloc` alloue dans `v00000000` (`kGuestVirtual`). Le premier ecrivain d'un module
+     recompilé y provoquait un « Unhandled guest access violation » definitif. Violations : 1 -> 0.
+   - **registre des modules** : les modules XUI sont charges sous `game:\flash\<nom>.xex`, normalise
+     en `flash/<nom>.xex`. Le registre portait `"<nom>.xex"` : `FindRecompiledModule` echouait, donc
+     aucune table de dispatch. Tables : 2 -> 4, plus aucun « function not in function table ».
+   - **`KeSetTimerEx`** transmet desormais le DPC (`ctx.r6`) au lieu de passer 0 : la routine differee
+     de XAM n'etait **jamais** appelee. Le message « DPC ignore » a disparu.
+   - **chargement de XAM asynchrone** (`DASH_XAM_SYNC=1` pour l'ancien comportement) :
+     `RunInSystemProcess` creait un thread puis faisait `Wait`, donc synchrone.
+
 3. Avec le rendu natif (AppImage Kinect livrée) les fenêtres ImGui (progression de construction des jeux, liste F5, succès de remplacement) ne sont plus dessinées ; la recompilation d'un jeu n'a donc plus d'écran de progression visible. Les remplacer par des fenêtres du HUD de XAM (boîte de message avec progression, ou scène dédiée), ce que l'utilisateur veut de toute façon (pas de menus façon Xenia-canary).
    *Nuance (2026-11-15)* : ce n'est pas ce qui bloque l'utilisateur au quotidien. La navigation, les
    onglets et Game Library fonctionnent ; l'absence d'écran de progression ne se voit qu'au premier

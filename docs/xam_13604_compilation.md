@@ -110,92 +110,90 @@ Avec ces corrections :
 
 Les écrans du parcours de création sont donc bien redirigés vers le XAM recompilé.
 
-## Trois obstacles levés, et la piste du HUD écartée
+## Quatre défauts corrigés, et l'état réel
 
-### Levé 1 : le gestionnaire de faute du SDK n'acceptait que les heaps physiques
+### 1. Gestionnaire de faute du SDK (branche `unified`, commit `7348c20`)
 
-`Common/src/kernel_xinputd.cpp` écrit `base[port] = 0xFF` dans une allocation `SystemHeapAlloc`.
-Or `SystemHeapAlloc` alloue dans `v00000000` (`kGuestVirtual`), et `Memory::AccessViolationCallback`
-refusait tout heap autre que `kGuestPhysical` :
-
-```
-Unhandled guest access violation: write of guest 0x3019D000 on thread 0x16
-```
-
-Seul le bloc `TriggerCallbacks` est spécifique aux heaps physiques (ils portent l'observateur
-d'écriture) ; le chemin de récupération (`QueryProtect` / `QueryRegionInfo` / `Protect`) est
-générique. Correction dans `third_party/rexglue-sdk`, branche `module-tables`, commit `7348c20`.
+`AccessViolationCallback` refusait tout heap autre que `kGuestPhysical` ; `SystemHeapAlloc` alloue
+dans `v00000000` (`kGuestVirtual`). Le premier écrivain d'un module recompilé dans une de ces
+allocations provoquait un « Unhandled guest access violation » définitif. Seul le bloc
+`TriggerCallbacks` est spécifique aux heaps physiques ; le chemin de récupération
+(`QueryProtect` / `QueryRegionInfo` / `Protect`) est générique.
 
 **Mesure : violations 1 → 0.**
 
-### Levé 2 : le registre des modules doit porter `flash/`
+### 2. Registre des modules : préfixe `flash/`
 
-Les modules XUI sont chargés par XAM sous `game:\flash\<nom>.xex`, que `NormalizeGuestPath`
-réduit à `flash/<nom>.xex`. Le registre généré portait `"<nom>.xex"` : `FindRecompiledModule`
-échouait, donc aucune table de dispatch, donc `Execute(…): function not in function table`.
+Les modules XUI sont chargés par XAM sous `game:\flash\<nom>.xex`, que `NormalizeGuestPath` réduit
+à `flash/<nom>.xex`. Le registre portait `"<nom>.xex"` : `FindRecompiledModule` échouait, donc
+aucune table de dispatch, donc `Execute(…): function not in function table`.
 
-**Mesure : tables de dispatch 2 → 4 (`dash`, `xam`, `ximecore`, `hud`) ; `function not in
-function table` : 0.**
+**Mesure : tables de dispatch 2 → 4 ; `function not in function table` : 0.**
 
-### Levé 3 : `huduiskin.xex` manquant
+### 3. `KeSetTimerEx` transmet le DPC (commit `0111890`)
 
-`File not found: \SystemRoot\huduiskin.xex`. Fourni par le xeBuild-Data 13604, copié dans
-`assets/flash/` (chargé comme ressource, pas comme module recompilé : rien à déclarer).
+Le hook passait `(0, 0)` comme routine et contexte à `XTimer::SetTimer` : la routine différée
+n'était **jamais** appelée. XAM en pose une pendant son initialisation
+(`KeSetTimerEx : DPC 0x81CA9234 ignoré`).
 
-### Piste du HUD / du focus : écartée par la mesure
+**Mesure : le message a disparu (0 occurrence).**
 
-`docs/xam_recompile.md` (ligne ~996) proposait : « lancer la boucle d'entrée du HUD à la première
-arrivée de la manette indépendamment du focus ». **Ce n'est pas le blocage actuel.** Mesures :
+### 4. Chargement de XAM asynchrone (commit `ea19503`)
+
+`RunInSystemProcess` créait un `XHostThread` puis appelait `t->Wait(…)` : synchrone malgré le
+thread. `DASH_XAM_SYNC=1` rétablit l'ancien chemin.
+
+**Mesure : XAM se charge sur un thread de travail (`t41`), plus sur le principal (`t12`).**
+
+## Où ça bloque : après le chargement, dans les stubs noyau
+
+L'écran reste noir. Ce qui est établi, et qui **corrige deux de mes conclusions précédentes** :
 
 | Vérification | Résultat |
 |---|---|
-| appels `XInputdReadState` | **0** — le cache d'état n'est jamais sollicité |
-| `XexLoadImage("signin.xex")` | **0** — XAM ne charge pas le module de connexion |
-| modules chargés par XAM | `hud.xex`, `ximecore.xex` seulement |
-| **lignes `[ngpu]`** | **0** — le rendu natif ne s'initialise jamais |
-| appels D3D du Dashboard | aucun (les occurrences de « Device » sont des montages VFS) |
-| images présentées | 4, puis plus rien |
+| rendu natif initialisé | **oui** — `[ngpu] noyau ngpu_core sur 'llvmpipe …' (profil 13604)` |
+| où le lire | **sur stderr**, jamais dans `dash.log` |
+| thread principal | **en attente X11 normale** (`SDL_WaitEventTimeout`), pas bloqué |
+| durée du journal | **~3 s**, alors que le processus vit 40 s |
+| fautes invitées / FATAL | 0 / 0 |
 
-Autrement dit : le Dashboard n'atteint **jamais son premier dessin**, donc `EnsureCore()` de
-`native_gpu/src/front_profile.cpp` n'est jamais appelé, donc aucun device Vulkan n'est créé.
-`EnsureCore` journalise `NGPU_ERR` en cas d'échec et ce message n'apparaît pas : il n'est pas
-appelé du tout, ce n'est pas un échec d'initialisation.
+Aucun thread invité ne demande plus de présentation : le Dashboard cesse de progresser.
 
-Le rendu natif est pourtant bien lié au binaire (`noyau ngpu_core` ×2 dans les chaînes, aucune
-référence à `librexgpu-xenos`), et `DASH_NATIVE_GPU=ON` dans le cache CMake.
-
-### Où chercher maintenant
-
-La différence avec la version qui fonctionne est visible à l'identique dans les deux journaux,
-juste après le montage de la flash :
+Après le chargement, une trentaine de threads démarrent et butent **chacun sur un stub
+différent** :
 
 ```
---- 2.0.13604 (fonctionne) ---          --- 2.0.13604-xam (écran noir) ---
-\SystemRoot monté sur …/flash          \SystemRoot monté sur …/flash
-\Device\Flash monté                  \Device\Flash monté
-[rc] Arm() appele, enabled=false       \Device\Harddisk0\Partition1 monté
-XConfig category 0x0007                \Device\MU0 monté
-XamLoaderGetLaunchData : appel 1       XboxHardwareInfo.Flags = 0x220
-                                       UsbdBootEnumerationDoneEvent (0x30000254)
-                                       XEX image loaded at 817E0000-81D50000   <- XAM
+EtxProducerRegister (15)  XeKeysGetStatus (5)   HalSendSMCMessage (5)
+NicGetLinkState (4)       XeKeysExSetKey (3)    MtpdGetCurrentDevices (3)
+EtxConsumer* (6)          DumpRegisterDedicatedDataBlock (3)  UsbdGetNatalHardwareVersion (2)
 ```
 
-Dans la variante `-xam`, **XAM est chargé sur le thread principal `t12`**, juste après le montage
-et avant tout dessin. Dans la version de référence, le Dashboard part immédiatement en
-initialisation graphique.
+Aucun ne bloque **à lui seul** (vérifiés un par un) : c'est l'ensemble qui n'aboutit jamais à une
+frame. C'est le symptôme d'un XAM recompilé qui attend des fonctions noyau que le SDK n'implémente
+pas — le palier « XAM recompilé » de `docs/xam_recompile.md` est en cours, pas terminé.
 
-`DASH_XAM_MODULE=1` (chargement seul) et `=2` (chargement + point d'entrée DllMain) donnent le
-même résultat : `ngpu=0` dans les deux cas. Le blocage n'est donc pas le `DllMain`, mais le fait
-que le chargement de XAM intervienne dans `OnPostSetup`, **avant** la boucle de rendu.
+### Contrainte à ne pas oublier
 
-Piste concrète : rendre le chargement de XAM asynchrone (le lancer sur un `XHostThread` après le
-premier dessin du Dashboard), plutôt que synchrone dans `OnPostSetup`. À l'inverse, vérifier si
-`hud.xex` et `ximecore.xex` sont chargés *pendant* `OnPostSetup` et bloquent la suite.
+`XeKeysGetStatus` et `XeKeysExSetKey` touchent aux clés de console, et `REPRISE.md` interdit d'en
+fabriquer. Toute implémentation doit rester dans la ligne du palier N4 : clé locale tirée au hasard,
+`XeKeysObfuscate`/`UnObfuscate` locaux (déjà dans `common/src/kernel_obfuscate.cpp`), jamais de clé
+de console réelle.
+
+## Ce qu'il faudrait pour aboutir
+
+1. **Instrumenter le blocage** : `gdb` sur les threads invités au moment où le journal s'arrête,
+   pour savoir lequel attend quoi. Le thread principal n'est pas le coupable (vérifié).
+2. **`HalSendSMCMessage`** (5 appels) : message SMC sans donnée sensible, un succès suffirait
+   peut-être.
+3. **`EtxProducerRegister`** (15 appels, télémétrie) : un simple succès suffirait probablement.
+4. **`XeKeysGetStatus`** : renvoyer « clés locales prêtes », sans clé de console.
+5. Les `Nic*` / `Mtpd*` (réseau) peuvent rester en échec propre : XAM est hors ligne.
 
 ## État
 
 - **Compilation** : 8 modules `.so`, `dash` lié.
-- **Chargement** : `module xam.xex recompilé : chargé` ; `hud.xex` et `ximecore.xex` chargés.
-- **Fautes invitées** : 0. **FATAL** : 0. **Fichiers manquants** : 0.
+- **Chargement** : XAM chargé, `hud.xex` et `ximecore.xex` chargés.
+- **Fautes / FATAL / fichiers manquants** : 0 / 0 / 0.
 - **Tables de dispatch** : 4 sur 9.
-- **Affichage** : noir, car le premier dessin du Dashboard n'a jamais lieu.
+- **Affichage** : noir — le Dashboard cesse de progresser après l'initialisation de XAM.
+- **Version 2.0.13604 sans XAM** : intacte, compile et fonctionne (vérifié `RC=0`).
