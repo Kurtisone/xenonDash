@@ -514,6 +514,24 @@ void Configure(rex::system::KernelState* ks, rex::runtime::ExportResolver* resol
     if (const char* e = std::getenv("DASH_XAM_REDIRECT"); e && *e) redirect_list += std::string(",") + e;
     REXLOG_INFO("[xamredir] redirections de base (boîte de message du HUD) + DASH_XAM_REDIRECT : {}", redirect_list);
   }
+  // DASH_XAM_NOREDIRECT=<nom>[,<nom>...] : retire des redirections, pour mesurer l'effet d'une
+  // seule d'entre elles. Sert au diagnostic (ex. XamShowMessageBoxUI, bloquante : si XAM ne
+  // l'affiche pas, le Dashboard l'attend indefiniment et n'atteint jamais son propre XUI).
+  if (const char* nr = std::getenv("DASH_XAM_NOREDIRECT"); nr && *nr) {
+    std::string kept;
+    for (const std::string& name : SplitList(redirect_list.c_str())) {
+      bool drop = false;
+      for (const std::string& skip : SplitList(nr))
+        if (skip == name) drop = true;
+      if (drop) {
+        REXLOG_INFO("[xamredir] {} : redirection RETIREE (DASH_XAM_NOREDIRECT)", name);
+        continue;
+      }
+      if (!kept.empty()) kept += ",";
+      kept += name;
+    }
+    redirect_list = kept;
+  }
   const char* env = redirect_list.c_str();
   if (!xam) {
     REXLOG_WARN("[xamredir] module XAM absent : aucune redirection");

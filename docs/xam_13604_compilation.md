@@ -206,7 +206,88 @@ Il faut comparer ce qui est comparable : « 21 s contre 2 s » n'oppose pas deux
 chemin, mais **deux chemins différents** (HLE contre XAM). Le journal de 2 s est celui de XAM qui se
 charge puis se tait.
 
-## Analyse gdb## Analyse gdb : les threads invités attendent des objets noyau
+## L'écran noir : zéro dessin, et la cause est en amont du rendu
+
+Mesure comparative des deux modes, avec `DASH_NGPU_STATS=1` et `DASH_NGPU_EVLOG=1` (16 s de
+session, même machine) :
+
+| | mode HLE (`2.0.13604.0`) | mode XAM (`DASH_PROFILE_MODE=xam`) |
+|---|---|---|
+| image présentée | **1** (`resolves (color) : 1`) | **aucune** |
+| événement `[ev]` du rendu natif | oui | **aucun** |
+| `D3DDevice capture` | 1 | **0** |
+| appels D3D du code invité | oui | **0** |
+
+**Le rendu natif n'est pas en cause : il n'est jamais sollicité.** Sans `D3DDevice` capturé, aucun
+crochet D3D ne s'installe, donc le Dashboard n'émet pas un seul `BeginTiling` ni `Swap`. Chercher un
+bug de composition ou de Vulkan serait une fausse piste.
+
+### Ce qui n'est jamais appelé
+
+| appel | mode HLE | mode XAM |
+|---|---|---|
+| `XamContentAggregateCreateEnumerator` | oui | **jamais** |
+| `XamProfileCreateEnumerator` / `XamProfileOpen` | oui | **jamais** |
+| `XamReadTile` | oui | **jamais** |
+
+En mode XAM, le Dashboard n'entre **jamais** dans le chargement de son interface : il s'arrête juste
+après `XamLoaderGetMediaInfo` et une notification de média.
+
+### Une boucle d'attente côté XUI (mesurée)
+
+Un journal du mode XAM contient **682 506** appels à `XamLoaderGetMediaInfo` en 38 s, **tous du même
+thread `t68`**, qui ne fait rien d'autre. En mode HLE, le maximum observé est **2**.
+
+| | appels `XamLoaderGetMediaInfo` dans une session |
+|---|---|
+| mode HLE | 2 |
+| mode XAM | **682 506** |
+
+Le hook répond correctement (`type=0`, succès) : la boucle est donc **côté code invité**. Le XUI du
+Dashboard interroge le média en attendant un état qui n'arrive pas, et n'atteint jamais la suite.
+
+Deux conséquences pratiques :
+- le thread est saturé, et le journal grossit de 682 k lignes (il ralentit tout le reste) ;
+- c'est un **symptôme mesurable** : si un correctif fait tomber ce compteur à quelques unités,
+  c'est que le blocage est levé.
+
+### Le blocage probable : la boîte de message redirigée
+
+Juste après le chargement de `xam.xex`, le journal montre :
+
+```
+[xamredir] XamShowMessageBoxUI (ordinal 714) -> XAM recompilé
+[xamredir] XamShowMessageBoxUIEx (ordinal 732) -> XAM recompilé
+```
+
+`XamShowMessageBoxUI` est **bloquante** : elle ne rend la main qu'une fois l'utilisateur ayant
+choisi un bouton. Depuis le palier N5 elle est redirigée vers XAM recompilé, qui n'affiche rien.
+Le Dashboard attend donc une réponse qui ne viendra jamais, et n'appelle plus jamais son propre XUI —
+d'où l'absence totale d'appels D3D.
+
+C'est cohérent avec le fait que le socle N5 produise lui aussi du noir (`runs/xam_msgbox_t*.png`).
+
+**Piste à tester** : ne pas rediriger `XamShowMessageBoxUI` tant que XAM n'affiche pas, et laisser le
+HLE répondre — c'est ce qui fonctionne en mode HLE. Le Dashboard reprendrait la main, et on verrait
+si l'écran s'éclaire.
+
+### Dépendances de clés rencontrées au passage
+
+Trois appels de clés tombent sur des stubs :
+
+```
+__imp__XeKeysExSetKey STUB            3 fois
+__imp__XeKeysGetKeyProperties STUB
+__imp__XeKeysExGetKey STUB
+__imp__XeKeysExSaveKeyVault STUB
+__imp__XeKeysSetProtectedFlag STUB
+```
+
+Et `\\Device\\Harddisk0\\Partition1\\secexp.xex` est demandé puis absent (fichier de la flash,
+non fourni). À traiter **sans fabriquer de clé de console** : le projet s'en tient à des clés
+locales.
+
+## Analyse gdb : les threads invités attendent des objets noyau
 
 Mesure faite sur le processus **sain** (59 threads, état `S`, 6 s après le lancement, donc sans la
 perturbation qu'introduit un attach tardif — un attach sur un processus déjà mourant le fait
@@ -260,7 +341,7 @@ Il faut identifier **quel objet** chaque thread attend, et qui devrait le signal
 
 La piste 1 est la plus directe : c'est de l'instrumentation, pas de la devinette.
 
-## Ce qu'il faudrait pour aboutir## Ce qu'il faudrait pour aboutir
+## Ce qu'il faudrait pour aboutir
 
 1. **Instrumenter le blocage** : `gdb` sur les threads invités au moment où le journal s'arrête,
    pour savoir lequel attend quoi. Le thread principal n'est pas le coupable (vérifié).
