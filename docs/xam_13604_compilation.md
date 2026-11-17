@@ -233,6 +233,31 @@ bug de composition ou de Vulkan serait une fausse piste.
 En mode XAM, le Dashboard n'entre **jamais** dans le chargement de son interface : il s'arrête juste
 après `XamLoaderGetMediaInfo` et une notification de média.
 
+### C'est le chargement, pas l'exécution
+
+`DASH_XAM_MODULE=1` charge `xam.xex` **sans** exécuter son point d'entrée ; `=2` l'exécute en plus.
+Comparaison des captures :
+
+| | capture | où va le Dashboard |
+|---|---|---|
+| sans XAM | **image** (690 625 o) | démarrage normal |
+| `DASH_XAM_MODULE=1` (chargé, entrée non exécutée) | **noir** | énumère les titres, lit le média |
+| `DASH_XAM_MODULE=2` (chargé + entrée) | **noir** | idem |
+
+**Il suffit de charger `xam.xex`** pour que le Dashboard cesse d'afficher : son point d'entrée n'y est
+pour rien. Et il ne bloque pas — il va même assez loin (énumération des titres, `XamEnumerate`) —
+mais n'émet **aucun appel D3D**.
+
+Hypothèses testées et écartées sur ce chemin :
+- `MountXamDevices` qui remplace `\\Device\\Harddisk0\\Partition1` : **aucun fichier manquant** dans le
+  journal, donc le Dashboard ne perd pas ses assets ;
+- `FixKernelVariables` : les deux drapeaux sont posés correctement (vérifié) ;
+- boucle réseau du HUD : corrigée, sans effet sur l'affichage.
+
+Suspect restant, non encore levé : `VdSetSystemCommandBuffer`, qui d'après le commentaire du code
+est appelé par XAM « à chaque image du HUD ». Mesure : il n'est **jamais appelé**. Le HUD ne va donc
+pas jusqu'à soumettre ses commandes GPU — ce qui est cohérent avec l'absence de tout appel D3D.
+
 ### L'initialisation du HUD est confirmée par la trace des DllMain
 
 Instrumentation `REX_LOG_DLLMAIN=1` dans le SDK (`kernel_state.cpp`, au point d'appel de
