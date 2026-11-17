@@ -233,6 +233,41 @@ bug de composition ou de Vulkan serait une fausse piste.
 En mode XAM, le Dashboard n'entre **jamais** dans le chargement de son interface : il s'arrête juste
 après `XamLoaderGetMediaInfo` et une notification de média.
 
+### L'initialisation du HUD est confirmée par la trace des DllMain
+
+Instrumentation `REX_LOG_DLLMAIN=1` dans le SDK (`kernel_state.cpp`, au point d'appel de
+`DllMain(DLL_PROCESS_ATTACH)`), qui répond à une question restée ouverte : l'entrée d'un module
+est-elle seulement exécutée ?
+
+```
+[dllmain] 'xam'      entry=81872658 -> DLL_PROCESS_ATTACH
+[dllmain] 'ximecore' entry=91689F78 -> DLL_PROCESS_ATTACH
+[dllmain] 'hud'      entry=913FBC70 -> DLL_PROCESS_ATTACH
+```
+
+Les trois sont appelés, et `xstart` de `hud.xex` s'exécute (`[hud] xstart APPELE`). Le HUD
+**s'initialise donc réellement** — ce n'était pas le doute à avoir.
+
+### Une boucle réseau dans l'initialisation du HUD, corrigée
+
+Juste après `xstart`, le fil du HUD part dans une boucle d'appels réseau : `MtpdGetCurrentDevices`
+(15 fois) et `NicGetLinkState` (10 fois), tous deux en `REX_EXPORT_STUB`. Un stub laisse `r3` à une
+valeur arbitraire : le HUD lisait donc un état de lien aléatoire.
+
+Les deux sont maintenant implémentés (`xam_kernel_stubs.cpp`) :
+- `NicGetLinkState` : écrit 0 dans la sortie (aucun lien), succès ;
+- `MtpdGetCurrentDevices` : succès, liste vide (aucun périphérique MTP).
+
+Mesure après correction : les deux stubs disparaissent du journal, la boucle réseau s'arrête. **Mais
+l'écran reste noir** : ce n'était pas le blocage non plus, seulement du bruit en moins.
+
+### Où en est le compte des stubs
+
+Après ces corrections, il reste 57 lignes de stub dans une session de 20 s, dont les plus fréquentes :
+`XamPackageManagerGetExperienceMode` (4), `XeKeysExSetKey` (3), `EtxConsumerProcessLogs` (3),
+`DumpRegisterDedicatedDataBlock` (3), `UsbdGetNatalHardwareVersion` (2). Aucune n'a le volume d'une
+boucle d'attente : le blocage n'est plus dans les stubs.
+
 ### La cause est le chargement de XAM lui-même, pas le mode profil
 
 Test en trois temps, capture d'écran à chaque fois (690 Ko = image, 3 Ko = noir) :

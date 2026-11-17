@@ -26,6 +26,8 @@ namespace {
 std::atomic<long> g_smc_calls{0};
 std::atomic<long> g_etx_calls{0};
 std::atomic<long> g_keystatus_calls{0};
+std::atomic<long> g_nic_calls{0};
+std::atomic<long> g_mtpd_calls{0};
 
 }  // namespace
 
@@ -68,5 +70,27 @@ REX_HOOK_RAW(__imp__KeSetPriorityClassThread) {
 // EtxConsumerRegister(...) : enregistrement d'un consommateur de telemetrie. Succes, rien n'est lu.
 REX_HOOK_RAW(__imp__EtxConsumerRegister) {
   (void)base;
+  ctx.r3.u64 = 0;
+}
+
+// NicGetLinkState(interface, *lie) : etat du lien reseau. Une console hors ligne a un lien DOWN.
+// Le HUD de XAM interroge cette fonction en boucle pendant son initialisation : le stub renvoyait
+// r3 inchange (valeur arbitraire), donc un etat aleatoire. On repond explicitement « pas de lien »,
+// ce qui est la verite sur une machine sans Xbox LIVE et evite toute attente.
+REX_HOOK_RAW(__imp__NicGetLinkState) {
+  (void)base;
+  if (ctx.r4.u32 && ctx.r4.u32 < 0xF0000000u)
+    *reinterpret_cast<uint32_t*>(base + ctx.r4.u32) = 0;  // aucun lien
+  if (++g_nic_calls == 1)
+    REXLOG_INFO("[net] NicGetLinkState : pas de lien (hors ligne)");
+  ctx.r3.u64 = 0;
+}
+
+// MtpdGetCurrentDevices(*liste, ...) : peripheriques de stockage portables (lecteurs MTP). Aucun
+// sur un PC sans appareil branche : on rend la liste vide avec succes, plutot qu'un r3 arbitraire.
+REX_HOOK_RAW(__imp__MtpdGetCurrentDevices) {
+  (void)base;
+  if (++g_mtpd_calls == 1)
+    REXLOG_INFO("[net] MtpdGetCurrentDevices : aucun peripherique (liste vide)");
   ctx.r3.u64 = 0;
 }
