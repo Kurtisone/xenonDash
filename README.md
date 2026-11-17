@@ -6,9 +6,6 @@ avec une bibliothèque de jeux qui se remplit toute seule et des jeux recompilé
 > **Projet en développement.** Le Dashboard Kinect (2.0.13604) s'affiche et se pilote ; un seul jeu est validé de bout en bout (voir « Ce qui marche »).
 > XenonDash n'est affilié ni à Microsoft ni à Xbox. Il ne contient **aucun fichier Microsoft ni aucun jeu** : vous fournissez les vôtres.
 
-> **Vous voulez juste jouer ?** Le [guide du joueur](GUIDE.md) décrit tout : lancement, touches,
-> Guide (bouton Xbox), profils, jeux, pannes courantes. Le présent README va à l'essentiel.
-
 ## Ce qu'il vous faut
 
 - Un PC **Linux x86-64** avec un **GPU compatible Vulkan** (pilotes à jour). 16 Go de mémoire vive recommandés pour recompiler les jeux.
@@ -53,6 +50,7 @@ Un jeu que XenonDash ne sait pas faire fonctionner nativement est **refusé avec
 |---|---|
 | Dashboard Kinect : hub, My Xbox, Xbox LIVE (hors ligne), Game Library, succès, navigation | fonctionne |
 | Profil local « Joueur » créé automatiquement | fonctionne |
+| **Volet Guide** (touche `G`) : carte du joueur, succès, fermeture | fonctionne — mais voir la remarque ci-dessous : ce **n'est pas** le Guide de la console |
 | Création de profil comme sur une vraie console (clavier virtuel Xbox, fenêtre de connexion) | **en développement**, pas encore dans l'AppImage |
 | Éditeur d'avatar | non disponible (nécessite un paquet que le firmware de base ne contient pas) |
 | Bibliothèque de jeux : dossiers, XEX, paquets XBLA | fonctionne |
@@ -79,7 +77,22 @@ Un jeu que XenonDash ne sait pas faire fonctionner nativement est **refusé avec
 | `W` `A` `S` `D` (AZERTY : `Z` `Q` `S` `D`) | Stick gauche |
 | Flèches | Stick droit |
 | `Shift` + flèches | Croix directionnelle |
+| `G` | **Bouton Guide** (volet latéral, voir ci-dessous) |
 | `F6` | Rescanner le dossier de jeux |
+
+### Le volet Guide, et ce qu'il n'est pas
+
+`G` (ou le bouton Xbox avec `--guide_button`) ouvre un volet latéral : carte du joueur, succès,
+retour au tableau de bord. Il fonctionne, mais **ce n'est pas le Guide de la Xbox 360**.
+
+Le vrai Guide est une interface du système, dessinée par XAM et hud.xex :
+- `hud.xex` n'est **pas** chargé en mode HLE (celui qui affiche) ;
+- `XamShowGuideUI` est un **stub** dans le SDK, et n'est jamais appelé de toute façon ;
+- en rendu natif, ImGui est indisponible : aucune superposition du SDK ne peut s'afficher.
+
+Le volet actuel est donc dessiné par XenonDash dans l'image finale (comme le HUD de XAM). Il
+ressemble à un menu générique, pas aux lames de la console. Le remplacer par le vrai Guide demande
+que XAM recompilé affiche quelque chose — c'est le chantier de l'écran noir.
 
 > **Attention** : `Entrée` est **Start**, pas A, et `Échap` n'est lié à rien. Suivre
 > l'ancienne version de ce tableau (Entrée = A, Échap = B) donne l'impression que le
