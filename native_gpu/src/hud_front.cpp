@@ -690,6 +690,28 @@ extern "C" void hudd3d_call(uint32_t addr, PPCContext& ctx, uint8_t* base, void 
     orig(ctx, base);
     return;
   }
+  // DASH_HUD_TRACE=1 : premier appel crochete, puis un point d'avancement tous les 5000. Repond a
+  // la question « le HUD est-il sollicite du tout ? » : sans cette trace, un HUD muet ne distingue
+  // pas « jamais appele » de « appele mais rien a dessiner ».
+  static const bool trace = std::getenv("DASH_HUD_TRACE") != nullptr;
+  static std::atomic<uint64_t> calls{0};
+  const uint64_t n = ++calls;
+  // Trace ciblee : seules les adresses que Handle traite (D3D 2099 du HUD) sont interessantes.
+  // Les 1348 fonctions de xam.xex passent aussi par ici, d'ou le bruit.
+  if (trace) {
+    const bool known = addr == hud_profile::kFrame || addr == hud_profile::kBeginVertices ||
+                       addr == hud_profile::kEndVertices || addr == hud_profile::kDrawVerticesUP ||
+                       addr == hud_profile::kResolve || addr == hud_profile::kSubmit;
+    if (known) {
+      static std::atomic<uint64_t> kn{0};
+      const uint64_t k = ++kn;
+      if (k <= 10 || k % 200 == 0)
+        std::fprintf(stderr, "[hud] D3D 2099 #%llu addr=%08X (r3=%08X r4=%08X)\n",
+                     (unsigned long long)k, addr, ctx.r3.u32, ctx.r4.u32);
+    } else if (n == 1) {
+      std::fprintf(stderr, "[hud] premier appel croche addr=%08X (hors D3D connu)\n", addr);
+    }
+  }
   if (hudd3d_probe(addr, ctx, base, orig)) return;
   Handle(addr, ctx, base, orig);
 }

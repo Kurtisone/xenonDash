@@ -233,6 +233,37 @@ bug de composition ou de Vulkan serait une fausse piste.
 En mode XAM, le Dashboard n'entre **jamais** dans le chargement de son interface : il s'arrête juste
 après `XamLoaderGetMediaInfo` et une notification de média.
 
+### Le HUD de XAM est chargé, mais son D3D n'est jamais appelé
+
+`hud_front.cpp` (le HUD de XAM : fenêtres Xbox, clavier virtuel, création de profil, et de quoi
+faire un vrai Guide) est compilé et lié (`NGPU_HUD=ON`, 1348 fonctions de `xam.xex` crochetées).
+Il était donc naturel de penser qu'il suffisait de le solliciter.
+
+**Mesure avec `DASH_HUD_TRACE=1`** (instrumentation ajoutée pour l'occasion) : le crochet commun
+`hudd3d_call` est bien atteint **plus de 25 000 fois** en 22 s. Mais en distinguant les adresses :
+
+| adresse | nature | appels |
+|---|---|---|
+| `0x819BD640`, `0x819B7BC0`, ... | fonctions internes de `xam.xex` | **oui**, des milliers |
+| `0x819C8E38` (`kBeginVertices`) | D3D 2099 du HUD | **jamais** |
+| `0x819C90D8` (`kDrawVerticesUP`) | D3D 2099 du HUD | **jamais** |
+| `0x819CA3E0` (`kResolve`) | D3D 2099 du HUD | **jamais** |
+
+Les adresses D3D 2099 sont **valides** (présentes dans `xam_d3d_entries.inc` et dans le code
+recompilé) : ce n'est pas un problème de génération.
+
+**Conclusion : XAM recompilé n'appelle jamais son propre D3D.** Il exécute du code (des milliers
+d'appels internes) mais n'atteint pas la couche de dessin — donc le HUD n'a jamais rien à composer,
+et `HudComposite` ne superpose rien. Vérifié aussi côté overlay : `[hud] HUD affiche` n'apparaît
+**jamais**.
+
+C'est cohérent avec l'autre mesure : **zéro appel D3D du Dashboard** en mode XAM. Les deux couches
+de rendu sont muettes. La cause est donc en amont des deux, dans le démarrage du XUI.
+
+**Ce que cela écarte définitivement** : « le HUD est cassé », « les shaders du HUD manquent »,
+« HudComposite ne compose pas ». Aucune de ces pistes n'est la bonne : le HUD n'est simplement
+jamais mis au travail.
+
 ### Une boucle d'attente côté XUI (mesurée)
 
 Un journal du mode XAM contient **682 506** appels à `XamLoaderGetMediaInfo` en 38 s, **tous du même
