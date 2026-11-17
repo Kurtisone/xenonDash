@@ -33,6 +33,7 @@ REXCVAR_DECLARE(std::string, keybind_rstick_left);
 REXCVAR_DECLARE(std::string, keybind_rstick_right);
 REXCVAR_DECLARE(std::string, keybind_back);
 REXCVAR_DECLARE(std::string, keybind_start);
+REXCVAR_DECLARE(std::string, keybind_guide);
 
 namespace dash::input {
 
@@ -65,6 +66,10 @@ inline void ApplyDashKeyboardLayout() {
   Rebind(REXCVAR_GET(keybind_right_trigger), "E,O", "3");
   Rebind(REXCVAR_GET(keybind_back), "Z,Tab", "Tab");
   Rebind(REXCVAR_GET(keybind_start), "X,Return", "P");
+  // Bouton Guide (lame Xbox) : G. Le SDK le laisse VIDE par defaut
+  // (REXCVAR_DEFINE_STRING(keybind_guide, "", ...)), ce qui rend le Guide inatteignable au clavier
+  // sans option. On le lie ici pour qu'il fonctionne des le premier lancement.
+  Rebind(REXCVAR_GET(keybind_guide), "", "G");
 }
 
 }  // namespace dash::input
