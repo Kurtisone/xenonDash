@@ -233,6 +233,37 @@ bug de composition ou de Vulkan serait une fausse piste.
 En mode XAM, le Dashboard n'entre **jamais** dans le chargement de son interface : il s'arrête juste
 après `XamLoaderGetMediaInfo` et une notification de média.
 
+### Le HUD n'a aucun thread de rendu
+
+La chaîne du dessin du HUD, suivie dans le code recompilé :
+
+```
+sub_818A2500   (boucle d'image)
+  └─ sub_818A1B58
+       └─ sub_819CB710  -> VdQuerySystemCommandBuffer   (notre hook renvoie 1 pour XAM : passe)
+       └─ sub_818A1368  (kFrame)
+            └─ sub_819CC490  (kSubmit) -> VdSetSystemCommandBuffer
+```
+
+Le portier (`VdQuerySystemCommandBuffer`) est franchi : notre hook renvoie **1** quand l'appelant est
+dans l'image XAM, et `InXamImage()` est vrai pour ces adresses (vérifié). La chaîne est donc
+fonctionnelle **si elle est exécutée**.
+
+Or `sub_818A2500` n'est **jamais appelée par du code**, et n'est **jamais référencée comme pointeur**
+(sauf sa définition et son enregistrement). C'est une routine destinée à un **thread créé par
+adresse**.
+
+Mesure avec `REX_LOG_THREADS=1` (instrumentation ajoutée dans le SDK, `ExCreateThread`) : les 11
+threads invités créés ont pour entrées `0x92170960`, `0x92172AB8`, `0x9216DF08`, `0x921AE620`,
+`0x92249730`, `0x92249488` (code du Dashboard) et `0x81890F18` (XAM). **Aucun n'a `0x818A2500`.**
+
+**Conclusion : le HUD ne lance jamais son thread de rendu.** C'est pourquoi aucun appel D3D n'est
+émis, pourquoi `kSubmit` n'est jamais atteint, et pourquoi `VdSetSystemCommandBuffer` reste muet.
+Les trois symptômes ont enfin une cause unique.
+
+La question suivante est donc précise : quel événement ou quel appel, sur console, provoque la
+création de ce thread ? C'est là que se situe le défaut.
+
 ### C'est le chargement, pas l'exécution
 
 `DASH_XAM_MODULE=1` charge `xam.xex` **sans** exécuter son point d'entrée ; `=2` l'exécute en plus.
