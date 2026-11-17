@@ -112,8 +112,9 @@ Diagnostics (tous par variables d'environnement) : `DASH_NGPU_DRAWINFO=<image>` 
 - **volk** définit des pointeurs globaux nommés comme les fonctions Vulkan : liés dans le même exécutable que libvulkan, ils masquent les fonctions du chargeur (crash dans
   `vkEnumerateInstanceExtensionProperties` de `vk_backend`). `ngpu_core/CMakeLists.txt` génère un en-tête qui les renomme (`ngpu_vk*`), force-inclus en PRIVATE pour `plume` et `ngpu_core`.
 - Dépendance de lien : `libX11` (plume lit les attributs de la fenêtre X11 pour sa chaîne d'échange, non utilisée ici) ; en-têtes Vulkan du système (plume compile avec Vulkan 1.4 headers).
-- **Non fait** : superposition ImGui (lanceur F5, remplaçants XAM : le SDK dessine ImGui par le `ImmediateDrawer` du présentateur, absent en mode détaché ; voie prévue : une passe
-  `ImDrawData` dans le noyau, ou un `ImmediateDrawer` sur plume, plus l'hébergement de la boucle UI) ; MSAA ; vidéo (A7) ; formats de texture 565/1555/16 ; autres chemins de dessin
+- **Non fait** : superposition ImGui (lanceur F5, remplaçants XAM : le SDK dessine ImGui par le `ImmediateDrawer` du présentateur, absent en mode détaché) — **la progression de
+  construction passe désormais par les boîtes de message du HUD de XAM** (`common/src/dash_xam_hud_ui.cpp`, palier N5 de `xam_recompile.md` ; visibles dès que la variante `-xam`
+  s'affiche), le lanceur F5 cède devant la Game Library du hub ; MSAA ; vidéo (A7) ; formats de texture 565/1555/16 ; autres chemins de dessin
   (`SetStreamSource`+`SetIndices`, `DrawVertices`) ; cibles hors écran/`Resolve` réels (le noyau les gère, aucun dessin du Dashboard au repos ne les emploie) ; 17559/XAM (le 13604 est fait : §8).
 - Non thread-safe côté noyau : la façade sérialise par un mutex.
 - Le cache de pipelines (`LoadPipelineCache`) n'est pas branché côté Dashboard.

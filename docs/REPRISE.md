@@ -129,6 +129,12 @@ pilote STFS minimal côté noyau, profil local hors ligne (XUID aléatoire, sign
      `RunInSystemProcess` creait un thread puis faisait `Wait`, donc synchrone.
 
 3. Avec le rendu natif (AppImage Kinect livrée) les fenêtres ImGui (progression de construction des jeux, liste F5, succès de remplacement) ne sont plus dessinées ; la recompilation d'un jeu n'a donc plus d'écran de progression visible. Les remplacer par des fenêtres du HUD de XAM (boîte de message avec progression, ou scène dédiée), ce que l'utilisateur veut de toute façon (pas de menus façon Xenia-canary).
+   *Avancement (2026-11-17, palier N5)* : le **socle est commité** — `ShowXamMessageBox` appelable depuis l'hôte
+   (`dash_xam_redirect.cpp`), thread invité unique + watcher de construction (`dash_xam_hud_ui.cpp`), redirection de
+   `XamShowMessageBoxUI` dès que XAM est chargé, repli journalisé sans ImGui, tests `DASH_TEST_BUILDBOX=start|fail`.
+   Vérifié : compilation des deux variantes, redirection résolue (ordinal 714 -> 0x8189A3C0), non-régression du hub
+   13604 (capture regardée). **Les boîtes ne sont pas encore vues** : bloquées par l'écran noir de la variante `-xam`
+   (point 2) ; toasts/mise à jour du texte et redirection des succès reportés au déblocage. Détail : `docs/xam_recompile.md`, palier N5.
    *Nuance (2026-11-15)* : ce n'est pas ce qui bloque l'utilisateur au quotidien. La navigation, les
    onglets et Game Library fonctionnent ; l'absence d'écran de progression ne se voit qu'au premier
    lancement d'un jeu à recompiler.

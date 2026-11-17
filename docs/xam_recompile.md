@@ -1116,3 +1116,53 @@ Modifiés : `common/CMakeLists.txt`, `common/src/{dash_app_base,dash_disc,dash_p
 `dashboards/2.0.13604.0-xam/{CMakeLists.txt,input_test.sh,run_headless.sh}` (variable `DASH_ROOT`), ce document.
 **SDK** (`third_party/rexglue-sdk`, non commité ; sauvegarde de `sdk/lib` et `sdk/bin` d'avant dans le scratchpad `n4_profile/sdkbak/`) : `include/rex/system/format.h`
 (conversions `%x/%u/%o` sur entier non signé), `src/filesystem/virtual_file_system.cpp` (`OpenFile` : création sous le parent résolu).
+
+## Palier N5 — fenêtres du HUD appelées depuis l'hôte (progression de construction)
+
+Date : 2026-11-17. Avec le rendu natif (`-DDASH_NATIVE_GPU=ON`), le présentateur SDK est détaché : aucun
+`ImGuiDrawer` hôte, donc les fenêtres ImGui de `dash_xam_ui.cpp` (progression de construction, lanceur F5,
+statut bibliothèque) ne sont plus dessinées — `OpenLauncherHotkey()` sortie silencieuse, aucun journal
+(voir `docs/ngpu_core.md`, « Non fait »). Remplacement par les **vraies fenêtres Xbox du HUD de XAM**
+(boîte de message du palier N2), comme le veut l'utilisateur (pas de menus façon Xenia-canary).
+
+### Socle : `XamShowMessageBoxUI` appelable depuis l'hôte
+
+- `common/src/dash_xam_redirect.cpp` : `ShowXamMessageBox(titre, texte, boutons, ...)` — marshalling du test
+  `DASH_TEST_MSGBOX` (factorisé ; `PutWide` exporté, 9ᵉ argument à `r1+0x54`, XOVERLAPPED à zéro, attente
+  `WaitOverlapped`). Renvoie faux si XAM recompilé n'est pas chargé/redirigé. `RunMessageBoxTest` reconstruit dessus.
+- `Configure()` : `XamShowMessageBoxUI`/`Ex` redirigés **dès que le module XAM est chargé** (fonction purement
+  d'interface, sans sémantique de profil) ; hors mode profil, `DASH_XAM_REDIRECT` s'ajoute à cette liste de base
+  au lieu de la remplacer.
+- `common/src/dash_xam_hud_ui.{cpp,h}` (`dash::hudui`) : thread invité **unique** (`XHostThread`, motif des tests)
+  et file de demandes (une seule boîte à la fois, sérialisées) ; `Init(ks, imgui_available)` appelé de
+  `OnPostSetup` **après** `dash::xamui::Init` — ne s'active que sans ImGui disponible et avec `DASH_XAM_MODULE`.
+- `dash_xam_ui.cpp` : quand `imgui_drawer()` est nul, `Init` journalise le repli (plus de silence).
+
+### Utilisation : progression de construction
+
+- Watcher hôte (500 ms) sur `launch::GetBuildStatus()` (`dash_launch.cpp`, déjà alimenté par `BuildMonitor` et
+  `ResumeBuild`, y compris après la relance du hub) : boîte au **démarrage** d'une construction (nom du jeu,
+  durée estimée de la recette, chemin du journal, bouton « Masquer ») et boîte à l'**échec** (erreur + journal) ;
+  rien au succès (le jeu se lance tout seul). Une boîte par transition (le statut `failed` reste jusqu'au
+  lancement suivant).
+- Pendant une boîte, les entrées du Dashboard sont déjà suspendues (`ngpu::HudActive()`,
+  `dash_xam_redirect.cpp`) ; `F5`/`F6` ImGui restent disponibles dans les builds avec plugin `xenos`.
+- Test sans vraie recompilation : `DASH_TEST_BUILDBOX=start|fail` (statut simulé 10 s après le démarrage).
+
+### État de vérification
+
+- Compilation : variantes 13604 (native, non-régression : hub rendu et regardé sous Xvfb, ligne « interfaces
+  ImGui indisponibles » dans le journal) et 13604-xam.
+- **Les boîtes ne sont pas encore vues à l'écran** : la variante `-xam` s'affiche noir sur cette machine
+  (interblocage d'initialisation de XAM recompilé, mesuré — voir `docs/xam_13604_compilation.md`). Le socle
+  s'active dès que ce blocage est levé ; `DASH_TEST_MSGBOX` reste le test unitaire du chemin.
+- Non fait (reporté, même blocage) : toasts de progression (`XNotifyQueueUI` : HLE = stub, seul XAM recompilé
+  peut les afficher) ; mise à jour du texte de la boîte ouverte (`XuiTextElementSetText`, ordinal 867, importé
+  par hud.xex) ; redirection de `XamShowAchievementsUI` vers XAM (l'action Succès de la lame Guide passe encore
+  par l'entrée ImGui, sans effet en rendu natif).
+
+### Fichiers (palier N5)
+
+Nouveaux : `common/src/dash_xam_hud_ui.{cpp,h}`. Modifiés : `common/CMakeLists.txt`,
+`common/src/{dash_app_base,dash_xam_redirect,dash_xam_ui}.{cpp,h}`, ce document, `REPRISE.md`,
+`ngpu_core.md`, `nxe_jeux.md`, `recettes.md`, `technique.md`.

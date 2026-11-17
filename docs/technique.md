@@ -742,7 +742,7 @@ Sous Xvfb, RADV ne peut pas présenter (pas de DRI3) : utiliser lavapipe :
   `XamShowSigninUIp`, `XamShowCreateProfileUI`, `XamUserLogon` restent en stub). Réputation et zone
   sont des valeurs fixées par option. **Kinect 13604, variante `-xam`** : connexion et création de profil par les vraies fenêtres Xbox
   (`DASH_PROFILE_MODE=xam`, voir [xam_recompile.md](xam_recompile.md), palier N4) ; code PIN d'un profil existant et `XamUserReadProfileSettings` non résolus.
-- **Kinect 13604, rendu natif** : pas de superposition ImGui (écran de progression de construction des jeux, lanceur F5, succès de remplacement : non affichés) ;
+- **Kinect 13604, rendu natif** : pas de superposition ImGui (lanceur F5, succès de remplacement : non affichés) ; la progression de construction passe par la boîte de message Xbox du HUD de XAM (`dash_xam_hud_ui.cpp`, palier N5 de `xam_recompile.md`), visible dès que la variante `-xam` s'affiche ;
   72 shaders du Dashboard non traduits à l'import, 3 vertex shaders à texture ([ngpu_core.md](ngpu_core.md) §8).
 - Icônes partagées (Ⓖ, boutons, zones) : ce sont celles du XAM **17559**, d'un style plus récent que
   la 6770. Celles d'origine sont dans le `xam.xex` de base 2.0.1888 (+ `xam.xexp` de la 6770) ;

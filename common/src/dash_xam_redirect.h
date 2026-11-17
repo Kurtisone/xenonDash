@@ -52,6 +52,16 @@ bool ProfileModeXam();
 // Exécute l'export `name` de XAM recompilé avec le contexte `ctx`. Faux (rien d'exécuté) si XAM n'est pas chargé ou n'a pas cet export.
 bool CallXamExport(const char* name, PPCContext& ctx, uint8_t* base);
 
+// Chaîne UTF-16 big-endian dans le tas système invité ; renvoie son adresse invitée (0 si le noyau n'est pas prêt).
+uint32_t PutWide(const char16_t* s);
+
+// Palier N5 : boîte de message Xbox du HUD de XAM (XamShowMessageBoxUI redirigé vers XAM recompilé), appelée depuis
+// l'hôte — socle de dash_xam_hud_ui.cpp (progression de construction). À appeler depuis un thread invité (XHostThread) :
+// la fonction invité lit le 9e argument sur la pile de l'appelant. Faux si XAM n'est pas chargé/redirigé ou si la
+// requête est refusée. `wait_ms` > 0 : attend la fermeture (borne) et écrit le bouton choisi dans *choice si non nul
+// (0xFFFFFFFF = aucun). Le rendu est celui du HUD natif (palier N2), par-dessus le Dashboard.
+bool ShowXamMessageBox(const char16_t* title, const char16_t* text, const char16_t* const* buttons, size_t button_count,
+                       uint32_t active_button, uint32_t flags, uint32_t* choice, int wait_ms);
 
 }  // namespace dash::xamredir
 

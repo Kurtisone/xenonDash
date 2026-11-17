@@ -39,6 +39,16 @@ bool HudActive() __attribute__((weak));
 }  // namespace ngpu
 
 namespace dash::xamredir {
+
+// Chaîne UTF-16 big-endian dans le tas système invité ; renvoie son adresse invitée (0 si le noyau n'est pas prêt).
+uint32_t PutWide(const char16_t* s) {
+  const size_t n = std::char_traits<char16_t>::length(s) + 1;  // avec le zéro final
+  const uint32_t a = REX_KERNEL_MEMORY()->SystemHeapAlloc(static_cast<uint32_t>(n * 2));
+  auto* dst = reinterpret_cast<uint16_t*>(REX_KERNEL_MEMORY()->virtual_membase() + a);
+  for (size_t i = 0; i < n; ++i) dst[i] = __builtin_bswap16(static_cast<uint16_t>(s[i]));
+  return a;
+}
+
 namespace {
 
 // Un import : nom sans préfixe, HLE du SDK (résolu à la demande), export de XAM recompilé (si redirigé).
@@ -188,15 +198,6 @@ std::vector<std::string> SplitList(const char* text) {
   return out;
 }
 
-// Chaîne UTF-16 big-endian dans le tas système invité ; renvoie son adresse invitée.
-uint32_t PutWide(const char16_t* s) {
-  const size_t n = std::char_traits<char16_t>::length(s) + 1;  // avec le zéro final
-  const uint32_t a = REX_KERNEL_MEMORY()->SystemHeapAlloc(static_cast<uint32_t>(n * 2));
-  auto* dst = reinterpret_cast<uint16_t*>(REX_KERNEL_MEMORY()->virtual_membase() + a);
-  for (size_t i = 0; i < n; ++i) dst[i] = __builtin_bswap16(static_cast<uint16_t>(s[i]));
-  return a;
-}
-
 // DASH_TEST_PEEK=<adresse invitée hexadécimale> : journalise 64 mots de la mémoire invitée avant l'appel de test (diagnostic).
 void PeekGuest(uint8_t* base) {
   if (const char* d = std::getenv("DASH_TEST_PEEK"); d && *d) {
@@ -213,84 +214,33 @@ void PeekGuest(uint8_t* base) {
 
 // Test : XamShowMessageBoxUI appelé comme le ferait le Dashboard (hook -> Dispatch), depuis un thread titre.
 // Appel asynchrone (XOVERLAPPED fourni) : le retour est immédiat, XAM complète l'overlapped plus tard.
+// DASH_TEST_MSGBOX_WAIT = durée d'attente de la fermeture en secondes (60).
 void RunMessageBoxTest(rex::system::KernelState* ks) {
-  auto* ts = rex::runtime::ThreadState::Get();
-  if (!ts) {
-    REXLOG_WARN("[xamredir] test XamShowMessageBoxUI : pas de thread invité");
-    return;
-  }
-  Slot* slot = FindSlot("XamShowMessageBoxUI");
-  if (!slot) return;
-  uint8_t* base = ks->memory()->virtual_membase();
-  PPCContext& tc = *ts->context();
-
-  const uint32_t title = PutWide(u"Xenondash");
-  const uint32_t text = PutWide(u"XamShowMessageBoxUI : test de redirection vers XAM recompile");
-  const uint32_t b0 = PutWide(u"OK"), b1 = PutWide(u"Annuler");
-  const uint32_t buttons = REX_KERNEL_MEMORY()->SystemHeapAlloc(8);
-  *reinterpret_cast<uint32_t*>(base + buttons) = __builtin_bswap32(b0);
-  *reinterpret_cast<uint32_t*>(base + buttons + 4) = __builtin_bswap32(b1);
-  const uint32_t result = REX_KERNEL_MEMORY()->SystemHeapAlloc(4);
-  *reinterpret_cast<uint32_t*>(base + result) = __builtin_bswap32(0xFFFFFFFFu);
-
-  // XOVERLAPPED (0x20 octets, à zéro) : XAM refuse overlapped nul avec pResult non nul (chemin d'erreur 87).
-  const uint32_t overlapped = REX_KERNEL_MEMORY()->SystemHeapAlloc(0x20);
-  std::memset(base + overlapped, 0, 0x20);
-
-  // Neuf arguments : le 9e (overlapped) est sur la pile, à r1 + 0x54 de l'appelant. XAM le lit à 1412(r1) après un
-  // stwu de 1328 octets : 1412 - 1328 = 0x54 (convention du SDK, FunctionDispatcher::Execute).
-  PPCContext ctx = tc;
-  const uint32_t sp = static_cast<uint32_t>(tc.r1.u64) - 0x100;
-  *reinterpret_cast<uint32_t*>(base + sp + 0x54) = __builtin_bswap32(overlapped);
-  ctx.r1.u64 = sp;
-  ctx.r3.u64 = 0;                 // utilisateur 0
-  ctx.r4.u64 = title;
-  ctx.r5.u64 = text;
-  ctx.r6.u64 = 2;                 // nombre de boutons
-  ctx.r7.u64 = buttons;
-  ctx.r8.u64 = 0;                 // bouton actif
-  ctx.r9.u64 = 0;                 // drapeaux
-  ctx.r10.u64 = result;
-
-  PeekGuest(base);
-  REXLOG_INFO("[xamredir] test XamShowMessageBoxUI : appel");
-  Dispatch(*slot, ctx, base);
-  REXLOG_INFO("[xamredir] test XamShowMessageBoxUI : retour r3=0x{:08X}, résultat={}",
-              static_cast<uint32_t>(ctx.r3.u64),
-              __builtin_bswap32(*reinterpret_cast<uint32_t*>(base + result)));
-  if (static_cast<uint32_t>(ctx.r3.u64) != 0x3E5) return;
-
-  // Attente de la réponse (XOVERLAPPED : InternalLow à +0 vaut 0x3E5 tant que la requête est en cours ; dwExtendedError
-  // à +0x18). La boîte reçoit ses touches de XamInputGetKeystrokeHud ; DASH_TEST_MSGBOX_WAIT = durée en secondes (60).
   const char* w = std::getenv("DASH_TEST_MSGBOX_WAIT");
   const int wait_ms = (w && *w ? std::atoi(w) : 60) * 1000;
-  auto word = [&](uint32_t ea) { return __builtin_bswap32(*reinterpret_cast<volatile uint32_t*>(base + ea)); };
-  for (int t = 0; t < wait_ms; t += 50) {
-    if (word(overlapped) != 0x3E5) {
-      REXLOG_INFO("[xamredir] test XamShowMessageBoxUI : TERMINÉ après {} ms, overlapped.InternalLow=0x{:08X}, "
-                  "erreur étendue=0x{:08X}, bouton choisi={} (0xFFFFFFFF = aucun)",
-                  t, word(overlapped), word(overlapped + 0x18), word(result));
-      return;
-    }
-    std::this_thread::sleep_for(std::chrono::milliseconds(50));
+  const char16_t* buttons[] = {u"OK", u"Annuler"};
+  uint32_t choice = 0xFFFFFFFF;
+  REXLOG_INFO("[xamredir] test XamShowMessageBoxUI : appel");
+  if (ShowXamMessageBox(u"Xenondash", u"XamShowMessageBoxUI : test de redirection vers XAM recompilé", buttons, 2, 0, 0,
+                        &choice, wait_ms)) {
+    REXLOG_INFO("[xamredir] test XamShowMessageBoxUI : TERMINÉ, bouton choisi={} (0xFFFFFFFF = aucun)", choice);
   }
-  REXLOG_WARN("[xamredir] test XamShowMessageBoxUI : NON terminé après {} ms (overlapped.InternalLow=0x{:08X}, bouton={})",
-              wait_ms, word(overlapped), word(result));
 }
 
 // Attend la fin d'une requête asynchrone (XOVERLAPPED : InternalLow à +0 vaut 0x3E5 tant qu'elle est en cours). Renvoie vrai si
 // elle s'est terminée avant `wait_ms`.
-bool WaitOverlapped(uint8_t* base, uint32_t overlapped, int wait_ms) {
+bool WaitOverlapped(uint8_t* base, uint32_t overlapped, int wait_ms, const char* label = "test") {
   auto word = [&](uint32_t ea) { return __builtin_bswap32(*reinterpret_cast<volatile uint32_t*>(base + ea)); };
   for (int t = 0; t < wait_ms; t += 50) {
     if (word(overlapped) != 0x3E5) {
-      REXLOG_INFO("[xamredir] test : TERMINÉ après {} ms, overlapped.InternalLow=0x{:08X}, erreur étendue=0x{:08X}", t,
-                  word(overlapped), word(overlapped + 0x18));
+      REXLOG_INFO("[xamredir] {} : TERMINÉ après {} ms, overlapped.InternalLow=0x{:08X}, erreur étendue=0x{:08X}", label,
+                  t, word(overlapped), word(overlapped + 0x18));
       return true;
     }
     std::this_thread::sleep_for(std::chrono::milliseconds(50));
   }
-  REXLOG_WARN("[xamredir] test : NON terminé après {} ms (overlapped.InternalLow=0x{:08X})", wait_ms, word(overlapped));
+  REXLOG_WARN("[xamredir] {} : NON terminé après {} ms (overlapped.InternalLow=0x{:08X})", label, wait_ms,
+              word(overlapped));
   return false;
 }
 
@@ -392,6 +342,65 @@ void StartTestThread(rex::system::KernelState* ks, const char* env, const char* 
 
 }  // namespace
 
+// Palier N5 : boîte de message Xbox du HUD de XAM (XamShowMessageBoxUI redirigé), appelée depuis l'hôte — socle de
+// dash_xam_hud_ui.cpp (progression de construction). À appeler depuis un thread invité (XHostThread) : la fonction
+// invité lit le 9e argument sur la pile de l'appelant et XAM reçoit les frappes de ce thread. Renvoie faux si XAM
+// recompilé n'est pas chargé/redirigé ou si la requête est refusée. wait_ms > 0 : attend la fermeture (borne) et écrit
+// le bouton choisi dans *choice (0xFFFFFFFF = aucun). Mémoire invitée non libérée : les boîtes sont rares (comme les
+// tests ci-dessus).
+bool ShowXamMessageBox(const char16_t* title, const char16_t* text, const char16_t* const* buttons, size_t button_count,
+                       uint32_t active_button, uint32_t flags, uint32_t* choice, int wait_ms) {
+  Slot* slot = FindSlot("XamShowMessageBoxUI");
+  if (!slot || !slot->guest.load()) {
+    REXLOG_WARN("[xamredir] boîte de message : XAM recompilé non chargé ou non redirigé");
+    return false;
+  }
+  auto* ts = rex::runtime::ThreadState::Get();
+  if (!ts) {
+    REXLOG_WARN("[xamredir] boîte de message : pas de thread invité");
+    return false;
+  }
+  auto* ks = g_ks.load();
+  if (!ks) return false;
+  uint8_t* base = ks->memory()->virtual_membase();
+
+  const uint32_t t = PutWide(title), x = PutWide(text);
+  const uint32_t button_array = REX_KERNEL_MEMORY()->SystemHeapAlloc(static_cast<uint32_t>(button_count * 4));
+  for (size_t i = 0; i < button_count; ++i) {
+    *reinterpret_cast<uint32_t*>(base + button_array + i * 4) = __builtin_bswap32(PutWide(buttons[i]));
+  }
+  const uint32_t result = REX_KERNEL_MEMORY()->SystemHeapAlloc(4);
+  *reinterpret_cast<uint32_t*>(base + result) = __builtin_bswap32(0xFFFFFFFFu);
+  // XOVERLAPPED (0x20 octets, à zéro) : XAM refuse overlapped nul avec pResult non nul (chemin d'erreur 87).
+  const uint32_t overlapped = REX_KERNEL_MEMORY()->SystemHeapAlloc(0x20);
+  std::memset(base + overlapped, 0, 0x20);
+
+  // Neuf arguments : le 9e (overlapped) est sur la pile, à r1 + 0x54 de l'appelant. XAM le lit à 1412(r1) après un
+  // stwu de 1328 octets : 1412 - 1328 = 0x54 (convention du SDK, FunctionDispatcher::Execute).
+  PPCContext ctx = *ts->context();
+  const uint32_t sp = static_cast<uint32_t>(ctx.r1.u64) - 0x100;
+  *reinterpret_cast<uint32_t*>(base + sp + 0x54) = __builtin_bswap32(overlapped);
+  ctx.r1.u64 = sp;
+  ctx.r3.u64 = 0;  // utilisateur 0
+  ctx.r4.u64 = t;
+  ctx.r5.u64 = x;
+  ctx.r6.u64 = button_count;
+  ctx.r7.u64 = button_array;
+  ctx.r8.u64 = active_button;
+  ctx.r9.u64 = flags;
+  ctx.r10.u64 = result;
+
+  Dispatch(*slot, ctx, base);
+  if (static_cast<uint32_t>(ctx.r3.u64) != 0x3E5) {
+    REXLOG_WARN("[xamredir] boîte de message : requête refusée, r3=0x{:08X}", static_cast<uint32_t>(ctx.r3.u64));
+    return false;
+  }
+  if (wait_ms > 0 && WaitOverlapped(base, overlapped, wait_ms, "boîte de message")) {
+    if (choice) *choice = __builtin_bswap32(*reinterpret_cast<uint32_t*>(base + result));
+  }
+  return true;
+}
+
 bool ProfileModeXam() {
   static const bool on = [] {
     const char* m = std::getenv("DASH_PROFILE_MODE");
@@ -490,6 +499,8 @@ void Configure(rex::system::KernelState* ks, rex::runtime::ExportResolver* resol
   g_xam.store(xam);
   g_resolver.store(resolver);
   // Mode profil XAM : les imports de session utilisateur du Dashboard sont servis par XAM recompilé (en plus de DASH_XAM_REDIRECT).
+  // Palier N5 : hors mode profil, la boîte de message du HUD est quand même redirigée dès que XAM recompilé est chargé
+  // (fonction purement d'interface, sans sémantique de profil — socle de dash_xam_hud_ui.cpp).
   static std::string redirect_list;
   if (ProfileModeXam()) {
     redirect_list = "XGetVideoMode,XamUserGetXUID,XamUserGetSigninState,XamUserLogon,XamUserCheckPrivilege,XamUserIsOnlineEnabled,"
@@ -498,11 +509,13 @@ void Configure(rex::system::KernelState* ks, rex::runtime::ExportResolver* resol
                     "XamShowGamerCardUIForXUID";
     if (const char* e = std::getenv("DASH_XAM_REDIRECT"); e && *e) redirect_list += std::string(",") + e;
     REXLOG_INFO("[xamredir] DASH_PROFILE_MODE=xam : redirections {}", redirect_list);
+  } else {
+    redirect_list = "XamShowMessageBoxUI,XamShowMessageBoxUIEx";
+    if (const char* e = std::getenv("DASH_XAM_REDIRECT"); e && *e) redirect_list += std::string(",") + e;
+    REXLOG_INFO("[xamredir] redirections de base (boîte de message du HUD) + DASH_XAM_REDIRECT : {}", redirect_list);
   }
-  const char* env = ProfileModeXam() ? redirect_list.c_str() : std::getenv("DASH_XAM_REDIRECT");
-  if (!env || !*env) {
-    REXLOG_INFO("[xamredir] DASH_XAM_REDIRECT absent : imports du Dashboard servis par le HLE");
-  } else if (!xam) {
+  const char* env = redirect_list.c_str();
+  if (!xam) {
     REXLOG_WARN("[xamredir] module XAM absent : aucune redirection");
   } else {
     for (const std::string& name : SplitList(env)) {
