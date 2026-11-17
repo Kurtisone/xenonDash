@@ -233,6 +233,40 @@ bug de composition ou de Vulkan serait une fausse piste.
 En mode XAM, le Dashboard n'entre **jamais** dans le chargement de son interface : il s'arrête juste
 après `XamLoaderGetMediaInfo` et une notification de média.
 
+### La chaîne de lancement du HUD, remontée jusqu'à son portier
+
+Les adresses PowerPC ne se cherchent pas comme du texte : `0x818A2500` est chargé par `lis` + `addi`,
+donc un `grep` sur le littéral ne trouve rien. En cherchant le motif (`lis -32374` + `addi 9472`),
+la chaîne apparaît :
+
+```
+sub_81872460  prépare le lancement (stocke 0x81872230 dans une structure)
+  └─ sub_81872230  point d'entrée du sous-système HUD
+       └─ sub_818A2F90   (sous-système HUD)
+            └─ sub_818A2500  boucle d'image du HUD
+                 └─ sub_818A1B58 -> kFrame -> kSubmit -> VdSetSystemCommandBuffer
+```
+
+Le portier de `sub_81872230` est identifié précisément :
+
+```
+sub_818B5028(...)          -> ObCreateSymbolicLink : renvoie un statut
+if (r3 >= 0) sub_818A2F90()   <- le HUD ne démarre QUE si le lien symbolique est créé
+```
+
+`ObCreateSymbolicLink` est **implémenté** (SDK et `common/src/kernel_ob.cpp`), donc la condition peut
+passer. Mais `sub_81872230` n'est **jamais appelé par du code** et n'apparaît dans **aucun journal** :
+il est seulement stocké comme valeur par `sub_81872460`.
+
+Enfin, en aval, `HalNotifyAddRemoveBackgroundTask` (dans `sub_81891368`, sur le chemin de création du
+thread) est un **stub** du SDK, et n'est **jamais appelé** dans nos sessions.
+
+### Ce que cela signifie pour la suite
+
+La cause n'est plus « on ne sait pas où ça bloque » : c'est une chaîne identifiée, avec un portier
+nommé (`ObCreateSymbolicLink`) et un déclencheur manquant (`sub_81872460` n'est pas exécuté). La
+question est devenue : **qu'est-ce qui, sur console, exécute `sub_81872460` ?**
+
 ### Le HUD n'a aucun thread de rendu
 
 La chaîne du dessin du HUD, suivie dans le code recompilé :
