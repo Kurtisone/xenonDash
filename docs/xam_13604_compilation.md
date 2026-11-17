@@ -233,6 +233,37 @@ bug de composition ou de Vulkan serait une fausse piste.
 En mode XAM, le Dashboard n'entre **jamais** dans le chargement de son interface : il s'arrête juste
 après `XamLoaderGetMediaInfo` et une notification de média.
 
+### `XexStartExecutable` implémenté : exécuté, mais insuffisant
+
+`XexStartExecutable` était un **stub du SDK** alors que XAM l'appelle sur le chemin du HUD :
+`XexLoadExecutable` → `XexStartExecutable(0x81879B48)` → `ExCreateThread` (thread système).
+
+Implémenté dans `xam_kernel_stubs.cpp` : la fonction passée en `r3` est exécutée sur un fil système,
+via `RunInSystemProcessAsync` du projet. Mesure : l'appel a bien lieu
+(`[xex] XexStartExecutable(0x81879B48) : demarrage sur un fil systeme`).
+
+**Mais `sub_81872230` (le sous-système HUD) n'est toujours pas atteint**, l'écran reste noir et le HUD
+n'émet aucun appel D3D. L'exécutable démarré n'est donc pas celui qui porte la chaîne du HUD — ou il
+lui manque une entrée antérieure.
+
+### Ce que la comparaison des deux journaux montre
+
+En mode sans XAM, la séquence de démarrage va jusqu'aux énumérations de contenu
+(`XamContentAggregateCreateEnumerator`, `XamProfileCreateEnumerator`). En mode XAM, elle s'arrête
+après une série de stubs de sécurité et de démarrage :
+
+```
+XexLoadExecutable STUB  ->  XeKeysSetProtectedFlag STUB  ->  XexStartExecutable  ->
+ExCreateThread (systeme)
+```
+
+Ces trois appels forment la séquence de démarrage d'un exécutable par XAM. Les deux premiers sont
+des stubs : l'exécutable n'est donc ni chargé ni protégé comme sur console.
+
+À noter, sans en tirer de conclusion : un journal antérieur montrait aussi `VdDisplayFatalError`
+juste après la création du thread système, sur un run où la séquence allait plus loin. À vérifier si
+ce n'est pas simplement l'ordre des fils qui diffère d'un run à l'autre.
+
 ### Côté Dashboard aussi, la couche D3D n'est jamais atteinte
 
 Instrumentation `DASH_NGPU_DEVCAND=1` (trace de chaque candidat de périphérique D3D) :

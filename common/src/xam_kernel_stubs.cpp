@@ -20,6 +20,9 @@
 #include <rex/hook.h>
 #include <rex/logging.h>
 #include <rex/ppc/context.h>
+#include "dash_xam_runtime.h"
+#include <rex/runtime.h>
+#include <rex/system/kernel_state.h>
 
 namespace {
 
@@ -28,6 +31,7 @@ std::atomic<long> g_etx_calls{0};
 std::atomic<long> g_keystatus_calls{0};
 std::atomic<long> g_nic_calls{0};
 std::atomic<long> g_mtpd_calls{0};
+std::atomic<long> g_xexstart_calls{0};
 
 }  // namespace
 
@@ -92,5 +96,28 @@ REX_HOOK_RAW(__imp__MtpdGetCurrentDevices) {
   (void)base;
   if (++g_mtpd_calls == 1)
     REXLOG_INFO("[net] MtpdGetCurrentDevices : aucun peripherique (liste vide)");
+  ctx.r3.u64 = 0;
+}
+
+// XexStartExecutable(entree) : XAM charge un executif (XexLoadExecutable) puis appelle ceci, puis
+// cree un thread systeme. Sur console le noyau execute la fonction passee en r3. Le stub ne faisait
+// rien : l'executif charge n'etait jamais demarre.
+//
+// On l'execute sur un thread systeme, via l'infrastructure du projet (dash_xam_runtime), qui gere
+// deja le contexte de fil invite et le type de processus attendu par XAM.
+REX_HOOK_RAW(__imp__XexStartExecutable) {
+  const uint32_t entry = ctx.r3.u32;
+  if (++g_xexstart_calls <= 3)
+    REXLOG_INFO("[xex] XexStartExecutable(0x{:08X}) : demarrage sur un fil systeme", entry);
+  if (entry) {
+    if (auto* ks = rex::system::kernel_state()) {
+      dash::xamrt::RunInSystemProcessAsync(ks, [ks, entry] {
+        auto* ts = rex::runtime::ThreadState::Get();
+        if (!ts) return 0;
+        ks->function_dispatcher()->Execute(ts, entry, nullptr, 0);
+        return 0;
+      });
+    }
+  }
   ctx.r3.u64 = 0;
 }
