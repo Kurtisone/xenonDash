@@ -948,7 +948,16 @@ REX_HOOK_RAW(__imp__XamLoaderGetMediaInfo) {
   };
   put(ctx.r3.u32, type);
   put(ctx.r4.u32, title);
-  REXLOG_INFO("[dash] XamLoaderGetMediaInfo -> type={} titre={:08X}", type, title);
+  // Journal borne : en mode XAM le XUI interroge cette fonction en boucle (682 506 appels mesures en
+  // 38 s, un seul thread). Journaliser chaque appel noyait le journal et ralentissait tout.
+  // DASH_TRACE_MEDIA=1 journalise chaque appel, avec le retour (utile pour tracer l'appelant).
+  static std::atomic<long> n{0};
+  const long count = ++n;
+  static const bool trace_all = std::getenv("DASH_TRACE_MEDIA") != nullptr;
+  if (trace_all || count <= 5 || count % 5000 == 0) {
+    REXLOG_INFO("[dash] XamLoaderGetMediaInfo -> type={} titre={:08X} (appel {}{})", type, title,
+                count, trace_all ? "" : " — journal borne, DASH_TRACE_MEDIA=1 pour tout");
+  }
   ctx.r3.u64 = 0;
 }
 
