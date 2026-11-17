@@ -233,6 +233,39 @@ bug de composition ou de Vulkan serait une fausse piste.
 En mode XAM, le Dashboard n'entre **jamais** dans le chargement de son interface : il s'arrête juste
 après `XamLoaderGetMediaInfo` et une notification de média.
 
+### La cause est le chargement de XAM lui-même, pas le mode profil
+
+Test en trois temps, capture d'écran à chaque fois (690 Ko = image, 3 Ko = noir) :
+
+| combinaison | résultat |
+|---|---|
+| mode HLE seul | **image** |
+| `DASH_XAM_MODULE=2` seul, sans mode profil | **noir** |
+| `DASH_XAM_MODULE=2` + interfaces redirigées vers XAM | **noir** |
+
+**Il suffit de charger XAM** pour que le Dashboard cesse d'afficher : ni `DASH_PROFILE_MODE`, ni les
+redirections n'y sont pour quoi que ce soit. C'est plus précis que le diagnostic précédent.
+
+Le chargement est bien asynchrone (`XAM load` sur son propre fil, `RunInSystemProcessAsync`), donc
+ce n'est pas un blocage du fil principal pendant le chargement : la capture est noire dès 4 s et le
+reste à 8 s et 16 s.
+
+### Ce qui, dans le chargement, est déjà correct
+
+Vérifié pas à pas, pour ne pas refaire le travail :
+
+- `XboxHardwareInfo.Flags` passe bien à **`0x220`** (0x20 + 0x200), condition que le code de XAM
+  exige pour lancer son sous-système HUD ;
+- `hud.xex` **est chargé** : `XexLoadImage("hud.xex") -> game:\\flash`, puis
+  `Module 'flash/hud.xex' registered 1133 functions` ;
+- `XamRegisterSysApp` est appelé et servi par XAM recompilé ;
+- `VdRegisterXamGraphicsNotification` est **déjà implémenté** (`kernel_video.cpp`, pas un stub) et il
+  fonctionne : XAM s'enregistre (`0x818A04F8`) puis reçoit le message 2 et le message 1
+  (`VdCallGraphicsNotificationRoutines`).
+
+Autrement dit, XAM démarre, charge le HUD et s'inscrit aux notifications graphiques. Ce qui manque
+est **après** : la couche de dessin n'est jamais atteinte, ni par le Dashboard ni par le HUD.
+
 ### Le HUD de XAM est chargé, mais son D3D n'est jamais appelé
 
 `hud_front.cpp` (le HUD de XAM : fenêtres Xbox, clavier virtuel, création de profil, et de quoi
