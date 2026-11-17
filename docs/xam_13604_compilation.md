@@ -233,6 +233,22 @@ bug de composition ou de Vulkan serait une fausse piste.
 En mode XAM, le Dashboard n'entre **jamais** dans le chargement de son interface : il s'arrête juste
 après `XamLoaderGetMediaInfo` et une notification de média.
 
+### Côté Dashboard aussi, la couche D3D n'est jamais atteinte
+
+Instrumentation `DASH_NGPU_DEVCAND=1` (trace de chaque candidat de périphérique D3D) :
+
+| | candidats device | capture | événements `[ngpu]` |
+|---|---|---|---|
+| sans XAM | `40002200` (plausible, puis retenu) | **1** | 4 |
+| avec XAM | **aucun** | **0** | 1 (le noyau seul) |
+
+Le Dashboard en mode XAM n'appelle donc **même pas** les fonctions D3D crochetées : ce n'est pas un
+problème de capture du périphérique (le candidat oscillerait ou serait rejeté), c'est que le code
+n'arrive jamais à la couche de dessin.
+
+Cela recoupe exactement la mesure faite côté HUD : ni l'un ni l'autre ne dessine, et pour la même
+raison — la chaîne qui mène au dessin n'est pas exécutée.
+
 ### La chaîne de lancement du HUD, remontée jusqu'à son portier
 
 Les adresses PowerPC ne se cherchent pas comme du texte : `0x818A2500` est chargé par `lis` + `addi`,

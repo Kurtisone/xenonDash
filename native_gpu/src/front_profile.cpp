@@ -198,6 +198,19 @@ bool PlausibleDevice(const uint8_t* base, uint32_t device) {
   return fence == 0 || (fence >= 0x10000 && !(fence & 3));
 }
 bool IsDevice(const uint8_t* base, uint32_t device) {
+  // DASH_NGPU_DEVCAND=1 : trace chaque candidat de peripherique D3D. Repond a la question qui
+  // bloque le diagnostic : le device est-il vu sans jamais etre confirme (deux appels identiques
+  // requis), ou pas vu du tout ? Les deux menent a des corrections opposees.
+  static const bool trace_cand = std::getenv("DASH_NGPU_DEVCAND") != nullptr;
+  if (trace_cand) {
+    static uint32_t last = 0;
+    static long n = 0;
+    if (device != last && ++n <= 40) {
+      std::fprintf(stderr, "[ngpu] candidat device %08X (plausible=%d, retenu=%d)\n", device,
+                   PlausibleDevice(base, device) ? 1 : 0, device == g.device ? 1 : 0);
+      last = device;
+    }
+  }
   if (device == g.device) return true;
   if (PlausibleDevice(base, device) && device == g.candidate) {
     std::fprintf(stderr, "[ngpu] D3DDevice capture a %08X\n", device);
