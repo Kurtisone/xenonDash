@@ -233,6 +233,25 @@ bug de composition ou de Vulkan serait une fausse piste.
 En mode XAM, le Dashboard n'entre **jamais** dans le chargement de son interface : il s'arrête juste
 après `XamLoaderGetMediaInfo` et une notification de média.
 
+### La boîte de message bloquante : hypothèse réfutée
+
+L'hypothèse était plausible : `XamShowMessageBoxUI` est **bloquante**, elle est redirigée vers XAM
+depuis le palier N5, et XAM n'affiche rien — le Dashboard attendrait donc indéfiniment.
+
+Test propre cette fois (les tentatives précédentes comparaient des journaux vides), avec
+`DASH_XAM_NOREDIRECT=XamShowMessageBoxUI,XamShowMessageBoxUIEx` :
+
+| | retrait effectif | capture | énumérations de contenu | capture D3D |
+|---|---|---|---|---|
+| sans XAM (référence) | — | **690 625 o** (image) | oui | oui |
+| XAM, MessageBox **non** redirigée | **oui** (`RETIREE` ×2) | **3 073 o** (noir) | **aucune** | **non** |
+
+Le retrait est bien appliqué, et l'écran reste noir. **L'hypothèse est réfutée** : la boîte de
+message n'est pas ce qui bloque le Dashboard. Le HLE répond, et le code ne progresse pas davantage.
+
+C'est la cinquième piste fermée par la mesure, après la composition Vulkan, l'interblocage d'objets
+noyau, le HUD « cassé », le mode profil et le périphérique D3D oscillant.
+
 ### `XexStartExecutable` implémenté : exécuté, mais insuffisant
 
 `XexStartExecutable` était un **stub du SDK** alors que XAM l'appelle sur le chemin du HUD :
