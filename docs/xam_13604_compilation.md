@@ -233,6 +233,29 @@ bug de composition ou de Vulkan serait une fausse piste.
 En mode XAM, le Dashboard n'entre **jamais** dans le chargement de son interface : il s'arrête juste
 après `XamLoaderGetMediaInfo` et une notification de média.
 
+### `sub_818A2500` : la chaîne progresse d'un maillon, puis s'arrête
+
+Instrumentations successives du code généré, exécutées dans `libdash_xam.so` :
+
+| point | résultat |
+|---|---|
+| `xstart` de `xam.xex` | **atteint**, `r3=0x30020000` (hmodule), `r4=1` (DLL_PROCESS_ATTACH) |
+| `sub_81872460` | **atteint** (condition `r4 == 1` remplie) |
+| `sub_818A2500` (boucle d'image du HUD) | **jamais atteint** |
+
+Le maillon `sub_81872460` est donc franchi — c'est nouveau. Mais la chaîne casse ensuite.
+
+Dans `sub_81872460`, `0x81872230` est passé en `r3` à `sub_81891BA8`, et le handle obtenu part dans
+`sub_8188F7C0`. Autrement dit, `sub_81872230` est fourni comme **point d'entrée d'un thread** — c'est
+un thread qui doit l'exécuter, pas un appel direct.
+
+Et `sub_81872230` n'est **jamais appelé directement** dans tout le code recompilé : ni `sub_81872230(ctx)`,
+ni `lis`/`addi` vers cette adresse ailleurs que ce site. Il n'existe que comme valeur.
+
+**Conclusion** : le lancement du sous-système HUD dépend de la création effective d'un thread à partir
+de `sub_81872460`. Le maillon est atteint, la création n'aboutit pas — ou le thread créé ne s'exécute
+pas. C'est le point précis à instrumenter ensuite.
+
 ### La cause de l'erreur fatale : mon propre code
 
 En traçant le statut comparé dans `sub_8187A038` (instrumentation du code généré, exécutée dans
