@@ -147,7 +147,11 @@ REX_HOOK_RAW(__imp__XexLoadExecutable) {
   // sur echec.
   if (ctx.r5.u32 && ctx.r5.u32 < 0xF0000000u) *reinterpret_cast<uint32_t*>(base + ctx.r5.u32) = 0;
   if (ctx.r6.u32 && ctx.r6.u32 < 0xF0000000u) *reinterpret_cast<uint32_t*>(base + ctx.r6.u32) = 0;
-  ctx.r3.u64 = 0xC0000135u;  // STATUS_DLL_NOT_FOUND : honnete, on n'a rien charge
+  // NECESSAIRE : ne PAS renvoyer STATUS_DLL_NOT_FOUND (0xC0000135) ici. Mesure (bissection) : ce
+  // code remonte jusqu'a sub_8187A038, y echoue la comparaison aux statuts toleres (0xC0050005 /
+  // 0xC005000F) et declenche VdDisplayFatalError(0x00012247) — erreur fatale d'affichage, ecran
+  // noir. Un échec « honnête » ici coute donc l'affichage entier.
+  ctx.r3.u64 = 0;
 }
 
 // HalGetPowerUpCause(&etat) : pourquoi la console a demarre (bouton, eject, reveil reseau...).

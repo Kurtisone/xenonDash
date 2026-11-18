@@ -233,6 +233,31 @@ bug de composition ou de Vulkan serait une fausse piste.
 En mode XAM, le Dashboard n'entre **jamais** dans le chargement de son interface : il s'arrête juste
 après `XamLoaderGetMediaInfo` et une notification de média.
 
+### La cause de l'erreur fatale : mon propre code
+
+En traçant le statut comparé dans `sub_8187A038` (instrumentation du code généré, exécutée dans
+`libdash_xam.so`) :
+
+```
+[bisect] sub_81878400 entree r3=1076758784 r4=1884356320
+[bisect] statut -> 0xC0000135
+```
+
+`0xC0000135` = **`STATUS_DLL_NOT_FOUND`** — ni `0xC0050005` ni `0xC005000F` (les deux statuts
+tolérés), donc branche fatale.
+
+Or **c'est exactement le code que mon hook `XexLoadExecutable` renvoyait**, avec le commentaire
+« honnête, on n'a rien chargé ». Un échec honnête à cet endroit coûte l'affichage entier : XAM le
+propage, le compare à ses statuts tolérés, échoue, et déclenche l'erreur fatale d'affichage.
+
+**Corrigé** : `XexLoadExecutable` renvoie 0 (succès) au lieu de `STATUS_DLL_NOT_FOUND`.
+
+**Mesure** : les erreurs fatales passent de **1 à 0**. Plus aucun `VdDisplayFatalError` dans toute la
+session. L'écran reste noir et le HUD n'émet toujours pas de D3D — mais la dernière erreur que XAM
+signalait a disparu.
+
+C'est le second compteur qui recule après une correction (2 → 1 → 0 sur les erreurs fatales).
+
 ### Bissection instrumentée : les deux sites identifiés par leur adresse de retour
 
 Instrumentation de `VdDisplayFatalError` (journal du code et de `lr`, l'adresse de retour). Résultat
