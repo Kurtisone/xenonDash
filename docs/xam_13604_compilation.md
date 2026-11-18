@@ -233,6 +233,31 @@ bug de composition ou de Vulkan serait une fausse piste.
 En mode XAM, le Dashboard n'entre **jamais** dans le chargement de son interface : il s'arrête juste
 après `XamLoaderGetMediaInfo` et une notification de média.
 
+### Les cinq candidats mènent à des threads qui ne sont pas le HUD
+
+Instrumentation des cinq fonctions appelées par `sub_81891478` : `sub_8188F200`, `sub_818908E0`,
+`sub_81890650`, `sub_8188FE08`, `sub_81890440`. Aucune ne contient `ExCreateThread`.
+
+Quatre sont atteintes (`8188F200`, `8188FE08`, `81890440`, `81890650`) ; ce sont des fonctions de
+synchronisation (critical region, spinlock), pas de création.
+
+Le vrai site de création est `sub_8188F6E8`, instrumenté aussi :
+
+```
+[c6] sub_8188F6E8 (cree un thread) r3=0x81890F18 r4=0x402E06A0
+[c6] sub_8188F6E8 (cree un thread) r3=0x81890F18 r4=0x402E06E0
+...
+```
+
+**Il crée bien des threads — mais avec l'entrée `0x81890F18`, pas `0x818A5A08`.** Ce sont les threads
+de `xam`, pas ceux du HUD. Le thread du HUD, lui, est passé à `sub_81891BA8` (qui protège une
+structure) et n'aboutit jamais à une création.
+
+**Conclusion** : le HUD et `xam` utilisent deux mécanismes distincts. `xam` crée ses threads par
+`sub_8188F6E8` → `ExCreateThread` ; le HUD demande le sien par `sub_81891BA8`, qui ne crée rien.
+Le chemin manquant est donc **entre `sub_81891BA8` et une création de thread** — pas dans les cinq
+fonctions testées ici.
+
 ### Le contrôle de privilège n'est pas le verrou
 
 En remontant `sub_81891BA8` (qui protège une structure avec `KeEnterCriticalRegion` et un spinlock,
