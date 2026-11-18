@@ -3,6 +3,7 @@
 #include "dash_app_base.h"
 
 #include <cstdlib>
+#include <string>
 #include <cstring>
 #include <filesystem>
 
@@ -128,7 +129,14 @@ void DashAppBase::OnPostSetup() {
       const bool run_entry = std::string_view(std::getenv("DASH_XAM_MODULE")) == "2";
       auto* resolver = runtime()->export_resolver();
       auto load = [ks, resolver, run_entry]() {
-        auto xam = ks->LoadUserModule("game:\\xam.xex", run_entry);
+        // DASH_XAM_ALT=<nom> : charger un AUTRE module que xam.xex. Experience controlee pour
+        // savoir si c'est le chargement (la machinerie) ou XAM (son contenu) qui coupe
+        // l'affichage : si n'importe quel module produit le meme effet, le coupable est la
+        // machinerie de chargement, pas XAM.
+        std::string module_path = "game:\\xam.xex";
+        if (const char* alt = std::getenv("DASH_XAM_ALT"); alt && *alt)
+          module_path = std::string("game:\\") + alt;
+        auto xam = ks->LoadUserModule(module_path, run_entry);
         REXLOG_INFO("[dash] module xam.xex recompilé : {}", xam ? "chargé" : "ÉCHEC");
         if (xam) dash::xamrt::SetXamImageRange(xam->xex_module()->base_address(), xam->xex_module()->image_size());
         // Palier E : redirection des imports XAM du Dashboard (DASH_XAM_REDIRECT), voir dash_xam_redirect.h.

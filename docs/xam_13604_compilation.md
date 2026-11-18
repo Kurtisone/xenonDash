@@ -233,6 +233,34 @@ bug de composition ou de Vulkan serait une fausse piste.
 En mode XAM, le Dashboard n'entre **jamais** dans le chargement de son interface : il s'arrête juste
 après `XamLoaderGetMediaInfo` et une notification de média.
 
+### Expérience : charger un autre module que xam.xex
+
+Objectif : distinguer « c'est le chargement (la machinerie) qui casse l'affichage » de « c'est XAM
+(son contenu) ». Ajout de `DASH_XAM_ALT=<nom>` qui charge un autre module à la place.
+
+| module demandé | trouvé | capture |
+|---|---|---|
+| *(aucun)* | — | **690 625 o** (image) |
+| `hud.xex` | **non** (`File not found: game:\\hud.xex`) | **690 625 o** (image) |
+| `vk.xex` | **non** (`File not found: game:\\vk.xex`) | **690 625 o** (image) |
+
+Ces deux-là ne sont pas trouvés (ils sont dans `assets/flash/`, pas à la racine de `game:`) : rien
+n'est chargé, donc l'image reste — ce qui ne prouvait rien de plus.
+
+**Le test qui tranche**, avec un module réellement résolvable :
+
+| module demandé | trouvé | capture |
+|---|---|---|
+| `flash\hud.xex` | **oui** (`registered 1133 functions`) | **690 625 o** (image) |
+
+**La machinerie de chargement n'est donc pas en cause.** Charger un vrai module de 1133 fonctions,
+avec tout ce que cela implique (allocation, registre, imports), **laisse l'affichage intact**. C'est
+spécifiquement `xam.xex` qui le coupe.
+
+Le problème est donc dans ce que `xam.xex` *fait* — pas dans le fait de le charger. Cela recadre la
+recherche : ce sont ses appels noyau et son initialisation qu'il faut regarder, ce que la suite de ce
+document décrit.
+
 ### La boîte de message bloquante : hypothèse réfutée
 
 L'hypothèse était plausible : `XamShowMessageBoxUI` est **bloquante**, elle est redirigée vers XAM
