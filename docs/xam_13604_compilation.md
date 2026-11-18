@@ -233,6 +233,27 @@ bug de composition ou de Vulkan serait une fausse piste.
 En mode XAM, le Dashboard n'entre **jamais** dans le chargement de son interface : il s'arrête juste
 après `XamLoaderGetMediaInfo` et une notification de média.
 
+### Correction de modèle : `sub_81891BA8` n'est pas la machinerie du HUD
+
+J'ai vérifié trois choses qui invalident mon modèle précédent :
+
+1. **`sub_81891BA8` est appelée depuis plus de 60 sites** dans tout `xam.xex` — ce n'est pas une
+   fonction du HUD, c'est un **utilitaire générique de publication d'événements**.
+2. **Aucun site `ExCreateThread` ne référence la zone `0x818A`** (vérifié sur les 8 sites).
+3. **L'inventaire des threads créés ne contient que des entrées en `0x922...`** (code du Dashboard),
+   jamais `0x818A5A08`.
+
+Et `0x818A5A08` n'est pas un point d'entrée de thread : il est **rangé dans une structure d'état**
+(`stw r30,48(r31)` dans `sub_81891478`), qui est ensuite traitée par une machine à états
+(`r11 & 0x1F` = 1, 2, 4...).
+
+**Conséquence** : ma piste « la chaîne casse à la création du thread HUD » était mal posée. Le HUD
+n'a pas de thread à créer par ce chemin — il s'enregistre comme gestionnaire d'événements, et c'est
+un thread **déjà existant** qui devrait le servir.
+
+Il faut donc chercher ailleurs : quel thread existant consomme cette structure d'état, et pourquoi il
+ne le fait pas.
+
 ### Les cinq candidats mènent à des threads qui ne sont pas le HUD
 
 Instrumentation des cinq fonctions appelées par `sub_81891478` : `sub_8188F200`, `sub_818908E0`,
