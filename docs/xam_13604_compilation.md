@@ -233,6 +233,32 @@ bug de composition ou de Vulkan serait une fausse piste.
 En mode XAM, le Dashboard n'entre **jamais** dans le chargement de son interface : il s'arrête juste
 après `XamLoaderGetMediaInfo` et une notification de média.
 
+### Le contrôle de privilège n'est pas le verrou
+
+En remontant `sub_81891BA8` (qui protège une structure avec `KeEnterCriticalRegion` et un spinlock,
+mais **ne crée aucun thread**) jusqu'à `sub_81891478`, on trouve un appel à
+`XexCheckExecutablePrivilege(priv=1)` avant le lancement.
+
+L'hypothèse était solide : le SDK accorde le privilège seulement si `HEADER_SYSTEM_FLAGS` du XEX
+contient le bit demandé, et ces en-têtes sont **chiffrés** dans les fichiers fournis. Un échec
+expliquerait que le thread ne soit jamais créé.
+
+**Test A/B** : hook installé pour forcer `XexCheckExecutablePrivilege` à renvoyer 1.
+
+| mesure | résultat |
+|---|---|
+| privilèges demandés dans la session | `priv=10`, `priv=1`, `priv=14`, `priv=2` |
+| forçage actif (`priv=1` → 1) | oui |
+| thread HUD (`sub_818A5A08`) exécuté | **non** |
+| appel D3D du HUD | **aucun** |
+
+**Hypothèse réfutée** : le privilège n'est pas ce qui bloque. Le hook a été retiré (il aurait faussé
+le comportement, et le SDK reprend la main).
+
+Le chemin de création reste donc à trouver ailleurs : `sub_81891478` appelle ensuite `sub_8188F200`,
+`sub_818908E0`, `sub_81890650`, `sub_8188FE08`, `sub_81890440` — cinq candidats, dont l'un devrait
+mener à `ExCreateThread`.
+
 ### Le thread du HUD est demandé, mais n'est jamais exécuté
 
 Instrumentation des trois points chauds de `sub_81872460` :
