@@ -233,6 +233,34 @@ bug de composition ou de Vulkan serait une fausse piste.
 En mode XAM, le Dashboard n'entre **jamais** dans le chargement de son interface : il s'arrête juste
 après `XamLoaderGetMediaInfo` et une notification de média.
 
+### Bissection instrumentée : les deux sites identifiés par leur adresse de retour
+
+Instrumentation de `VdDisplayFatalError` (journal du code et de `lr`, l'adresse de retour). Résultat
+sans ambiguïté, **les deux sites tirent** :
+
+| `lr` | site | code |
+|---|---|---|
+| `0x81872278` | `sub_81872230` | `0x00012348` |
+| `0x8187A2F8` | `sub_8187A038` | `0x00012247` |
+
+**Et la polarité du premier site était l'inverse de ce que j'avais lu.** Le code recompilé dit :
+
+```
+bl sub_81892A60        ; renvoie le bit 0 de l'octet 4 de HalGetPowerUpCause
+clrlwi. r11,r3,24
+beq loc_81872298       ; si 0 -> SAUTE l'erreur
+<erreur fatale>
+```
+
+Autrement dit : bit à **0** = pas d'erreur ; bit à **1** = erreur fatale. Mon implémentation
+précédente mettait 1 — elle **provoquait** l'erreur qu'elle prétendait éviter. Corrigé (bit à 0).
+
+**Mesure après correction** : les erreurs fatales passent de **2 à 1**. Celle du premier site a bien
+disparu. C'est la première fois qu'une correction fait reculer un compteur mesuré.
+
+Reste celle de `sub_8187A038` (`0x12247`), qui est une machine à états comparant un statut reçu à des
+codes `0xC005xxxx` (domaine vidéo).
+
 ### Bissection : `HalGetPowerUpCause`, une piste sérieuse qui n'aboutit pas
 
 Deux sites appellent `VdDisplayFatalError` (« erreur fatale d'affichage ») dans `xam.xex` :

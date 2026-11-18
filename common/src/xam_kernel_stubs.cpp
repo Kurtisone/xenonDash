@@ -169,8 +169,12 @@ REX_HOOK_RAW(__imp__HalGetPowerUpCause) {
     //                d'affichage (voir sub_81892A60 dans le code recompilé).
     uint8_t* s = reinterpret_cast<uint8_t*>(base + out);
     for (int i = 0; i < 8; ++i) s[i] = 0;
+    // ATTENTION a la polarite, verifiee dans le code recompilé (sub_81872230) :
+    //   bl sub_81892A60 ; clrlwi. r11,r3,24 ; beq loc_81872298 ; <errata fatal>
+    // c'est-a-dire : si sub_81892A60() == 0, on SAUTE l'erreur. Le bit doit donc rester a 0.
+    // Mettre 1 ici PROVOQUE VdDisplayFatalError — erreur que j'ai commise d'abord.
     s[0] = 1;
-    s[4] = 1;
+    s[4] = 0;
   }
   if (++g_powerup_calls <= 3)
     REXLOG_INFO("[hal] HalGetPowerUpCause(0x{:08X}) : mise sous tension normale, octets 0-7 = "
@@ -179,5 +183,17 @@ REX_HOOK_RAW(__imp__HalGetPowerUpCause) {
                 out ? *(base + out + 2) : 0, out ? *(base + out + 3) : 0,
                 out ? *(base + out + 4) : 0, out ? *(base + out + 5) : 0,
                 out ? *(base + out + 6) : 0, out ? *(base + out + 7) : 0);
+  ctx.r3.u64 = 0;
+}
+
+// VdDisplayFatalError(code) : XAM signale une erreur fatale d'affichage. Deux sites l'appellent dans
+// xam.xex (0x81872230 : code 0x12348 ; 0x8187A038 : code 0x12237). On ne l'implemente pas — on
+// JOURNALISE, pour savoir lequel tire et avec quel code. C'est la mesure qui manquait pour
+// distinguer les deux chemins.
+REX_HOOK_RAW(__imp__VdDisplayFatalError) {
+  (void)base;
+  // Journal simple (pas de formatage) : le but est de savoir si ce hook est appele du tout.
+  REXLOG_WARN("[vd] VdDisplayFatalError appele (voir code et lr ci-dessous)");
+  REXLOG_WARN("[vd]   code={} lr={}", uint32_t(ctx.r3.u32), uint32_t(ctx.lr));
   ctx.r3.u64 = 0;
 }
