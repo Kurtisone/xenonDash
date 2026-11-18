@@ -233,6 +233,28 @@ bug de composition ou de Vulkan serait une fausse piste.
 En mode XAM, le Dashboard n'entre **jamais** dans le chargement de son interface : il s'arrête juste
 après `XamLoaderGetMediaInfo` et une notification de média.
 
+### Le thread du HUD est demandé, mais n'est jamais exécuté
+
+Instrumentation des trois points chauds de `sub_81872460` :
+
+| point | mesure |
+|---|---|
+| `sub_81891BA8` (création de thread) | appelée **plusieurs fois** |
+| entrées passées en `r3` | `0x81872180`, `0x8185C5E0`, **`0x818A5A08`** |
+| `sub_8188F7C0` (suite) | appelée |
+| **`sub_818A5A08`** (routine du thread HUD) | **jamais exécutée** |
+
+`0x818A5A08` est bien dans la zone HUD (`0x818A...`) et existe comme fonction. Elle est donc
+**demandée comme point d'entrée de thread**, mais son code ne s'exécute jamais.
+
+Note de méthode : mon calcul `lis`/`addi` d'origine donnait `0x81872230` alors que `r3` valait
+`0x81872180` — 176 octets d'écart. L'erreur venait de l'ajustement de signe sur `lis` ; seules les
+valeurs **mesurées à l'exécution** sont fiables, pas les adresses recalculées à la main.
+
+**Conclusion** : la chaîne ne casse plus au niveau du code XAM — qui demande bien le thread — mais au
+niveau de la **création/exécution du thread invité**. C'est là qu'il faut regarder ensuite
+(`sub_81891BA8` et son chemin vers `ExCreateThread`).
+
 ### `sub_818A2500` : la chaîne progresse d'un maillon, puis s'arrête
 
 Instrumentations successives du code généré, exécutées dans `libdash_xam.so` :
