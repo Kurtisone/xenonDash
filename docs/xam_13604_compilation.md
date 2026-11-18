@@ -233,6 +233,30 @@ bug de composition ou de Vulkan serait une fausse piste.
 En mode XAM, le Dashboard n'entre **jamais** dans le chargement de son interface : il s'arrête juste
 après `XamLoaderGetMediaInfo` et une notification de média.
 
+### Bissection : `HalGetPowerUpCause`, une piste sérieuse qui n'aboutit pas
+
+Deux sites appellent `VdDisplayFatalError` (« erreur fatale d'affichage ») dans `xam.xex` :
+
+| site | code d'erreur | condition |
+|---|---|---|
+| `sub_81872230` | `0x00012348` | `sub_81892A60()` renvoie 0 |
+| `sub_8187A038` | `0x00012237` | machine à états (`r30` ≠ `r29` et ≠ `r24`) |
+
+`sub_81892A60` lit l'octet à l'offset 4 d'une variable globale (`0x81BFB854`) et renvoie son bit 0.
+Or cette variable est celle que remplit **`HalGetPowerUpCause`**, un **stub du SDK** : la mémoire
+restait à zéro, donc le bit valait 0, donc XAM concluait à une panne d'affichage. La chaîne semblait
+donc complète et la correction évidente.
+
+**Implémenté** : `HalGetPowerUpCause` écrit une mise sous tension normale (octet 0 = 1, octet 4 = 1).
+Mesure : la structure est bien écrite — `01 00 00 00 01 00 00 00`, bit 0 de l'octet 4 armé.
+
+**Résultat : `VdDisplayFatalError` est toujours appelé et l'écran reste noir.** Ce n'était donc pas
+cette condition, ou pas seulement elle. L'autre site (`sub_8187A038`, machine à états) reste un
+candidat, ainsi que des appels venant d'ailleurs.
+
+Cinquième instrumentation utile au passage : `HalGetPowerUpCause` répond désormais correctement, ce
+qui reste juste indépendamment de l'écran.
+
 ### Expérience : charger un autre module que xam.xex
 
 Objectif : distinguer « c'est le chargement (la machinerie) qui casse l'affichage » de « c'est XAM

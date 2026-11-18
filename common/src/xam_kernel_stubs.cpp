@@ -32,6 +32,7 @@ std::atomic<long> g_keystatus_calls{0};
 std::atomic<long> g_nic_calls{0};
 std::atomic<long> g_mtpd_calls{0};
 std::atomic<long> g_xexstart_calls{0};
+std::atomic<long> g_powerup_calls{0};
 
 }  // namespace
 
@@ -147,4 +148,36 @@ REX_HOOK_RAW(__imp__XexLoadExecutable) {
   if (ctx.r5.u32 && ctx.r5.u32 < 0xF0000000u) *reinterpret_cast<uint32_t*>(base + ctx.r5.u32) = 0;
   if (ctx.r6.u32 && ctx.r6.u32 < 0xF0000000u) *reinterpret_cast<uint32_t*>(base + ctx.r6.u32) = 0;
   ctx.r3.u64 = 0xC0000135u;  // STATUS_DLL_NOT_FOUND : honnete, on n'a rien charge
+}
+
+// HalGetPowerUpCause(&etat) : pourquoi la console a demarre (bouton, eject, reveil reseau...).
+// Remplit une structure que XAM lit ensuite octet par octet.
+//
+// Pourquoi c'est important : juste apres l'appel, XAM teste le bit 0 de l'octet a l'offset 4
+// (sub_81892A60 : lbz r11,4(r11) puis clrlwi r3,r11,31). Si ce bit est a 0, XAM appelle
+// VdDisplayFatalError(0x00012348) — « erreur fatale d'affichage » — mesure dans le journal.
+//
+// Le stub du SDK ne remplissait rien : la memoire restait a zero, donc le bit valait 0 et XAM
+// croyait a une panne d'affichage. On declare ici un demarrage normal (mise sous tension par
+// l'utilisateur), ce qui est la verite sur un PC.
+REX_HOOK_RAW(__imp__HalGetPowerUpCause) {
+  const uint32_t out = ctx.r3.u32;
+  if (out && out < 0xF0000000u) {
+    // Structure de 8 octets remise a zero, puis :
+    //   octet 0    : type de mise sous tension = 1 (bouton / mise sous tension normale)
+    //   octet 4    : drapeaux ; le bit 0 doit etre a 1 pour que XAM ne signale pas d'erreur
+    //                d'affichage (voir sub_81892A60 dans le code recompilé).
+    uint8_t* s = reinterpret_cast<uint8_t*>(base + out);
+    for (int i = 0; i < 8; ++i) s[i] = 0;
+    s[0] = 1;
+    s[4] = 1;
+  }
+  if (++g_powerup_calls <= 3)
+    REXLOG_INFO("[hal] HalGetPowerUpCause(0x{:08X}) : mise sous tension normale, octets 0-7 = "
+                "{:02X} {:02X} {:02X} {:02X} {:02X} {:02X} {:02X} {:02X}",
+                out, out ? *(base + out + 0) : 0, out ? *(base + out + 1) : 0,
+                out ? *(base + out + 2) : 0, out ? *(base + out + 3) : 0,
+                out ? *(base + out + 4) : 0, out ? *(base + out + 5) : 0,
+                out ? *(base + out + 6) : 0, out ? *(base + out + 7) : 0);
+  ctx.r3.u64 = 0;
 }
