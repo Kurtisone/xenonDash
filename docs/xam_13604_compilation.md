@@ -233,6 +233,43 @@ bug de composition ou de Vulkan serait une fausse piste.
 En mode XAM, le Dashboard n'entre **jamais** dans le chargement de son interface : il s'arrête juste
 après `XamLoaderGetMediaInfo` et une notification de média.
 
+### Percée : le HUD atteint enfin son D3D
+
+La chaîne d'événements complète, tracée depuis `sub_81872460` (atteint) :
+
+```
+sub_81872460 -> sub_8185C830 -> sub_818A5A98 -> publie 0x818A5A08
+```
+
+Instrumentation de `sub_8185C830` et `sub_818A5A98` : **les deux sont atteints**. La chaîne s'exécute.
+
+Et pour la première fois depuis le début du chantier, le HUD **appelle son D3D** :
+
+```
+[hud] D3D 2099 #1 addr=818A1368 (kFrame)
+[hud] D3D 2099 #2 addr=819C90D8 (kDrawVerticesUP)
+[hud] D3D 2099 #3 addr=819C8E38 (kBeginVertices)
+[hud] noyau ngpu_core sur 'llvmpipe ...' (HUD de XAM)   <- noyau propre du HUD initialisé
+```
+
+C'était mesuré à **zéro** pendant six sessions. Le HUD est donc vivant, il soumet des commandes et
+initialise son propre noyau de rendu.
+
+### Ce qui manque encore
+
+| | mesure |
+|---|---|
+| appels D3D du HUD | **4** (kFrame, kDrawVerticesUP, kBeginVertices) |
+| `HudComposite` compose | **non** (`HUD affiche` jamais émis) |
+| image présentée par le Dashboard | **0** |
+| `D3DDevice` du Dashboard capturé | **0** |
+
+Deux problèmes distincts subsistent : le HUD ne produit pas encore d'image complète (`kSubmit` jamais
+atteint, donc `VdSetSystemCommandBuffer` muet), et le Dashboard ne présente toujours rien — sans
+présentation, `HudComposite` n'est même pas appelé.
+
+**C'est un progrès réel** : la couche HUD n'est plus muette, elle est amorcée.
+
 ### Correction de modèle : `sub_81891BA8` n'est pas la machinerie du HUD
 
 J'ai vérifié trois choses qui invalident mon modèle précédent :
