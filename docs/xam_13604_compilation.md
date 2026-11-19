@@ -233,6 +233,27 @@ bug de composition ou de Vulkan serait une fausse piste.
 En mode XAM, le Dashboard n'entre **jamais** dans le chargement de son interface : il s'arrête juste
 après `XamLoaderGetMediaInfo` et une notification de média.
 
+### Comparaison mesurée : la boucle de rendu n'existe pas en mode XAM
+
+Instrumentation de la séquence de rendu du Dashboard (`DASH_NGPU_TRACE_SEQ=1`), qui trace l'ordre
+réel des appels : `ClearF`, `Resolve`, `Swap`, `BeginTiling`, `DrawVertices`.
+
+| mode | séquence observée |
+|---|---|
+| **HLE** (affiche) | `ClearF` → `Resolve` → `Swap` → `ClearF` → `Resolve` → `Swap` → ... (boucle) |
+| **XAM** (noir) | **rien** — pas même un `ClearF` |
+
+**Ce n'est donc pas le `Swap` qui manque : c'est toute la boucle d'image.** En mode XAM, le Dashboard
+n'émet **aucune** fonction D3D. Le noyau `ngpu_core` s'initialise, puis le silence complet.
+
+C'est la mesure la plus précise obtenue sur ce problème : elle déplace la question de « pourquoi pas
+de présentation » à « pourquoi la boucle de rendu n'est jamais entrée ». Ce sont deux choses
+différentes, et la seconde est plus en amont.
+
+Le fait que le journal s'arrête à la même hauteur dans les deux modes (énumération de contenu) alors
+que la séquence D3D, elle, diverge totalement, indique que le Dashboard *croit* avoir fini son
+démarrage — mais n'entre jamais dans sa boucle de rendu.
+
 ### La cause racine : le Dashboard n'atteint jamais son `Swap`
 
 Le profil du Dashboard définit `NGP_Swap = 0x9218EAB0`, avec la mention « appelle `VdSwap` ».

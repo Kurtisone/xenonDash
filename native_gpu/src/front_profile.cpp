@@ -44,6 +44,18 @@
 #include "write_watcher.h"
 #include NGPU_PROFILE_HEADER
 
+// DASH_NGPU_TRACE_SEQ=1 : trace la sequence de rendu du Dashboard, dans l'ordre. C'est la mesure
+// qui manquait : le Dashboard n'atteint jamais son Swap, donc aucune image n'est presentee. Il faut
+// savoir jusqu'ou sa boucle d'image va (BeginTiling, Resolve, Draw...).
+namespace {
+void TraceSeq(const char* what) {
+  static const bool on = std::getenv("DASH_NGPU_TRACE_SEQ") != nullptr;
+  if (!on) return;
+  static std::atomic<long> n{0};
+  if (++n <= 40) std::fprintf(stderr, "[seq] %s\n", what);
+}
+}  // namespace
+
 namespace ngpu {
 // Superposition de l'overlay du HUD de XAM (hud_front.cpp, palier N2) : symbole faible, absent des builds sans HUD recompile.
 bool HudComposite(uint32_t* pixels, uint32_t w, uint32_t h) __attribute__((weak));
@@ -714,6 +726,7 @@ static void StreamDraw(uint8_t* base, bool indexed, uint32_t dev, uint32_t prim,
   ExecuteDraw(base, vs, ps, g.shadow, g.vs_copy.data(), uint32_t(g.vs_copy.size()), src, CapturePlanes(base).v);
 }
 NGPU_HOOK(NGP_DrawVertices) {
+  TraceSeq("DrawVertices");
   const uint32_t dev = ctx.r3.u32, prim = ctx.r4.u32, a = ctx.r5.u32, n = ctx.r6.u32;
   NGPU_ORIG(NGP_DrawVertices);
   StreamDraw(base, false, dev, prim, a, 0, n);
@@ -731,6 +744,7 @@ NGPU_HOOK(NGP_DrawIndexedVertices) {
 // ----------------------------------------------------------------------------------------------------------
 // ClearF(dev, drapeaux, rect*, couleur* (4 float grand-boutistes), f1 = z, r8 = stencil)
 NGPU_HOOK(NGP_ClearF) {
+  TraceSeq("ClearF");
   const uint32_t dev = ctx.r3.u32, flags = ctx.r4.u32, rect = ctx.r5.u32, color = ctx.r6.u32, stencil = ctx.r8.u32;
   const double z = ctx.f1.f64;
   ngpu::NullGpuAttach(dev);
@@ -759,6 +773,7 @@ NGPU_HOOK(NGP_ClearF) {
 }
 // Resolve public (dev, drapeaux, rect source*, texture, point destination*, ..., f1 = z de remise a zero) : enveloppe de 921A57B8.
 NGPU_HOOK(NGP_Resolve) {
+  TraceSeq("Resolve");
   const uint32_t dev = ctx.r3.u32, flags = ctx.r4.u32, rect = ctx.r5.u32, point = ctx.r7.u32;
   const double z = ctx.f1.f64;
   ngpu::NullGpuAttach(dev);
@@ -792,6 +807,7 @@ NGPU_HOOK(NGP_Resolve) {
 }
 // BeginTiling : non suivi (rendu sans tuiles) ; l'effacement qu'il emet passe par ClearF.
 NGPU_HOOK(NGP_BeginTiling) {
+  TraceSeq("BeginTiling");
   ++g.tiling;
   if (Evlog() && g.tiling <= 5) std::fprintf(stderr, "[ev] BeginTiling flags=%X count=%u\n", ctx.r4.u32, ctx.r5.u32);
   return false;
@@ -799,6 +815,7 @@ NGPU_HOOK(NGP_BeginTiling) {
 
 // Swap : soumet l'image, recupere celle terminee (le noyau a une image de retard) et la presente.
 NGPU_HOOK(NGP_Swap) {
+  TraceSeq("Swap");
   // DASH_NGPU_TRACE_SWAP=1 : trace le Swap du Dashboard. Sans lui, le presentateur ne recoit
   // aucune image — d'ou un ecran noir meme quand le HUD dessine. Sert a savoir si le Dashboard
   // atteint sa fonction de presentation (0x9218EAB0, qui appelle VdSwap).
