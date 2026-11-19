@@ -233,6 +233,29 @@ bug de composition ou de Vulkan serait une fausse piste.
 En mode XAM, le Dashboard n'entre **jamais** dans le chargement de son interface : il s'arrête juste
 après `XamLoaderGetMediaInfo` et une notification de média.
 
+### La cause racine : le Dashboard n'atteint jamais son `Swap`
+
+Le profil du Dashboard définit `NGP_Swap = 0x9218EAB0`, avec la mention « appelle `VdSwap` ».
+Instrumentation de ce crochet (`DASH_NGPU_TRACE_SWAP=1`) :
+
+| | mesure |
+|---|---|
+| `NGP_Swap` du Dashboard atteint | **jamais** |
+| `VdSwap` appelé | **jamais** |
+| image présentée | **0** |
+| `HudComposite` appelé | **jamais** (besoin d'une présentation) |
+
+**C'est la cause racine de l'écran noir.** Sans `Swap`, aucune image n'est produite ; sans image,
+`HudComposite` n'est jamais invoqué — donc même un HUD qui dessine (mesuré : 4 appels D3D dans une
+session) ne peut rien superposer.
+
+Cela explique d'un coup pourquoi toutes les corrections précédentes n'ont pas éclairé l'écran :
+elles agissaient en aval d'un point qui n'est jamais franchi.
+
+**Prochaine cible, précise** : pourquoi le Dashboard n'atteint pas `0x9218EAB0`. Sa boucle de rendu
+s'arrête avant la fin d'image — le point à instrumenter est la séquence qui précède ce `Swap`
+(`kFrame`, `kBeginVertices`, `kDrawVerticesUP` du Dashboard, pas du HUD).
+
 ### Percée : le HUD atteint enfin son D3D
 
 La chaîne d'événements complète, tracée depuis `sub_81872460` (atteint) :

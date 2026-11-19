@@ -799,6 +799,13 @@ NGPU_HOOK(NGP_BeginTiling) {
 
 // Swap : soumet l'image, recupere celle terminee (le noyau a une image de retard) et la presente.
 NGPU_HOOK(NGP_Swap) {
+  // DASH_NGPU_TRACE_SWAP=1 : trace le Swap du Dashboard. Sans lui, le presentateur ne recoit
+  // aucune image — d'ou un ecran noir meme quand le HUD dessine. Sert a savoir si le Dashboard
+  // atteint sa fonction de presentation (0x9218EAB0, qui appelle VdSwap).
+  if (std::getenv("DASH_NGPU_TRACE_SWAP")) {
+    static std::atomic<long> n{0};
+    if (++n <= 5) std::fprintf(stderr, "[swap] NGP_Swap atteint (%ld)\n", n.load());
+  }
   const uint32_t dev = ctx.r3.u32;
   ngpu::NullGpuAttach(dev);
   {

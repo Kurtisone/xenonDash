@@ -21,6 +21,7 @@
 #include <rex/logging.h>
 #include <rex/ppc/context.h>
 #include "dash_xam_runtime.h"
+#include "kernel_sdk_fn.h"
 #include <rex/runtime.h>
 #include <rex/system/kernel_state.h>
 
@@ -33,6 +34,7 @@ std::atomic<long> g_nic_calls{0};
 std::atomic<long> g_mtpd_calls{0};
 std::atomic<long> g_xexstart_calls{0};
 std::atomic<long> g_powerup_calls{0};
+std::atomic<long> g_vdswap_calls{0};
 
 }  // namespace
 
@@ -200,4 +202,16 @@ REX_HOOK_RAW(__imp__VdDisplayFatalError) {
   REXLOG_WARN("[vd] VdDisplayFatalError appele (voir code et lr ci-dessous)");
   REXLOG_WARN("[vd]   code={} lr={}", uint32_t(ctx.r3.u32), uint32_t(ctx.lr));
   ctx.r3.u64 = 0;
+}
+
+// VdSwap : appel par lequel le code invite presente une image. Sans lui, le presentateur natif ne
+// recoit jamais d'image — d'ou un ecran noir meme quand le HUD dessine. Observation seule : on note
+// l'appel, puis on rend la main au SDK (qui fait le travail de presentation).
+REX_HOOK_RAW(__imp__VdSwap) {
+  // On COMPTE, puis on laisse le SDK presenter : le remplacer sans l'appeler supprimerait
+  // l'affichage au lieu de l'observer.
+  static PPCFunc* sdk = dash::SdkFunction("__imp__VdSwap");
+  if (++g_vdswap_calls <= 6)
+    REXLOG_INFO("[swap] VdSwap appele (r3=0x{:08X})", ctx.r3.u32);
+  if (sdk) sdk(ctx, base);
 }
