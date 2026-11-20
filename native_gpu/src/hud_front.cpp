@@ -667,8 +667,11 @@ bool HudComposite(uint32_t* pixels, uint32_t w, uint32_t h) {
   const uint32_t ow = g_overlay.w, oh = g_overlay.h;
   const uint8_t* src = g_overlay.rgba.data();
   const float dim = g_overlay.dim;
-  // Le fond atténué ne s'applique qu'a la zone de la boite (avec une marge), pas a tout l'ecran :
-  // c'est l'attenuation demandee par le titre SOUS la boite, pas un voile sur le Dashboard.
+  // Fond atténué : c'est l'ARRIERE-PLAN qui est assombri, pas la boite. Le menu du Dashboard est
+  // multiplie par le facteur partout SAUF dans la zone de la boite, qui reste nette. Premiere
+  // version : j'appliquais l'attenuation DANS la boite — l'inverse de ce qu'une interface systeme
+  // fait, et l'inverse de ce que l'utilisateur attend (« l'arriere plan doit etre assombri, pas la
+  // boite de dialogue »).
   const bool has_box = g_overlay.has_box;
   const float sx = w ? float(ow) / float(w) : 1.0f, sy = h ? float(oh) / float(h) : 1.0f;
   const int bx0 = has_box ? std::max(0, int(g_overlay.box_x0 / (sx ? sx : 1.0f)) - 2) : 0;
@@ -693,7 +696,8 @@ bool HudComposite(uint32_t* pixels, uint32_t w, uint32_t h) {
       uint32_t& p = pixels[size_t(y) * w + x];
       // fond atténué : l'image du Dashboard est multipliee par le facteur avant la superposition,
       // uniquement dans la zone de la boite (voir bx0..by1 ci-dessus).
-      if (dim < 1.0f && int(x) >= bx0 && int(x) <= bx1 && int(y) >= by0 && int(y) <= by1) {
+      const bool dans_la_boite = int(x) >= bx0 && int(x) <= bx1 && int(y) >= by0 && int(y) <= by1;
+      if (dim < 1.0f && !dans_la_boite) {
         const float r0 = (p & 1023) * dim, g0 = ((p >> 10) & 1023) * dim, b0 = ((p >> 20) & 1023) * dim;
         p = (p & 0xC0000000u) | uint32_t(b0 + 0.5f) << 20 | uint32_t(g0 + 0.5f) << 10 | uint32_t(r0 + 0.5f);
       }

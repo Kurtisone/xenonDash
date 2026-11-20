@@ -1793,3 +1793,114 @@ dessin de ce compositeur, pas une interface demandée par le Dashboard.
 Prochaine mesure, si besoin d'aller plus loin : dans `sub_819BD640`, identifier ce qui décide
 d'afficher la barre et l'anneau (quel état il lit), pour savoir s'il existe une condition à remplir
 côté hôte pour qu'il ne les dessine pas.
+
+## 2026-11-20 (soir) : la boîte du démarrage est une vraie XamShowMessageBoxUI — chaîne mesurée
+
+### D'abord, une correction : mon journal du portier était doublement faux
+
+La ligne `[guidept] portier entre, lr=8189F0F4 user=2` du journal utilisateur ne disait pas ce que
+j'en avais dit. Deux défauts d'instrumentation (corrigés) :
+
+1. Le journal était placé **après** le `bl __imp__KeGetCurrentProcessType` du portier
+   (`sub_8189F0D0`). À cet endroit `ctx.lr` vaut **toujours** 0x8189F0F4 (l'adresse de retour de
+   cet appel interne) — il ne disait rien de l'appelant du portier.
+2. `ctx.r3` à cet endroit est la **valeur de retour** de `KeGetCurrentProcessType`, pas un index
+   d'utilisateur. « user=2 » = type de processus 2 (le processus système — exact pour un
+   Dashboard), pas « l'utilisateur 2 ».
+
+Il n'y a donc **aucun** appel au portier « pour l'utilisateur 2 ». Le portier est entré au
+démarrage, le test de processus passe, point. L'instrumentation est déplacée **à l'entrée** de la
+fonction (`[porte] entree lr=… r3=…`), où `lr` est l'appelant réel et `r3` l'argument réel.
+
+### Qui appelle le portier au démarrage (mesuré, Xvfb 12 s, variante -xam, HUD actif)
+
+```
+[porte] entree lr=818948C8 r3=0          (×3, tôt : sub_81894848, type d'interface 0)
+[porte] entree lr=8189A580 r3=3          (×2 : sub_8189A3C0 = XamShowMessageBoxUI !)
+```
+
+- Le portier est partagé : 10 fonctions de la famille `XamShow*UI` l'appellent (statique, généré).
+  Son argument n'est **pas** un utilisateur : c'est un **type d'interface**. `XamShowMessageBoxUI`
+  passe `3 + (bit13 des drapeaux ? 2 : 0)` ; portier rend 0 = refus (r3=5 ERROR_ACCESS_DENIED),
+  non nul = autorisé.
+- `sub_81894848` est appelée au démarrage avec des valeurs façon statuts (0x8000000F, 0x80000002,
+  0x8000000E) et notifie l'interface (type 0). On la retrouve **dans le chargeur de langue**
+  (voir plus bas) : c'est la notification « état de l'interface » du démarrage.
+- **`sub_81898630` (le Guide) n'apparaît pas** : aucun `[porte]` avec lr=81898664 au démarrage.
+  Cohérent avec les mesures précédentes (RequestGuide = 0 appel).
+
+### La boîte du démarrage : deux XamShowMessageBoxUI réelles, au contenu vide
+
+Instrumentation de l'entrée de `sub_8189A3C0` (`[msgbox]`, lr + titre/texte UTF-16) :
+
+```
+[msgbox] entree lr=818B5B58 user=255 boutons=1 titre="" texte=""
+[msgbox] entree lr=8189CD28 user=255 boutons=1 titre="" texte=""
+```
+
+Deux demandes **réelles** de boîte de message au démarrage (juste avant l'image 1 du HUD, puis
+avant l'image 2 — c'est elle qui est dessinée « barre + anneau, sans texte »). user=255 (aucun
+utilisateur), un bouton, titre et texte **vides**. La boîte observée à l'écran est donc une boîte
+de message XAM dont les chaînes localisées sont absentes — pas un indicateur d'activité distinct.
+Cela explique aussi pourquoi G ne la ferme pas : elle ouvre le Guide, pas une boîte.
+
+Les deux chaînes d'appel, mesurées par instrumentation d'entrée en cascade :
+
+```
+pompe sub_818905B0  (exécute via bctrl le rappel stocké à [objet+48], sous verrou sub_8188F200)
+  ├─> sub_818765A8(id=0x00320030)                    [boxroot]
+  │     └─ sub_818B5A28  (résout titreId=50, texteId=48, bouton ressource 116)   [boxids]
+  │          └─ XamShowMessageBoxUI                                              [msgbox]
+  └─> sub_818A2500                                   [errroot]
+        └─ sub_8189CC90  (format « %s\n\n%s: %08x », statut lu à 0x81C000DC)     [errbox]
+             └─ XamShowMessageBoxUI
+```
+
+La seconde est une **boîte d'erreur** au format `<message>\n\n<source>: <statut>` ; le mot de
+statut `0x81C000DC` vaut **0** au moment de l'appel (mesuré). Les deux variantes de pompe vues
+tôt au démarrage : `sub_81890F18` → `sub_81890C58` (statique), `sub_81890F18` sans appelant
+statique (appelée par pointeur). Aucune des deux racines (`sub_818765A8`, `sub_818A2500`) n'a
+d'appelant statique ni de pointeur en données : elles sont installées comme **rappels dans des
+objets de demande** exécutés par la pompe.
+
+### Pourquoi les chaînes sont vides : le fournisseur de chaînes n'est jamais installé
+
+`sub_818B5820(id)` (résolution d'une chaîne localisée) retourne 0 si le mot à **0x81BFDA4C**
+est nul — c'est le cas chez nous, d'où titre/texte vides. Chaîne d'installation, établie
+statiquement :
+
+```
+sub_8189CC18   (sans appelant statique : rappel/dépôt)
+  ├─ sub_818B4E80 : lit l'en-tête XEX (RtlImageXexHeaderField 0x40006) d'un module
+  ├─ __imp__XexLoadImage  ← charge un MODULE (le module de chaînes de langue)
+  ├─ sub_8189CB60(langue) : id < 15, table des locales à 0x817E59B4 (« ja-jp », « de-de »,
+  │                         « fr-fr », « es-es », « it-it », « ko-kr », « zh-tw », « pt-br »,
+  │                         « zh-cn », « pl-pl », « ru-ru »), charge la ressource
+  └─ sub_818B5798 : installe le fournisseur à 0x81BFDA4C, puis sub_81894848 (notification UI)
+```
+
+Modules que XAM tente de charger au démarrage et **absents de notre flash** (dash.log) :
+`secexp.xex`, `xstudio.xex`, `systemupdate.xex` (2 chemins), `Xam.LiveMessenger.xex`,
+`Xam.Community.xex`, `cert.xex`, plus le périphérique `DASHUSER:\`. **Aucun module de langue
+n'est tenté** : le dépôt qui aurait dû déclencher `sub_8189CC18` ne se fait pas (ou son
+`XexLoadImage` échoue avant toute trace VFS). Le fournisseur reste nul.
+
+### Ce que ça change, et la suite
+
+- La boîte « barre + anneau » n'est plus un mystère : **deux boîtes de message XAM sans texte**,
+  demandées par la pompe UI de XAM au démarrage. Rien à « interdire » côté hôte : le comportement
+  est celui d'une console dont les chaînes système ne sont pas chargées.
+- Prochaine étape pour la faire disparaître proprement (ou l'afficher avec son vrai texte) :
+  1. retracer le **dépôt** des objets de demande (qui écrit `[objet+48]` = le rappel) — la
+     lecture de `[objet+48]` à l'entrée de la pompe a échoué parce que les objets vivent en
+     0x40… (vue physique du tas) et que mon instrumentation lisait via la base virtuelle ; à
+     refaire avec la bonne traduction d'adresse ;
+  2. identifier le **module de chaînes** que `sub_8189CC18` attend (`XexLoadImage`) et le
+     fournir dans `assets/flash/`, ou installer le fournisseur d'une autre façon — les chaînes
+     des boîtes (titreId 50, texteId 48, et le format d'erreur) deviendraient lisibles, et la
+     fermeture suivrait la logique normale de la boîte (bouton unique, E/B).
+- Instrumentations posées (généré, non versionné — perdues à la régénération) : `[porte]`
+  (entrée du portier), `[msgbox]` (entrée de XamShowMessageBoxUI : lr, user, boutons, titre,
+  texte), `[boxroot]`, `[boxids]`, `[errroot]`, `[errbox]` (mot de statut), `[uipump]` (pompe,
+  objet, rappel), plus les traces Guide antérieures. Elles vivent dans
+  `dashboards/2.0.13604.0-xam/generated/xam/dash_recomp.{1,11,17,20,25,29,33,48}.cpp`.
