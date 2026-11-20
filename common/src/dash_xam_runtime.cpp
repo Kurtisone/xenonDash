@@ -13,6 +13,7 @@
 #include <vector>
 #include <memory>
 #include <string>
+#include <string_view>
 #include <system_error>
 #include <utility>
 
@@ -123,6 +124,9 @@ void FixKernelVariables(rex::system::KernelState* ks, rex::runtime::ExportResolv
     *flags = __builtin_bswap32(__builtin_bswap32(*flags) | 0x200u);
     REXLOG_INFO("[dash] XboxHardwareInfo.Flags = 0x{:08X}", __builtin_bswap32(*flags));
   }
+  // NOTE (2026-11-20) : le compteur d'interfaces systeme de XAM (0x81BFCAE8) vaut 4 plus tard dans
+  // l'execution, et le remettre a zero au demarrage ne change rien (il vaut deja 0 ici). Ce n'est
+  // donc pas lui qui maintient l'indicateur d'activite a l'ecran. Piste ecartee par la mesure.
   auto* e = resolver ? resolver->GetExportByOrdinal("xboxkrnl.exe", 0x02DB) : nullptr;
   if (!e || !e->variable_ptr) return;
   uint8_t* hdr = ks->memory()->virtual_membase() + e->variable_ptr;

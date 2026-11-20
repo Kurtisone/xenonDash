@@ -1569,3 +1569,51 @@ l'écran entier.
 
 Non vérifiable sous Xvfb (le HUD n'y produit qu'une image), à confirmer sur Steam Deck : avec
 `HUD=1`, l'image doit être nette autour de la boîte au lieu d'être sombre partout.
+
+## 2026-11-20 (nuit) : la boîte au démarrage N'EST PAS le Guide — mesures
+
+Nouveau rapport de l'utilisateur : « le guide s'ouvre sans que je le demande, chargement à l'infini,
+l'assombrissement doit être l'arrière-plan, la touche G ne ferme pas la boîte ».
+
+### Ce que la mesure établit, contre mon hypothèse précédente
+
+**La boîte n'est pas le Guide.** Trois preuves indépendantes :
+
+1. `sub_81898630` (la fonction `XamShowGuideUI` de XAM) n'est **jamais appelée** au démarrage —
+   vérifié sur journal propre, compteur à 0. Elle n'est atteinte que par notre `Dispatch`, donc
+   seulement quand le bouton Guide (ou `DASH_TEST_GUIDE`) le demande.
+2. Aucune demande n'est déposée : `RequestGuide` = **0 appel**, et le thread invité du HUD ne sert
+   aucune demande de Guide.
+3. Aucune touche n'est pressée (`guide=0 up=0 down=0 accept=0` à chaque image), et la boîte apparaît
+   quand même dès l'image 2.
+
+**Contenu réel de la boîte** (dump de l'overlay, 852×480) : une barre horizontale dégradée en haut,
+un anneau d'activité au centre, **aucun texte**. Sa zone grandit (243,30–607,71 puis 243,30–607,279)
+puis se stabilise. C'est un **indicateur d'activité** que XAM dessine de lui-même, pas une interface
+demandée.
+
+### Piste écartée : le compteur d'interfaces système
+
+J'ai cru que le compteur `0x81BFCAE8` (qui vaut 4 plus tard, et bloque le Guide) maintenait cet
+indicateur. **Mesure : il vaut déjà 0 à l'initialisation.** Le remettre à zéro au démarrage ne change
+rien. Piste écartée, code retiré.
+
+### Ce qui est corrigé et gardé
+
+- `keybind_guide = "G"` (liaison vide auparavant : le bouton Guide était inatteignable au clavier).
+- Le fond atténué ne s'applique plus qu'à la zone de la boîte (`HudComposite`), plus à tout l'écran —
+  c'est la demande « l'assombrissement doit être l'arrière-plan ».
+- `XamShowGuideUI` est appelable et **accepté** par XAM (`r3 = 0`), ce qui reste utile.
+
+### Ce qui n'est pas résolu, et pourquoi je ne le maquille pas
+
+- **La boîte au démarrage** : c'est XAM qui la dessine. Il faut identifier quelle fonction de XAM
+  l'affiche (elle n'est pas dans nos redirections). Piste : instrumenter les appels HUD pour trouver
+  le premier dessin de l'image 1 et remonter à l'appelant XAM.
+- **La touche G ne ferme pas la boîte** : cohérent — G ouvre le Guide, elle ne ferme pas un
+  indicateur d'activité qui n'est pas le Guide. Une fois la boîte identifiée, la fermeture viendra de
+  sa propre logique (XAM), pas d'une touche que nous décidons.
+- **Le chargement à l'infini** est la conséquence de cette boîte : tant qu'elle reste, XAM attend.
+
+Ordre de travail logique : identifier l'émetteur de la boîte (instrumentation du premier dessin),
+puis comprendre quel état XAM attend. Le Guide viendra après, et il est déjà fonctionnel côté appel.
