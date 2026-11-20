@@ -107,6 +107,14 @@ pilote STFS minimal côté noyau, profil local hors ligne (XUID aléatoire, sign
 ## Suite, par ordre de priorité
 1. Profil existant choisi dans la liste : XAM demande « Enter Pass Code » (cause non établie) ; `XamUserReadProfileSettings(Ex)` redirigé vers XAM plante le Dashboard (lecture invitée de `0x7008004F`) : gamertag/Gamerscore du bandeau et contenu restent liés au profil HLE ; fenêtre « Save Profile » absente du parcours Dashboard.
 2. Rendre `DASH_PROFILE_MODE=xam` le défaut et livrer la variante `-xam` (XAM + HUD) en AppImage (aujourd'hui l'AppImage Kinect est la variante sans XAM recompilé, donc sans HUD).
+   *État au 2026-11-20, mesuré* : la cause du noir n'est **ni** une fonction manquante **ni** un
+   interblocage. C'est une **tempête de fautes d'écriture invitées** : en XAM, `AccessViolationCallback`
+   traite ~10⁴ à 2·10⁶ fautes sur une même page (12 en HLE), chaque faute coûtant une restauration de
+   protection (`xmemory.cpp`, `get_host_page_access` laisse en lecture seule toute page write-watched).
+   Le thread qui alimente la pompe à images passe son temps dans le gestionnaire de signaux, et
+   `sub_92172B48 -> sub_9218F138 -> sub_9218EAB0 -> VdSwap` n'aboutit jamais. Le HUD est innocent
+   (A/B sans `hud.xex`), les verrous sont sains (2 attentes/2 obtentions). Diagnostic activable par
+   `REX_LOG_GUEST_FAULTS=1`. Détail, mesures et chaîne d'appel complète : `docs/xam_13604_compilation.md`.
    *État au 2026-11-16 (soir), mesuré* : la variante `-xam` **compile** (8 modules `.so`, `dash` lié),
    XAM **se charge** et son rendu natif **s'initialise** (`[ngpu] noyau ngpu_core sur llvmpipe`, sur
    **stderr** — jamais dans `dash.log`, ne pas s'y tromper). L'écran reste **noir** : le journal

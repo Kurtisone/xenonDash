@@ -311,6 +311,7 @@ REX_HOOK_RAW(__imp__XexTransformImageKey) {
 REX_HOOK_RAW(__imp__XamNotifyCreateListenerInternal) {
   (void)base;
   uint64_t mask = ctx.r3.u64;
+  { static int _a=0; if (++_a<=4) REXLOG_WARN("[gate] XamNotifyCreateListenerInternal(mask=0x{:016X}, is_system={}, max_version={})", mask, ctx.r4.u32, ctx.r5.u32); }
   ctx.r3.u64 = rex::kernel::xam::xeXamNotifyCreateListener(mask, ctx.r4.u32, ctx.r5.u32);
   if ((mask & 0x23) == 0x23) dash::disc::ScheduleMediaNotification();
 }

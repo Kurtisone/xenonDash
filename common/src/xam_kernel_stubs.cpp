@@ -212,6 +212,6 @@ REX_HOOK_RAW(__imp__VdSwap) {
   // l'affichage au lieu de l'observer.
   static PPCFunc* sdk = dash::SdkFunction("__imp__VdSwap");
   if (++g_vdswap_calls <= 6)
-    REXLOG_INFO("[swap] VdSwap appele (r3=0x{:08X})", ctx.r3.u32);
+    REXLOG_INFO("[swap] VdSwap appele (r3=0x{:08X}) lr=0x{:08X}", ctx.r3.u32, uint32_t(ctx.lr));
   if (sdk) sdk(ctx, base);
 }

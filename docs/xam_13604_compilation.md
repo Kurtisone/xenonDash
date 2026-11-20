@@ -917,3 +917,341 @@ La piste 1 est la plus directe : c'est de l'instrumentation, pas de la devinette
 - **Tables de dispatch** : 4 sur 9.
 - **Affichage** : noir — le Dashboard cesse de progresser après l'initialisation de XAM.
 - **Version 2.0.13604 sans XAM** : intacte, compile et fonctionne (vérifié `RC=0`).
+
+## Mesure du 2026-11-20 : la boucle de rendu du Dashboard existe et itère
+
+Cette section corrige une conclusion antérieure du présent document. Le dossier affirmait que
+« le Dashboard n'émet aucune fonction D3D : la boucle n'existe pas ». **C'est faux**, et l'erreur
+avait une cause précise : l'instrumentation avait été posée dans
+`dashboards/2.0.13604.0/generated/dash/`, alors que la variante `-xam` compile
+`dashboards/2.0.13604.0-xam/generated/dash/`. Les deux arbres sont distincts ; instrumenter le
+premier ne dit rien du second.
+
+### Ce que la mesure établit
+
+Instrumentation des 11 sites d'appel internes de `sub_921AE620` (boucle de rendu), puis exécution
+en mode XAM (`DASH_PROFILE_MODE=xam DASH_XAM_MODULE=2`, Xvfb + lavapipe, 40 s) :
+
+```
+[rd] sub_921AE620 (boucle de rendu du Dashboard) DEMARRE      (t35, t36 : deux instances)
+[rd] site1 0x9217f2d4 ... site2 ... site3 ...
+[rd] site4 0x92901a34    KeGetCurrentProcessType
+[rd] site5 0x92901664    RtlEnterCriticalSection
+[rd] drapeau10942: bit2 ABSENT
+[rd] site8 0x92901654    RtlLeaveCriticalSection
+[rd] site9 0x92902d04    KeWaitForSingleObject   (timeout 30 ms)
+   ... et cela recommence, ~30 ms par cycle, pendant toute la session
+```
+
+Conclusions mesurées :
+- la boucle **est créée** (`ExCreateThread entree=921AE620 contexte=40004F18`) et **elle itère** ;
+- elle n'est donc pas bloquée : `KeWaitForSingleObject` rend la main toutes les 30 ms avec
+  `STATUS_TIMEOUT` (258), ce qui est du *frame pacing*, pas un interblocage ;
+- le **travail de dessin est sauté** : le bit `0x2` de l'octet à l'offset 10942 (drapeau
+  « fenêtre à redessiner ») est absent à chaque image, donc le chemin `sub_9218EAA8` /
+  `sub_9218EAB0` (ce dernier appelle `VdSwap`) n'est jamais pris.
+
+### Le drapeau est absent parce que son poseur n'est jamais appelé
+
+Un seul site pose ce bit : `sub_9218DC60`. Instrumenté, il affiche **0 appel** sur toute la session,
+en mode XAM comme en mode HLE. Or le mode HLE affiche correctement l'image : **le rendu à l'écran
+ne passe donc pas par cette boucle**. `sub_921AE620` est une boucle d'événements secondaire, pas le
+chemin de présentation. La cause du noir n'est pas là.
+
+### Le vrai chemin de présentation, remonté par l'adresse de retour
+
+Le hook `__imp__VdSwap` journalise désormais son `lr`. En mode HLE (image correcte, 6 `VdSwap`),
+toutes les présentations viennent de `lr=0x9218ED74`, c'est-à-dire de `sub_9218EAB0`, sur le
+**thread principal t24**. La chaîne complète, remontée par instrumentation :
+
+```
+sub_92173B80   (pompe à images, lr entrant 0x92179BA0, thread principal)
+  └─ sub_92173A68   (portier d'initialisation)            -> doit rendre >= 0
+       ├─ sub_921732A8  -> 0            (ok dans les deux modes)
+       ├─ sub_92171440  -> 0            (ok dans les deux modes)
+       ├─ XamNotifyCreateListenerInternal
+       └─ sub_92173828  (initialisation longue, ~30 appels)
+            └─ sub_92173780
+                 └─ sub_92173560
+                      └─ sub_9216E8A0  (appel 5)   <-- ne rend jamais la main en XAM
+  └─ sub_92172670   (boucle d'image)  -> jamais atteinte en XAM
+       └─ sub_92172B48 -> sub_9218F138 -> sub_9218EAB0 -> VdSwap
+```
+
+Mesure différentielle (même binaire, seule l'environnement change) :
+
+| point | mode HLE | mode XAM |
+|---|---|---|
+| `sub_92173B80` atteint | oui | oui |
+| `sub_92173A68` : `sub_921732A8` | 0 | 0 |
+| `sub_92173A68` : `sub_92171440` | 0 | 0 |
+| `sub_92173A68` : `sub_92173828` | rend 0 après 142 ms | **ne rend jamais** |
+| `sub_92173828` : appels 1 à 31 | oui | oui |
+| `sub_92173828` : appel 32 | oui | **non** |
+| `sub_92173560` : appel 5 `sub_9216E8A0` | rend | **ne rend jamais** |
+| `sub_92172B48` / `sub_9218F138` / `VdSwap` | 5 / 5 / 6 | **0 / 0 / 0** |
+
+### Ce que la pile d'appel montre (gdb, lancement sous gdb dans le conteneur)
+
+Piège à connaître : `gdb -p` (attach) est **refusé** dans le conteneur
+(`ptrace: Inappropriate ioctl for device`) ; il faut **lancer** le processus sous gdb
+(`gdb --args ... -ex run`) et ajouter `--cap-add=SYS_PTRACE --security-opt seccomp=unconfined`.
+
+Sous gdb, deux faits inattendus :
+
+1. le thread principal reçoit un **SIGBUS** sur une écriture invitée
+   (`sub_9238B4D0`, `REX_STORE_U8(ctx.r11.u32 + 0, ...)`, `dash_recomp.74.cpp:9702`) ;
+2. avec `handle SIGBUS nostop noprint pass`, le **HUD de XAM dessine réellement** :
+
+```
+[hud] noyau ngpu_core sur 'llvmpipe (LLVM 20.1.2, 256 bits)' (HUD de XAM, D3D 2099)
+[hud] image 1 : clears : 1
+[hud] image 1 : draws : 3
+[hud] image 1 : resolves (color) : 1
+[hud] image 1 : 3 dessins, 0 ignores, 1 resolves
+```
+
+Cette sortie n'apparaît dans **aucune** exécution normale (vérifié sur tous les `runs/*.out` :
+seul le message d'initialisation du noyau HUD apparaît, jamais les compteurs d'image). Le fait que
+le HUD dessine sous gdb et jamais sans gdb oriente vers une **course / un ordonnancement**, pas vers
+une fonction manquante.
+
+Piste écartée par la mesure : ralentir la machine ne suffit pas. Avec `--cpus=1` (exécution
+normale, sans gdb), le HUD ne dessine toujours pas et la capture reste noire (3 073 octets).
+
+### Où en est la recherche
+
+Le verrou n'est plus « on ne sait pas où » : c'est `sub_9216E8A0` (appelé par `sub_92173560`, lui-même
+appelé par `sub_92173780`, depuis `sub_92173828`), qui ne rend pas la main en mode XAM. Ses appels
+sont `sub_921C9698` (qui n'est qu'un relais vers `sub_921C93F0`), puis `sub_921CA0B8`. La descente
+doit continuer dans `sub_921C93F0` (dash_recomp.60.cpp), qui appelle `sub_921E31C8` et utilise
+`KeTlsGetValue`/`KeTlsSetValue`.
+
+Deux mesures utiles ensuite :
+1. instrumenter `sub_921E31C8` / `sub_927D32C8` (comparaison de chaîne : déjà mesurée, elle renvoie
+   bien 1 en XAM) pour trouver l'appel qui ne revient pas dans `sub_921C93F0` ;
+2. traiter le `SIGBUS` de `sub_9238B4D0` : c'est la seule différence connue entre « sous gdb » (le
+   HUD dessine) et « sans gdb » (rien). Vérifier s'il tue silencieusement le thread qui pousse les
+   images.
+
+### Descente finale du 2026-11-20 : le thread principal s'arrête dans `sub_921B77C8`
+
+La descente a été poursuivie maillon par maillon, chaque étape étant mesurée par une sonde
+« avant appel N ». Le point d'arrêt est maintenant précis et **reproductible** (trois exécutions
+identiques) :
+
+```
+sub_92173828  appel 31/0x92173780        <- dernier appel atteint de cette fonction
+  sub_92173780  appel 3/0x92173560       <- les appels 1 et 2 reviennent
+    sub_92173560  appel 5/0x9216e8a0     <- dernier appel atteint, ne revient pas
+      sub_9216E8A0  appel 2/0x921c9698   <- relais : sub_921C9698 -> sub_921C93F0
+        sub_921C93F0   appels 1..31      <- progresse puis RETOURNE (r3=0)
+        sub_921CA0B8   appel 9/0x921b7be0  <- DERNIER POINT ATTEINT
+          sub_921B7BE0  appel 1/0x921b77c8 <- ne revient pas
+            sub_921B77C8                   <- s'arrête ici
+```
+
+Traces correspondantes (mode XAM) :
+
+```
+[b19] appel 5/0x92901664      RtlEnterCriticalSection
+[b19] appel 7/0x92901654      RtlLeaveCriticalSection
+[b19] appel 4/0x921b1930      recursion -> sub_921B1930
+[b7b] appel 1/0x921b77c8      puis plus rien sur ce thread
+```
+
+Pendant que t27 est arrêté là, **les autres threads continuent** (journal : `xconfig`, `xinputd`,
+notification de média) et le processus reste vivant. Ce n'est donc pas un arrêt global : c'est
+l'arrêt de la chaîne qui mène à l'image.
+
+### Deux hypothèses écartées par la mesure
+
+| Hypothèse | Mesure | Verdict |
+|---|---|---|
+| verrou (`RtlEnterCriticalSection`) détenu par un thread mort | instrumentation de `xboxkrnl_rtl.cpp` : 2 attentes, **2 obtentions** (`0x40100618`), aucune attente non satisfaite | **écartée** |
+| simple manque de temps CPU | `--cpus=1`, exécution normale | **écartée** : toujours noir |
+
+Rappel de la seule différence connue : **sous gdb**, avec `handle SIGBUS nostop noprint pass`, le
+HUD de XAM dessine (`[hud] 3 dessins, 1 resolves`), ce qui n'arrive jamais sans gdb.
+
+### Prochaine mesure à faire
+
+`sub_921B77C8` (dash_recomp.78.cpp) appelle `sub_921B7560` et `sub_921B1930`, et `sub_921B7560`
+contient **deux appels indirects** (`bctrl`). Instrumenter ces deux `bctrl` (cible + retour) est la
+mesure suivante : c'est là que se trouve la primitive qui ne rend pas la main.
+
+### Le HUD n'est pas responsable (A/B mesuré)
+
+Corrélation trouvée dans le journal : `t27` (le thread de la pompe à images) cesse toute activité
+0,004 s avant que `hud.xex` se charge. L'hypothèse « le chargement du HUD bloque la pompe » a donc
+été testée par A/B, en retirant `assets/flash/hud.xex`.
+
+| | `hud.xex` présent | `hud.xex` retiré |
+|---|---|---|
+| itérations du parcours dans `sub_921B77C8` | 9 | **9** |
+| modules `hud` enregistrés | 1 | **0** |
+| `VdSwap` | 0 | **0** |
+| `NGP_Swap` | 0 | **0** |
+| capture | noir (3 073 o) | **noir (3 073 o)** |
+
+**Conclusion : le HUD est innocent.** Le blocage est identique sans lui ; la corrélation temporelle
+était une coïncidence de l'ordre d'initialisation. Le fichier a été restauré à l'identique
+(empreinte `8b6d9aa5d48c759a98bb333221b9d9e9` vérifiée avant et après).
+
+### Où en est le diagnostic (état au 2026-11-20)
+
+Acquis solides, tous mesurés :
+1. la boucle de rendu du Dashboard **existe, est créée et itère** (~30 ms) — la conclusion inverse
+   du dossier était un artefact de mauvais arbre ;
+2. elle **saute le travail de dessin** (drapeau `0x2` à l'offset 10942 jamais posé) ; mais le mode
+   HLE affiche sans ce drapeau, donc ce n'est pas le chemin critique ;
+3. le vrai chemin de présentation est `sub_92172B48 -> sub_9218F138 -> sub_9218EAB0 -> VdSwap`,
+   piloté par `sub_92173B80` sur le thread principal ;
+4. en mode XAM, ce chemin n'est **jamais** atteint : le thread s'arrête dans
+   `sub_921B7BE0 -> sub_921B77C8`, au 9e tour d'un parcours de liste ;
+5. cette halte n'est **ni** un interblocage de section critique (2 attentes / 2 obtentions),
+   **ni** un manque de CPU (`--cpus=1`), **ni** la faute du HUD (A/B ci-dessus),
+   **ni** une exception C++ visible (instrumentation de `XThread::Execute`) ;
+6. les pointeurs manipulés à l'arrêt sont **valides** (`0x4001C3EC`, `0x4001C410`… tas invité) ;
+7. **sous gdb** (SIGBUS ignoré), le HUD de XAM dessine réellement (`[hud] 3 dessins, 1 resolves`),
+   ce qui n'arrive jamais sans gdb : il reste donc une différence d'ordonnancement à expliquer.
+
+Prochaine mesure suggérée : journaliser, dans `xboxkrnl` , toute faute invitée interceptée par
+`AccessViolationCallback` en mode XAM avec l'adresse et le thread — c'est la seule voie restante
+qui explique un arrêt net sans trace applicative. Le `SIGBUS` observé sous gdb sur
+`sub_9238B4D0` (`REX_STORE_U8`) en est le candidat le plus probable.
+
+### Le vrai goulot : des milliers de fautes d'écriture invitées sur la même page
+
+Instrumentation de `Memory::AccessViolationCallback` (`third_party/rexglue-sdk/src/system/xmemory.cpp`).
+Mesure en mode XAM, 15 s :
+
+```
+[av] faute ecriture de 0x301C3000  (n = 1 .. 10 151)   thread t58
+[av] faute ecriture de 0xFF3BE000  (124 fois)          thread t59
+[av] faute ecriture de 0x41057000  (80 fois)           thread t27   <- le thread qui pilote l'image
+[av] faute ecriture de 0x301C2008  (29 fois)           thread t19
+total : 10 384 fautes
+```
+
+Faits :
+- ce sont **toutes** des écritures, jamais des lectures ;
+- `0x301C3000` tombe bien dans le tas invité `v00000000` (0x00000000–0x40000000), donc la page
+  **appartient** à un heap connu (`LookupHeap` la trouve : aucune ligne « Unhandled guest access
+  violation » n'apparaît) ;
+- la même page refait faute **10 151 fois de suite** : la protection en écriture n'est donc jamais
+  rétablie entre deux tentatives. Chaque faute coûte un aller-retour de signal et le passage par
+  le chemin de récupération de `AccessViolationCallback`.
+
+C'est un **goulot de performance et de progression**, pas un interblocage : le thread avance par
+saccades, une faute par écriture. C'est aussi l'explication la plus probable de la différence
+« sous gdb, le HUD dessine » : sous gdb, `SIGBUS` est intercepté par le débugueur
+(`handle SIGBUS nostop noprint pass`), ce qui change complètement le coût et l'ordonnancement de ces
+fautes, et laisse la pompe à images progresser jusqu'à `VdSwap`.
+
+**C'est la piste à traiter maintenant** : la page `0x301C3000` est écrite en boucle alors qu'elle
+devrait être inscriptible. Deux voies :
+1. identifier l'écrivain (thread `t58`, adresse de retour à instrumenter dans le callback) ;
+2. vérifier pourquoi le chemin de récupération (`QueryProtect` / `QueryRegionInfo` /
+   `GetPhysicalAddress`) n'accorde pas durablement le droit d'écriture : il remet la main sans
+   avoir corrigé la protection d'hôte, donc la faute se répète à l'identique.
+
+### Cause racine trouvée : une tempête de fautes d'écriture invitées (mesurée)
+
+Deux compteurs instrumentés dans `Memory::AccessViolationCallback` (`xmemory.cpp`) : les fautes
+invitées (`[av]`) et les restaurations de protection réussies (`[rec2]`, auparavant en DEBUG donc
+invisibles). Même binaire, même machine, 15 s, seule l'environnement change :
+
+| | mode HLE (image correcte) | mode XAM (écran noir) |
+|---|---|---|
+| fautes invitées | **12** | **10 394** (et 2 076 400 sur la même page en 15 s) |
+| pages restaurées en écriture | 0 | 1 058 |
+| `VdSwap` | 6 | 0 |
+| tours du parcours `sub_921B77C8` | — | 9, puis le thread s'arrête |
+
+Détail du cas XAM :
+
+```
+[t58] [av] faute ecriture de 0x301C3000 (n = 1 ... 2 076 400)   <- MÊME page, en boucle
+[t59] [rec2] page restauree en ecriture : invite=0x408F1000     <- restauration réussie mais re-faute
+[t27] [rec2] page restauree en ecriture : invite=0xFF0DD000
+```
+
+Interprétation établie par la mesure :
+
+- ce ne sont **que** des écritures, jamais des lectures ;
+- `LookupHeap` trouve toujours le heap : **aucune** ligne « Unhandled guest access violation »
+  (vérifié : 0 occurrence). Le chemin de récupération réussit donc, et la page est bien
+  re-protégée en écriture (1 058 fois) ;
+- malgré cela, la **même** page `0x301C3000` refait faute 2 millions de fois : quelque chose
+  **re-retire** le droit d'écriture entre deux tentatives (probablement un watch d'écriture ou une
+  bascule de protection dans le heap virtuel) ;
+- en HLE, les mêmes chemins de code ne produisent que 12 fautes : ce comportement est donc
+  **déclenché par le mode XAM**, pas par le rendu natif lui-même.
+
+**C'est la cause du symptôme, et elle explique tout le reste** : le thread `t58` passe l'essentiel de
+son temps dans le gestionnaire de signaux (une faute = un `SIGSEGV` + restauration + reprise), ce qui
+affame les threads qui devraient produire l'image. C'est aussi l'explication de la seule anomalie
+restante — « sous gdb, le HUD dessine » : gdb intercepte les signaux et change entièrement le coût
+de cette tempête, laissant la pompe à images atteindre `VdSwap` au moins une fois.
+
+### Ce qu'il faut corriger (prochaine étape, précise)
+
+Ne pas chercher une fonction manquante : il faut comprendre pourquoi la protection en écriture de
+`0x301C3000` est retirée à répétition. Trois mesures :
+1. journaliser, dans le callback, l'appelant (`lr` invité) de la faute pour `0x301C3000` : c'est
+   l'écrivain à corriger ;
+2. journaliser `TriggerCallbacks` / `TriggerPhysicalMemoryCallbacks` pour voir quel *watch* est posé
+   sur cette page et qui le repose ;
+3. vérifier le rôle de `REX_ALIAS_XEX_HEAPS` (documenté dans `docs/REPRISE.md`) : les alias de tas
+   sont une source connue de protection périmée dans ce projet.
+
+### Mécanisme précis de la tempête (élucidé)
+
+Traces simultanées sur la même page, mode XAM :
+
+```
+[t58] [av]   faute ecriture de 0x301C3000 (n=38000)
+[t58] [rec2] page restauree en ecriture : invite=0x301C3000 hote=0x00000001301C3000
+[t58] [av]   faute ecriture de 0x301C3000 (n=38200)
+[t58] [rec2] page restauree en ecriture : invite=0x301C3000 ...
+```
+
+La restauration **réussit** (`allow_write=1`, vérifié), la page est bien remise en lecture-écriture,
+et **l'écriture suivante refait faute immédiatement**. Ce n'est donc ni un défaut de permission
+invitée, ni une page absente : le droit d'écriture est **retiré entre deux instructions**.
+
+Le code du SDK contient le mécanisme qui peut faire exactement cela
+(`xmemory.cpp`, `get_host_page_access`) :
+
+```cpp
+// Leaving the page read-only can only cause a spurious invalidation, which
+// is safe; restoring write access loses invalidations, which is not.
+if (access == rex::memory::PageAccess::kReadWrite && IsHostPageWriteWatched(host_page_number)) {
+  access = rex::memory::PageAccess::kReadOnly;
+}
+```
+
+Autrement dit : une page marquée « write-watched » (pour l'invalidation GPU) est **volontairement
+laissée en lecture seule** lors de tout recalcul de protection. Comme un host page couvre plusieurs
+pages invitées, toute opération sur une page voisine recalcule et re-verrouille celle-ci. Si le guest
+écrit ensuite dedans, on obtient la boucle observée : faute → restauration ponctuelle → recalcul →
+re-verrouillage → faute. C'est cohérent avec les 2 millions d'occurrences sur une seule adresse.
+
+En mode HLE, seules 12 fautes apparaissent : le chemin qui arme ce watch n'est donc pas emprunté.
+
+### Conclusion du diagnostic
+
+Le noir de la variante `-xam` **n'est pas** une fonction manquante ni un interblocage. C'est une
+**tempête de fautes d'écriture** sur des pages invitées write-watched : le thread qui doit alimenter
+la pompe à images (`t58`, et `t27` pour la pompe elle-même) passe son temps dans le gestionnaire de
+signaux, et la chaîne `sub_92172B48 -> sub_9218F138 -> sub_9218EAB0 -> VdSwap` n'atteint jamais son
+terme. Le HUD est innocent (A/B), les verrous sont sains (2/2), la boucle de rendu existe et itère.
+
+Correctif à instruire (ordre suggéré) :
+1. **restreindre le write-watch** : ne pas laisser une page write-watched en lecture seule quand le
+   guest l'a commise en écriture ; ou ne watcher que la plage réellement invalidée
+   (`unwatch_exact_range`) ;
+2. vérifier qui arme ce watch en mode XAM (XAM écrit dans des surfaces partagées avec le GPU) ;
+3. après correctif, le critère de succès est déjà défini et mesurable : le compteur de fautes doit
+   passer de ~10⁴–10⁶ à quelques unités, et `VdSwap` doit apparaître dans le journal.
