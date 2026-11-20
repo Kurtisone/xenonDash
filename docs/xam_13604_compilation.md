@@ -1617,3 +1617,31 @@ rien. Piste écartée, code retiré.
 
 Ordre de travail logique : identifier l'émetteur de la boîte (instrumentation du premier dessin),
 puis comprendre quel état XAM attend. Le Guide viendra après, et il est déjà fonctionnel côté appel.
+
+### Le « chargement à l'infini » : XAM redemande un utilisateur qui n'existe pas
+
+Instrumentation de `XamUserGetXUID` (les traces du SDK ne journalisent qu'un point tous les 1000
+appels — d'où la ligne `appel 1000` qui avait attiré l'œil) :
+
+```
+[xuid] XamUserGetXUID(user=2147943717) -> r3=0x80070525 (appel 1)
+[xuid] XamUserGetXUID(user=2147943717) -> r3=0x80070525 (appel 2)
+[xuid] XamUserGetXUID(user=2147943717) -> r3=0x80070525 (appel 3)
+```
+
+`0x80070525` = **ERROR_NO_SUCH_USER**. Et `0x80070525` lu comme un index d'utilisateur explique la
+valeur absurde `2147943717` : XAM passe le statut d'erreur en guise d'index, boucle, et redemande.
+
+Cause de fond : **il n'y a aucun profil**. `assets/profiles/B13E07DFF9AB6772/` existe mais est
+**vide** (aucun fichier), donc `ProfileExistsOnDisk()` est faux, `XamUserGetXUID` répond
+`ERROR_NO_SUCH_USER`, et XAM — qui attend un utilisateur connecté pour construire son interface —
+réessaie indéfiniment. C'est exactement le symptôme « chargement à l'infini ».
+
+Deux sorties possibles, à choisir :
+1. **créer un profil local** (le parcours existe : `DASH_PROFILE_MODE=xam`, écran de création), ce
+   qui donne un XUID valide et débloque XAM ;
+2. **`dash_auto_profile=true`** (cvar existante, `dash_profile.cpp`) : profil synthétique hors ligne,
+   sans passer par l'écran de création. C'est la voie la plus rapide pour voir le Dashboard complet.
+
+À noter : la boîte « barre + anneau » est très probablement l'**indicateur d'attente de connexion**
+de XAM — cohérent avec un utilisateur absent, et avec le fait qu'elle ne parte jamais.

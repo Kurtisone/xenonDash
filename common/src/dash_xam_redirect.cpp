@@ -122,6 +122,17 @@ void Dispatch(Slot& s, PPCContext& ctx, uint8_t* base) {
   // Connexion/déconnexion d'un utilisateur dans XAM recompilé : XAM diffuse XN_SYS_SIGNINCHANGED dans ses propres files de
   // notification ; le Dashboard écoute celles du HLE (XamNotifyCreateListener/XNotifyGetNext du SDK). La notification est donc
   // rediffusée côté HLE quand l'état de connexion d'un utilisateur change (palier N4, mode profil XAM).
+  // Diagnostic : XAM interroge XamUserGetXUID en boucle (1000+ appels mesures le 2026-11-20) quand
+  // aucun profil n'existe : il attend un XUID qui ne vient jamais. On journalise la valeur rendue.
+  if (std::string_view(s.name) == "XamUserGetXUID") {
+    DispatchImpl(s, ctx, base);
+    static std::atomic<int> _n{0};
+    const int n = ++_n;
+    if (n <= 3 || n % 2000 == 0)
+      REXLOG_WARN("[xuid] XamUserGetXUID(user={}) -> r3=0x{:08X} (appel {})", ctx.r3.u32,
+                  static_cast<uint32_t>(ctx.r3.u64), n);
+    return;
+  }
   if (std::string_view(s.name) == "XamUserGetSigninState" && s.guest.load()) {
     static std::atomic<int> last[4] = {-1, -1, -1, -1};
     const uint32_t user = ctx.r3.u32;
