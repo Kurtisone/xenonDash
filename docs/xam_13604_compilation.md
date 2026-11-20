@@ -1762,3 +1762,34 @@ Prochaine mesure utile : instrumenter le **premier dessin** de l'image 1 du HUD 
 / `DrawVerticesUP` et depuis quelle adresse de XAM) pour remonter à la fonction qui compose cet
 indicateur. L'inventaire est prêt pour ça : `function_inventory.py dash/hud --top` donne les points
 d'entrée du module HUD.
+
+### La boîte du HUD : chaîne de composition remontée (2026-11-20)
+
+Instrumentation `DASH_HUD_CALLERS=1` dans `native_gpu/src/hud_front.cpp` : journalise l'appelant
+invité (`ctx.lr`) des premiers appels HUD crochetés. Trace :
+
+```
+[hudcall] #1 addr=819BD640 lr=81A41708 prim=0
+[hudcall] #2 addr=819BE038 lr=819BD658 prim=0
+[hudcall] #3 addr=819BD5E8 lr=819BD674 prim=0
+```
+
+En croisant avec l'inventaire (`function_inventory.py xam --find …`), la chaîne de composition du HUD
+apparaît :
+
+```
+sub_81BCD958   (35 lignes, 0 appelant -> entrée atteinte par adresse)
+  └─ sub_81A31BD8   (169 lignes, rôle « threads »)
+       └─ sub_81A41688   (174 lignes : initialise le critique, puis compose)
+            └─ sub_819BD640  (47 lignes) — compositeur du HUD, appelé par image
+                 ├─ sub_819BD5E8 / sub_819BE038 / sub_819BE058  (primitives)
+                 └─ dessins D3D (BeginVertices / DrawVerticesUP)
+```
+
+C'est donc **`sub_819BD640` qui compose l'image du HUD**, alimentée par `sub_81A41688`, elle-même
+lancée par `sub_81B31BD8` depuis une entrée atteinte par adresse. La boîte « barre + anneau » est un
+dessin de ce compositeur, pas une interface demandée par le Dashboard.
+
+Prochaine mesure, si besoin d'aller plus loin : dans `sub_819BD640`, identifier ce qui décide
+d'afficher la barre et l'anneau (quel état il lit), pour savoir s'il existe une condition à remplir
+côté hôte pour qu'il ne les dessine pas.

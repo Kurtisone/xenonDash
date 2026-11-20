@@ -529,6 +529,18 @@ void PublishOverlay() {
 // ---- dispatch des fonctions D3D de XAM ----
 void Handle(uint32_t addr, PPCContext& ctx, uint8_t* base, void (*orig)(PPCContext&, uint8_t*)) {
   using namespace hud_profile;
+  // DASH_HUD_CALLERS=1 : journalise l'appelant (lr invité) des premiers dessins du HUD. C'est la
+  // seule facon de remonter a la fonction de XAM qui compose un dessin donne — par exemple la boite
+  // « barre + anneau » qui apparait des l'image 2 sans aucune requete (mesure du 2026-11-20).
+  static const bool trace_callers = std::getenv("DASH_HUD_CALLERS") != nullptr;
+  if (trace_callers) {
+    static std::atomic<int> _tc{0};
+    const int n = ++_tc;
+    if (n <= 24)
+      std::fprintf(stderr, "[hudcall] #%d addr=%08X lr=%08X prim=%u count=%u\n", n, addr,
+                   static_cast<uint32_t>(ctx.lr), static_cast<uint32_t>(ctx.r4.u32),
+                   static_cast<uint32_t>(ctx.r5.u32));
+  }
   switch (addr) {
     case kBeginVertices: {
       const uint32_t dev = ctx.r3.u32, prim = ctx.r4.u32, count = ctx.r5.u32, stride = ctx.r6.u32;
