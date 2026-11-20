@@ -1402,3 +1402,49 @@ mais « XAM dessine un dialogue de progression que personne n'a demandé, et son
    (`HudComposite`, `native_gpu/src/hud_front.cpp`) → c'est ce qui rend l'écran sombre ;
 2. **le dialogue lui-même** est dessiné sans demande : à instruire côté XAM recompilé
    (quel appel l'ouvre, quel état il attend).
+
+## 2026-11-20 (nuit) : chargement infini corrigé, lame Guide retirée
+
+### Le « chargement trop long » était deux boucles de journalisation
+
+Mesure sur 40 s, mode XAM : **375 044 lignes** de journal, dont :
+
+| ligne | occurrences | nature |
+|---|---|---|
+| `__imp__VdSetSystemCommandBuffer STUB` | **371 443** | XAM l'appelle plusieurs fois par image ; le stub du SDK journalise à chaque appel |
+| `XexLoadImage("hud.xex")` → échec | **356** | XAM redemande sans fin un module déjà chargé |
+
+Ce n'était donc pas un calcul long : c'était du bruit d'journalisation qui noyait la sortie et
+consommait le temps. Après correction, même session : **770 lignes** (÷ 488), `VdSetSystemCommandBuffer`
+**0**, tentatives `hud.xex` **2**.
+
+**Correction 1 — `common/src/kernel_video.cpp`** : le crochet absorbait déjà l'appel mais laissait
+parler le stub du SDK, qui journalise. Le SDK n'implémente rien (`REX_EXPORT_STUB`), donc absorber
+l'appel ne change pas le comportement — seulement le bruit. `DASH_TRACE_VD=1` garde la trace fine.
+
+**Correction 2 — `common/src/dash_xam_runtime.cpp`** : `game:` n'était monté sur **rien**.
+Le crochet `XexLoadImage` redirige les noms nus de XAM vers `game:\flash\<nom>`, chemin qui n'existait
+pas comme périphérique — d'où `VFS: 'game:\flash\hud.xex' -> [no device]`, puis nouvelle tentative,
+indéfiniment. `game:` est désormais monté sur la flash.
+
+### La lame Guide maison est retirée
+
+L'utilisateur : « il faudrait enlever cette fenêtre guide créée que l'on ouvre avec le bouton Guide.
+Le bouton Guide doit ouvrir la fenêtre Guide du dashboard Xbox ».
+
+C'est juste : la lame (`common/src/dash_guide.cpp`, bouton `XAM_INPUT_GAMEPAD_GUIDE` 0x0400) est une
+invention du projet, pas le Guide de la console. Sur Xbox 360, le Guide est une **interface de XAM**
+(`XamShowGuideUI`), pas une lame dessinée par le titre.
+
+- `native_gpu/src/front_profile.cpp` : la composition de la lame est **retirée du chemin normal**.
+  Le module reste compilé et rappelable par `DASH_GUIDE_LEGACY=1` (diagnostic), mais le bouton Guide
+  ne l'ouvre plus.
+- Vérification : `DASH_GUIDE_OPEN=1` (qui forçait son ouverture) ne produit plus rien.
+
+**Le vrai Guide reste à faire** : `XamShowGuideUI` est un `REX_EXPORT_STUB` dans le SDK
+(`xam_ui.cpp`), et XAM recompilé n'a **aucune** fonction dont le nom contient « Guide » (vérifié :
+0 sur 16 238 symboles de `libdash_xam.so`). Le Guide de la console est donc une interface XAM que
+personne n'ouvre encore : c'est un travail à part entière, pas un réglage. Piste : XAM possède ses
+propres interfaces (`XamShowSigninUI`, `XamShowMessageBoxUI`… déjà redirigées) ; le Guide est
+probablement `XamShowGuideUI` côté hôte, à relier à la même machinerie `dash_xam_redir` +
+`dash_xam_hud_ui` que les boîtes, une fois qu'on saura quelle fonction de XAM recompilé l'affiche.

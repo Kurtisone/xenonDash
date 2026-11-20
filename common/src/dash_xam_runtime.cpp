@@ -96,6 +96,13 @@ void MountFlash(rex::filesystem::VirtualFileSystem* vfs, const fs::path& flash_d
   }
   Mount(vfs, "\\SystemRoot", flash_dir, true);
   Mount(vfs, "\\Device\\Flash", flash_dir, true);
+  // game: -> la flash. Les modules d'interface que XAM charge par leur nom nu sont rediriges vers
+  // game:\flash\<nom> (voir le crochet XexLoadImage plus bas), et ce chemin n'existait pas comme
+  // peripherique : chaque tentative echouait (« VFS: 'game:\flash\hud.xex' -> [no device] »).
+  // Mesure du 2026-11-20 : 356 echecs et 356 nouvelles tentatives de chargement de hud.xex en 40 s,
+  // soit une boucle qui ne peut pas aboutir. Un fichier present dans la flash est desormais
+  // joignable par les deux chemins.
+  Mount(vfs, "game:", flash_dir, true);
 }
 
 void MountXamDevices(rex::filesystem::VirtualFileSystem* vfs) {

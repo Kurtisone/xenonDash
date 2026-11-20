@@ -842,10 +842,15 @@ NGPU_HOOK(NGP_Swap) {
           composed.assign(pixels, pixels + size_t(renderer.presented_width()) * renderer.presented_height());
           if (ngpu::HudComposite(composed.data(), renderer.presented_width(), renderer.presented_height())) pixels = composed.data();
         }
-        // Lame Guide (bouton Xbox) : composee dans l'image finale, comme le HUD de XAM.
-        // Voir common/src/dash_guide.cpp ; elle n'utilise ni ImGui (indisponible en rendu
-        // natif) ni Vulkan, seulement le tampon R10G10B10A2 ci-dessus.
-        if (ngpu::GuideComposite) {
+        // La lame Guide maison (common/src/dash_guide.cpp, bouton Guide 0x0400) n'est plus
+        // composee : ce n'est pas le Guide de la console. Sur Xbox 360, le Guide est une
+        // interface de XAM (XamShowGuideUI), pas une lame dessinee par le titre. La garder
+        // donnait deux comportements pour la meme touche, dont un qui n'existe sur aucune
+        // console. Voir docs/xam_13604_compilation.md, « Guide ».
+        // Le module reste compile (ngpu::GuideComposite) pour pouvoir le rappeler en diagnostic
+        // avec DASH_GUIDE_LEGACY=1, sans le remettre dans le chemin normal.
+        static const bool legacy_guide = std::getenv("DASH_GUIDE_LEGACY") != nullptr;
+        if (legacy_guide && ngpu::GuideComposite) {
           if (composed.size() != size_t(renderer.presented_width()) * renderer.presented_height())
             composed.assign(pixels, pixels + size_t(renderer.presented_width()) * renderer.presented_height());
           if (ngpu::GuideComposite(composed.data(), renderer.presented_width(),

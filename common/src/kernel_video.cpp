@@ -99,7 +99,14 @@ REX_HOOK_RAW(__imp__VdSetSystemCommandBuffer) {
       }
     }
   }
-  sdk(ctx, base);
+  // Ne PAS appeler le stub du SDK : il journalise « __imp__VdSetSystemCommandBuffer STUB » à chaque
+  // invocation, et XAM l'appelle plusieurs fois par image du HUD. Mesure du 2026-11-20 : 371 443
+  // lignes en 40 s, soit ~80 % du journal et l'essentiel du temps perdu ; l'utilisateur a
+  // interrompu un chargement qui n'avançait plus. Le SDK n'implémente rien (stub), donc absorber
+  // l'appel ne change pas le comportement — seulement le bruit et le coût.
+  // DASH_TRACE_VD=1 rétablit la trace détaillée si on en a besoin.
+  (void)sdk;
+  ctx.r3.u64 = 0;  // succès
 }
 
 // ---- notifications graphiques vers XAM (palier N2) ----
