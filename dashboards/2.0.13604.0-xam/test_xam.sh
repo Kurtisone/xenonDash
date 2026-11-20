@@ -26,14 +26,23 @@ if [ -n "${SHM_KB:-}" ] && [ "$SHM_KB" -lt 5000000 ]; then
   echo "note : /dev/shm = $((SHM_KB / 1024)) Mo (suffisant avec le SDK à jour)." >&2
 fi
 
-echo "profil=$PROFILE  hud=$HUD"
-echo "touches : A = Espace ou ';'   B = Retour arrière   Start = Entrée   flèches = stick droit"
+# AUTOPROFILE=1 : profil synthétique hors ligne (cvar en argument), pour comparer avec une console
+# sans profil. En mode XAM, la cvar ne s'applique que si les appels profil passent par le HLE :
+# d'ou le NOREDIRECT ci-dessous.
+ARGS=""
+if [ "${AUTOPROFILE:-0}" = 1 ]; then
+  ARGS="--dash_auto_profile=true"
+  ENVV="$ENVV DASH_XAM_NOREDIRECT=XamUserGetXUID"
+fi
+
+echo "profil=$PROFILE  hud=$HUD${AUTOPROFILE:+ (autoprofile=$AUTOPROFILE)}"
+echo "touches : A = Espace ou ';'   B = Retour arrière   Start = Entrée   G = Guide   flèches = stick droit"
 echo
 
 if [ -n "${1:-}" ]; then
   env $ENVV LD_LIBRARY_PATH="$P/sdk/lib" timeout "$1" \
-    "$D/out/build/linux-amd64-relwithdebinfo/dash" --game_data_root="$D/assets"
+    "$D/out/build/linux-amd64-relwithdebinfo/dash" --game_data_root="$D/assets" $ARGS
 else
   exec env $ENVV LD_LIBRARY_PATH="$P/sdk/lib" \
-    "$D/out/build/linux-amd64-relwithdebinfo/dash" --game_data_root="$D/assets"
+    "$D/out/build/linux-amd64-relwithdebinfo/dash" --game_data_root="$D/assets" $ARGS
 fi
