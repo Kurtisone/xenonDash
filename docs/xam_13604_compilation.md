@@ -1680,3 +1680,53 @@ dans notre couche hôte. Le corriger demande de trouver où XAM confond statut e
   d'index utilisateur ;
 - la touche G ne ferme pas la boîte : cohérent, elle ouvre le Guide, elle ne pilote pas un
   indicateur d'activité.
+
+## 2026-11-20 : la « boucle XUID » n'est pas un bug — c'est l'absence de profil
+
+Correction d'un diagnostic précédent. J'avais conclu que XAM « passait un statut d'erreur comme
+index utilisateur ». **C'était faux**, et l'erreur venait de mon instrumentation : je journalisais
+`ctx.r3` **après** l'appel (le statut retourné) en le présentant comme l'argument.
+
+Mesure corrigée (index lu **avant** l'appel) :
+
+```
+[xuid] GetXUID(index=0 mask=3) -> 0x80070525 (appel 1)
+[xuid] GetXUID(index=1 mask=3) -> 0x80070525 (appel 2)
+[xuid] GetXUID(index=2 mask=3) -> 0x80070525 (appel 3)
+[xuid] GetXUID(index=3 mask=3) -> 0x80070525 (appel 4)
+```
+
+XAM **énumère normalement les 4 utilisateurs**, avec les masques attendus (3 = XUID + Gamertag,
+1 = XUID). Il reçoit `ERROR_NO_SUCH_USER` pour chacun parce qu'**aucun profil n'existe**, et il
+réessaie — c'est un comportement de console neuve, pas un défaut.
+
+### La chaîne, établie par l'inventaire
+
+L'outil `tools/function_inventory.py` a permis de la remonter en quelques commandes :
+
+```
+sub_92173828  (initialisation, rôle profil-utilisateur, 372 lignes)
+  └─ lit 396(objet) — vaut 0x000000FF = 255 (« aucun utilisateur »), valeur correcte
+  └─ sub_92170310  (gère proprement 255 : saute l'appel)
+       └─ sub_9216DD30  (54 lignes) : GetXUID(index, mask=3) puis mask=4
+            └─ XamUserGetXUID
+```
+
+Détail qui compte : `sub_9216DD30` teste le **bit 0** du statut
+(`rlwinm r11,r3,1,31,31` puis `xori r3,r11,1`). `0x80070525` est impair, donc bit 0 = 1, donc
+« pas de XUID ». Le code est **correct** — il constate simplement l'absence de profil.
+
+### La solution n'est pas dans le code, elle est dans le profil
+
+Il faut un utilisateur. Deux voies, et la première est celle que l'utilisateur veut de toute façon
+(parcours console) :
+
+1. **créer un profil** via l'écran de création (`DASH_PROFILE_MODE=xam`, écran de création de
+   profil) — c'est le parcours réel d'une console neuve ;
+2. **profil synthétique** : `--dash_auto_profile=true` en argument (cvar, pas variable
+   d'environnement). Mesure : en mode XAM, `XamUserGetXUID` reste redirigé vers XAM recompilé, donc
+   la cvar ne suffit pas seule — il faut aussi `DASH_XAM_NOREDIRECT=XamUserGetXUID` pour que le HLE
+   réponde avec son profil. Combinaison testée : le HLE rend alors un XUID valide pour l'index 0.
+
+Tant qu'aucun profil n'existe, l'indicateur d'activité de XAM reste affiché : c'est cohérent, et ce
+n'est pas un défaut à corriger dans notre couche hôte.

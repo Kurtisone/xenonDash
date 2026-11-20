@@ -125,12 +125,16 @@ void Dispatch(Slot& s, PPCContext& ctx, uint8_t* base) {
   // Diagnostic : XAM interroge XamUserGetXUID en boucle (1000+ appels mesures le 2026-11-20) quand
   // aucun profil n'existe : il attend un XUID qui ne vient jamais. On journalise la valeur rendue.
   if (std::string_view(s.name) == "XamUserGetXUID") {
+    // Mesure du 2026-11-20 : XAM enumere normalement les 4 utilisateurs (index 0..3) a chaque
+    // rafraichissement de session. Le 0x80070525 observe dans les journaux precedents etait le r3
+    // APRES l'appel (statut d'erreur rendu), pas l'argument — d'ou une fausse piste de « boucle ».
+    const uint32_t index_avant = static_cast<uint32_t>(ctx.r3.u32);
     DispatchImpl(s, ctx, base);
     static std::atomic<int> _n{0};
     const int n = ++_n;
-    if (n <= 6 || n % 2000 == 0)
-      REXLOG_WARN("[xuid] XamUserGetXUID(user=0x{:08X}) lr=0x{:08X} -> r3=0x{:08X} (appel {})",
-                  static_cast<uint32_t>(ctx.r3.u32), static_cast<uint32_t>(ctx.lr),
+    if (n <= 8 || n % 5000 == 0)
+      REXLOG_INFO("[xuid] GetXUID(index={} mask={}) -> 0x{:08X} (appel {})",
+                  index_avant, static_cast<uint32_t>(ctx.r4.u32),
                   static_cast<uint32_t>(ctx.r3.u64), n);
     return;
   }
