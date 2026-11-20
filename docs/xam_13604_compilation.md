@@ -1332,3 +1332,73 @@ fidèlement** ; seul l'assombrissement de la composition est en cause.
 Cette boîte ne se referme pas (surveillée 30 s, `[hud] HUD affiche` une seule fois, jamais
 `masque`) : c'est l'attente de `XamShowMessageBoxUI` décrite plus haut, désormais **visible** au lieu
 d'être un écran noir. C'est le sujet suivant, pas une régression.
+
+## 2026-11-20 (nuit) : plantage du HUD corrigé (verrou d'entrées manquant)
+
+### Le rapport de l'utilisateur, sur Steam Deck (GPU réel, RADV)
+
+Premier essai sur machine réelle, `HUD=1` :
+
+```
+[ngpu] noyau ngpu_core sur 'AMD Custom GPU 0405 (RADV VANGOGH)' (profil 13604)
+[hud]  image 600 : 3922 dessins, 0 ignores, 600 resolves
+Erreur de segmentation (core dumped)
+```
+
+Le HUD **dessinait** (600 images, 3922 dessins) puis le processus mourait. `coredumpctl` donne la
+pile exacte :
+
+```
+#0  std::__merge_adaptive<...>                    (librexruntime.so)
+#1  rex::input::InputSystem::RefreshDevices()
+#2  rex::input::InputSystem::GetStateForUI()
+#3  dash::guide::GuideFrame()
+#4  ngpu_hook_9218EAB0            <- crochet de présentation du Dashboard
+#5  sub_9218EAB0 -> sub_9218F138 -> sub_92172B48 -> sub_92172670 -> sub_92173B80 -> xstart
+```
+
+### La cause : `RefreshDevices()` sans verrou, appelé de deux fils
+
+`InputSystem::RefreshDevices()` **reconstruit** `devices_` et `device_owners_`
+(`devices_.clear()` puis `push_back` dans l'ordre trié) et n'avait **aucun verrou**. Il est appelé :
+
+- par le **thread principal**, à chaque image, via la lame Guide
+  (`GuideFrame` → `GetStateForUI`, `native_gpu/src/dash_guide_front.cpp`) ;
+- par les **threads invités**, via `GetState` / `XInputGetState`.
+
+Un fil vidait donc les vecteurs pendant qu'un autre les parcourait ou les triait — d'où le plantage
+dans `std::stable_sort` / `__merge_adaptive`, de façon intermittente (il faut que les deux appels se
+chevauchent, ce qui explique qu'il n'apparaissait pas sous Xvfb avec un seul cœur occupé).
+
+### Correctif
+
+`InputSystem` a désormais un `devices_mutex_` (`include/rex/input/input_system.h`), pris par
+`RefreshDevices()`, `DriverForDevice()` et `DeviceInfoFor()` — les trois fonctions qui touchent
+`devices_` / `device_owners_`. `OnDevicesChanged()` des affectations ne rappelle pas `InputSystem`,
+donc pas de risque d'interblocage.
+
+Vérification : 60 s avec le HUD actif, **1200 images HUD, 8285 dessins, aucun plantage**
+(code de sortie 124 = fin de `timeout`, pas un crash).
+
+### Ce que le rapport révèle d'autre, et qui change le diagnostic
+
+Sur machine réelle, avec le HUD actif :
+
+```
+[hud] image 600  : clears 600, draws 3318, resolves 600
+[hud] image 1200 : clears 1200, draws 7077, resolves 1200
+```
+
+Le HUD **tourne en continu** (~6 dessins par image, 1200 images) et ne se fige pas. Il n'y a donc
+**pas** de blocage dur : la boîte modale (barre de progression + indicateur d'activité) est dessinée
+par XAM recompilé lui-même. Vérifié : dans une session où aucune `XamShowMessageBoxUI` n'est
+demandée par le Dashboard, la boîte apparaît quand même dès l'image 2, et le journal hôte ne montre
+aucune requête (`[hudui]` muet, `BuildWatcher` sur `active=false`).
+
+Conséquence pour la suite : le problème n'est plus « la boîte ne se referme pas et bloque tout »,
+mais « XAM dessine un dialogue de progression que personne n'a demandé, et son fond atténué
+(`dim = 0,22`) assombrit l'image du Dashboard ». Ce sont deux défauts distincts :
+1. **le fond atténué** est appliqué à toute l'image au lieu de la zone de la boîte
+   (`HudComposite`, `native_gpu/src/hud_front.cpp`) → c'est ce qui rend l'écran sombre ;
+2. **le dialogue lui-même** est dessiné sans demande : à instruire côté XAM recompilé
+   (quel appel l'ouvre, quel état il attend).
