@@ -30,3 +30,5 @@ __pycache__/
 dashboards/*-regen/
 out/
 runs/
+docs/inventaire/*.tsv
+docs/inventaire/*.json
