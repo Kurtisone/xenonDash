@@ -1528,3 +1528,44 @@ Ce qui est acquis, et vérifiable indépendamment de l'affichage :
 Sur Steam Deck, `HUD=1 ./test_xam.sh` puis le bouton Guide : le Guide doit apparaître, puisque XAM
 l'accepte et que son HUD dessine en continu. Si l'écran ne change pas, la prochaine mesure est
 l'instrumentation du consommateur du message `0x21015`.
+
+## 2026-11-20 (nuit) : Guide — retour de la machine réelle, deux corrections
+
+Rapport de l'utilisateur sur Steam Deck (RADV), qui tranche deux questions.
+
+### 1. Le Guide ne s'ouvre qu'avec `HUD=1`, et s'ouvre alors tout de suite
+
+C'est cohérent et ce n'est pas un bug du déclenchement : **le Guide de XAM est dessiné par le HUD**
+(même chemin D3D 2099 que les boîtes de message). `HUD=0` pose `DASH_HUD_DISABLE=1`, qui coupe
+`hudd3d_call` — donc plus rien ne dessine l'interface XAM. Le Guide est accepté par XAM mais invisible.
+
+Preuve dans son journal, `hud=0` :
+
+```
+[guidetrace] portier -> 1 (changement, appel 1)
+[guideio] envoi message -> r3=0
+[guideio] apres 81896B20 -> r3=0
+```
+
+Le portier **retourne 1** (autorisé) et le message part sans erreur : XAM ouvre bien son Guide, seul
+le rendu manque. Sur sa machine, avec `HUD=1`, la boîte apparaît donc immédiatement.
+
+Conséquence pratique : **le Guide et le HUD sont inséparables**. Il n'y a pas de « Guide sans HUD »
+dans cette architecture, puisque le Guide *est* une interface du HUD.
+
+### 2. La touche G ne faisait rien — liaison vide par défaut
+
+`keybind_guide` valait `""` : `IsBindPressed` ignore un jeton vide, donc le bouton Guide
+(`X_INPUT_GAMEPAD_GUIDE`, 0x0400) n'était atteignable ni au clavier ni sans manette. Corrigé dans le
+SDK : `keybind_guide = "G"` par défaut. Le bouton Guide de la manette reste prioritaire quand elle
+est branchée, et la variable `REXCVAR` permet de changer la touche.
+
+### 3. Le fond atténué assombrissait tout l'écran — corrigé
+
+`HudComposite` appliquait `dim` (0,22) à **toute** l'image. Désormais il ne l'applique qu'à la zone
+de la boîte (boîte englobante des pixels non transparents, marge de 2 px). Le reste du Dashboard
+garde sa luminosité : c'est l'atténuation demandée par le titre **sous la boîte**, pas un voile sur
+l'écran entier.
+
+Non vérifiable sous Xvfb (le HUD n'y produit qu'une image), à confirmer sur Steam Deck : avec
+`HUD=1`, l'image doit être nette autour de la boîte au lieu d'être sombre partout.

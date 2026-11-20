@@ -89,6 +89,11 @@ struct Overlay {
   uint32_t w = 0, h = 0;
   bool visible = false;  // au moins quelques pixels d'alpha notable
   float dim = 1.0f;      // facteur applique a l'image du Dashboard sous l'overlay (fond atténué), 1 = aucun
+  // Boite englobante des pixels non transparents : le fond atténué ne doit s'appliquer qu'ici, pas a
+  // tout l'ecran. Mesure du 2026-11-20 : sur Steam Deck la boite fait 243,30-607,279 sur 852x480, et
+  // l'attenuation appliquee a l'image entiere donnait une luma de 31 au lieu de 124.
+  uint32_t box_x0 = 0, box_y0 = 0, box_x1 = 0, box_y1 = 0;
+  bool has_box = false;
   uint64_t seq = 0;
 } g_overlay;
 
@@ -460,6 +465,7 @@ void PublishOverlay() {
   uint32_t w = 0, h = 0;
   if (!g.dest || !g.core->renderer().ReadResolved(g.dest, rgba, w, h)) return;
   bool visible = false;
+  uint32_t bx0 = 0, by0 = 0, bx1 = 0, by1 = 0;  // boite englobante (portee de la fonction)
   {
     size_t pixels = 0;
     uint32_t amax = 0, x0 = w, y0 = h, x1 = 0, y1 = 0;
@@ -473,6 +479,7 @@ void PublishOverlay() {
     }
     // Visible : au moins quelques pixels notablement opaques (une image au repos peut garder des pixels d'alpha tres faible).
     visible = pixels >= 16 && amax >= 8;
+    bx0 = x0; by0 = y0; bx1 = x1; by1 = y1;
     if (std::getenv("DASH_HUD_STATS") && (g.frames % 60 == 1 || Evlog()))
       std::fprintf(stderr, "[hud] overlay image %llu : %zu pixels non transparents, alpha max %u, boite %u,%u - %u,%u\n", (unsigned long long)g.frames, pixels, amax, x0, y0, x1, y1);
   }
@@ -507,6 +514,8 @@ void PublishOverlay() {
     g_overlay.h = h;
     g_overlay.visible = visible;
     g_overlay.dim = visible ? g.frame_dim : 1.0f;
+    g_overlay.box_x0 = bx0; g_overlay.box_y0 = by0; g_overlay.box_x1 = bx1; g_overlay.box_y1 = by1;
+    g_overlay.has_box = visible;
     ++g_overlay.seq;
   }
   // Notification systeme « interface systeme affichee » (XN_SYS_UI, 9) : sur la console XAM la diffuse aux titres a l'ouverture et a la
@@ -646,6 +655,14 @@ bool HudComposite(uint32_t* pixels, uint32_t w, uint32_t h) {
   const uint32_t ow = g_overlay.w, oh = g_overlay.h;
   const uint8_t* src = g_overlay.rgba.data();
   const float dim = g_overlay.dim;
+  // Le fond atténué ne s'applique qu'a la zone de la boite (avec une marge), pas a tout l'ecran :
+  // c'est l'attenuation demandee par le titre SOUS la boite, pas un voile sur le Dashboard.
+  const bool has_box = g_overlay.has_box;
+  const float sx = w ? float(ow) / float(w) : 1.0f, sy = h ? float(oh) / float(h) : 1.0f;
+  const int bx0 = has_box ? std::max(0, int(g_overlay.box_x0 / (sx ? sx : 1.0f)) - 2) : 0;
+  const int by0 = has_box ? std::max(0, int(g_overlay.box_y0 / (sy ? sy : 1.0f)) - 2) : 0;
+  const int bx1 = has_box ? std::min(int(w) - 1, int(g_overlay.box_x1 / (sx ? sx : 1.0f)) + 2) : int(w) - 1;
+  const int by1 = has_box ? std::min(int(h) - 1, int(g_overlay.box_y1 / (sy ? sy : 1.0f)) + 2) : int(h) - 1;
   for (uint32_t y = 0; y < h; ++y) {
     const float fy = std::max(0.0f, (y + 0.5f) * oh / h - 0.5f);
     const uint32_t y0 = std::min(oh - 1, uint32_t(fy)), y1 = std::min(oh - 1, y0 + 1);
@@ -662,7 +679,9 @@ bool HudComposite(uint32_t* pixels, uint32_t w, uint32_t h) {
       }
       const float alpha = c[3] / 255.0f;
       uint32_t& p = pixels[size_t(y) * w + x];
-      if (dim < 1.0f) {  // fond atténué : l'image du Dashboard est multipliee par le facteur avant la superposition
+      // fond atténué : l'image du Dashboard est multipliee par le facteur avant la superposition,
+      // uniquement dans la zone de la boite (voir bx0..by1 ci-dessus).
+      if (dim < 1.0f && int(x) >= bx0 && int(x) <= bx1 && int(y) >= by0 && int(y) <= by1) {
         const float r0 = (p & 1023) * dim, g0 = ((p >> 10) & 1023) * dim, b0 = ((p >> 20) & 1023) * dim;
         p = (p & 0xC0000000u) | uint32_t(b0 + 0.5f) << 20 | uint32_t(g0 + 0.5f) << 10 | uint32_t(r0 + 0.5f);
       }
