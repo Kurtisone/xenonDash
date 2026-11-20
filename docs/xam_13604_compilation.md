@@ -1512,3 +1512,19 @@ apparaître, puisque XAM accepte et que son HUD y tourne en continu.
 
 Prochaine mesure si l'écran reste inchangé sur Steam Deck : instrumenter le consommateur du message
 `0x21015` (app 254) pour voir s'il est distribué au HUD, et quel état il attend ensuite.
+
+### Limite de la vérification ici, et ce qu'il faut regarder sur la machine réelle
+
+Sous Xvfb (lavapipe, sans GPU), le HUD de XAM ne produit qu'**une** image puis se tait
+(`[hud] image 1 : draws 3`, rien ensuite). Sur le Steam Deck de l'utilisateur, avec RADV, il tourne en
+continu (`image 1200 : draws 7077`). Conséquence : **je ne peux pas voir le Guide s'afficher ici**,
+même quand XAM l'accepte — le HUD qui devrait le dessiner est muet dans cet environnement.
+
+Ce qui est acquis, et vérifiable indépendamment de l'affichage :
+- le bouton Guide déclenche bien l'appel (chaîne complète tracée) ;
+- XAM **accepte** (`r3 = 0`) au lieu de refuser (`5`) ;
+- il envoie son message système (`app 254`, `message 0x21015`).
+
+Sur Steam Deck, `HUD=1 ./test_xam.sh` puis le bouton Guide : le Guide doit apparaître, puisque XAM
+l'accepte et que son HUD dessine en continu. Si l'écran ne change pas, la prochaine mesure est
+l'instrumentation du consommateur du message `0x21015`.
