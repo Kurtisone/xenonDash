@@ -128,8 +128,9 @@ void Dispatch(Slot& s, PPCContext& ctx, uint8_t* base) {
     DispatchImpl(s, ctx, base);
     static std::atomic<int> _n{0};
     const int n = ++_n;
-    if (n <= 3 || n % 2000 == 0)
-      REXLOG_WARN("[xuid] XamUserGetXUID(user={}) -> r3=0x{:08X} (appel {})", ctx.r3.u32,
+    if (n <= 6 || n % 2000 == 0)
+      REXLOG_WARN("[xuid] XamUserGetXUID(user=0x{:08X}) lr=0x{:08X} -> r3=0x{:08X} (appel {})",
+                  static_cast<uint32_t>(ctx.r3.u32), static_cast<uint32_t>(ctx.lr),
                   static_cast<uint32_t>(ctx.r3.u64), n);
     return;
   }
