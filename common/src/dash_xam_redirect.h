@@ -63,6 +63,12 @@ uint32_t PutWide(const char16_t* s);
 bool ShowXamMessageBox(const char16_t* title, const char16_t* text, const char16_t* const* buttons, size_t button_count,
                        uint32_t active_button, uint32_t flags, uint32_t* choice, int wait_ms);
 
+// Guide de la console : XamShowGuideUI (ordinal 772) de XAM recompilé, appelé depuis l'hôte — c'est ce que le
+// bouton Guide doit ouvrir, pas une lame dessinée par le titre. À appeler depuis un thread invité (XHostThread),
+// comme ShowXamMessageBox. `wait_ms` > 0 : attend la fermeture (borne). Faux si XAM n'est pas chargé/redirigé ou si
+// l'appel est refusé ; le journal dit alors lequel des deux.
+bool ShowXamGuide(uint32_t user_index, int wait_ms);
+
 }  // namespace dash::xamredir
 
 // Accroche typée (comme REX_HOOK) qui, en mode profil XAM, exécute l'export de XAM recompilé de même nom.

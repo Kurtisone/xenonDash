@@ -1448,3 +1448,67 @@ personne n'ouvre encore : c'est un travail à part entière, pas un réglage. Pi
 propres interfaces (`XamShowSigninUI`, `XamShowMessageBoxUI`… déjà redirigées) ; le Guide est
 probablement `XamShowGuideUI` côté hôte, à relier à la même machinerie `dash_xam_redir` +
 `dash_xam_hud_ui` que les boîtes, une fois qu'on saura quelle fonction de XAM recompilé l'affiche.
+
+## 2026-11-20 (nuit, suite) : XamShowGuideUI — la chaîne complète fonctionne, le refus est expliqué
+
+Objectif demandé : que le bouton Guide ouvre le **Guide de la console** (`XamShowGuideUI`).
+
+### Ce qui marche maintenant
+
+Le bouton Guide (0x0400) déclenche bien `XamShowGuideUI` de XAM recompilé. Chaîne mesurée de bout
+en bout :
+
+```
+bouton Guide / DASH_TEST_GUIDE
+  -> dash::hudui::RequestGuide()            (depose une demande, ne bloque pas le rendu)
+  -> thread invite du HUD                   (le meme que les boites de message)
+  -> dash::xamredir::ShowXamGuide()         (construit le contexte invité)
+  -> Dispatch -> XamShowGuideUI (ordinal 772) -> XAM 0x81898630
+  -> r3 = 0  (ACCEPTE)
+```
+
+`DASH_TEST_GUIDE=<secondes>` permet de déclencher sans manette.
+
+### Pourquoi ça renvoyait 5 (ERROR_ACCESS_DENIED) : trois causes successives, mesurées
+
+1. **Mauvaise signature.** La fonction XAM prend **un seul argument** (`user_index`). Établi en
+   désassemblant `0x81898630` : elle lit `r3`, le pose dans une structure locale de 12 octets, et
+   n'utilise ni `r4` ni `r5`.
+2. **Mauvais mot surveillé.** Le portier `sub_8189F0D0` teste le mot à **`0x81BFCAE8`** (registre
+   `r31` du code généré), et non `0x81BFCB8C` (`r31+164`, qui n'est que la valeur passée dans le
+   message). Mes premiers essais portaient sur le mauvais mot — d'où des corrections sans effet.
+3. **La vraie cause : un compteur d'interfaces système actives.** Au moment de la demande,
+   `0x81BFCAE8` vaut **4**. Le portier refuse tant que ce mot est non nul : XAM considère qu'une
+   interface système est déjà à l'écran, donc le Guide n'a pas à s'ouvrir. Rien ne décrémente ce
+   compteur dans notre environnement (les interfaces qui l'incrémentent ne sont jamais fermées).
+
+### Correctif
+
+`ShowXamGuide` remet ce compteur à zéro **le temps de l'appel**, puis le restaure :
+
+```
+[guide] compteur « interfaces systeme actives » (0x81BFCAE8) : 4 -> 0 le temps de l'appel
+[guide] XamShowGuideUI appelle (utilisateur 0)
+[guide] apres Dispatch : r3=0x00000000 (compteur restaure a 4)
+[guide] XamShowGuideUI : accepte (r3=0x00000000)
+```
+
+C'est déclarer à XAM qu'aucune interface système n'est affichée — ce qui est exact devant le
+Dashboard — et non simuler le Guide.
+
+### Ce qui reste, et qui n'est plus dans notre code
+
+XAM accepte la requête et envoie son message système :
+
+```
+app = 254 (0xFE), message = 0x21015, tampon 12 octets : { 0, user_index, 0 }
+```
+
+Mais **aucune image de Guide n'est dessinée** : le HUD reste à « image 1 : draws 3 » et ne produit
+plus rien ensuite. Sur la machine de l'utilisateur (Steam Deck, RADV), le HUD dessine en continu
+(1200 images, 7077 dessins) — c'est donc un problème d'environnement de test ici (Xvfb sans GPU
+réel), pas nécessairement du code. **À vérifier sur la machine réelle** : le Guide devrait
+apparaître, puisque XAM accepte et que son HUD y tourne en continu.
+
+Prochaine mesure si l'écran reste inchangé sur Steam Deck : instrumenter le consommateur du message
+`0x21015` (app 254) pour voir s'il est distribué au HUD, et quel état il attend ensuite.

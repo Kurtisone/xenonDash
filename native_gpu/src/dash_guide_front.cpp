@@ -11,6 +11,7 @@
 // lame utilisable en rendu natif, ou ImGui n'est pas disponible.
 #include <algorithm>
 #include <chrono>
+#include <cstdio>
 #include <cstdlib>
 #include <cstdint>
 #include <string>
@@ -21,6 +22,7 @@
 #include <rex/runtime.h>
 
 #include "dash_guide.h"
+#include "dash_xam_hud_ui.h"
 #include "ngpu.h"
 
 namespace dash::guide {
@@ -98,9 +100,28 @@ bool GuideFrame(uint32_t* pixels, uint32_t w, uint32_t h) {
   // seule la pression du bouton Guide l'ouvre.
   static const bool auto_open = std::getenv("DASH_GUIDE_OPEN") != nullptr;
   if (auto_open && !g_items_built && !g_state.open) Toggle(g_state);
+  // Le bouton Guide ouvre le Guide DE LA CONSOLE (XamShowGuideUI de XAM recompilé), pas la lame maison.
+  // La lame reste atteignable par DASH_GUIDE_LEGACY=1 (diagnostic), jamais par le bouton.
+  static const bool legacy = std::getenv("DASH_GUIDE_LEGACY") != nullptr;
+  // DASH_TEST_GUIDE=<secondes> : déclenche le Guide depuis l'hôte après ce délai, sans manette.
+  // Sert à vérifier le branchement (XamShowGuideUI) sur une machine sans bouton Guide.
+  static const double test_after = [] {
+    const char* e = std::getenv("DASH_TEST_GUIDE");
+    return e && *e ? std::atof(e) : -1.0;
+  }();
+  static bool test_fired = false;
+  if (!test_fired && test_after >= 0.0 && now >= test_after) {
+    test_fired = true;
+    REXLOG_INFO("[guide] DASH_TEST_GUIDE : déclenchement après {:.1f} s", test_after);
+    if (!legacy) dash::hudui::RequestGuide();
+  }
   if (e_guide.Rising(b.guide)) {
-    Toggle(g_state);
-    REXLOG_INFO("[guide] lame {}", g_state.open ? "ouverte" : "fermee");
+    if (legacy) {
+      Toggle(g_state);
+      REXLOG_INFO("[guide] lame (mode diagnostic) {}", g_state.open ? "ouverte" : "fermee");
+    } else {
+      dash::hudui::RequestGuide();
+    }
   }
 
   PlayerCard card{};

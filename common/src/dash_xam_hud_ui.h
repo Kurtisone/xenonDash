@@ -22,4 +22,10 @@ namespace dash::hudui {
 // `imgui_available` : imgui_drawer() du présentateur SDK. Sans effet si DASH_XAM_MODULE n'est pas défini.
 void Init(rex::system::KernelState* ks, bool imgui_available);
 
+// Ouvre le Guide de la console : appelle XamShowGuideUI de XAM recompilé depuis un thread invité, comme les
+// boîtes de message. C'est ce que fait le bouton Guide (0x0400) depuis que la lame maison a été retirée.
+// Peut être appelé depuis n'importe quel fil (le rendu) : la demande est déposée et servie par le thread
+// invité du HUD. Sans effet (et journalisé) si XAM n'est pas chargé.
+void RequestGuide();
+
 }  // namespace dash::hudui

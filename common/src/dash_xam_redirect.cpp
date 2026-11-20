@@ -401,6 +401,78 @@ bool ShowXamMessageBox(const char16_t* title, const char16_t* text, const char16
   return true;
 }
 
+// Guide de la console : XamShowGuideUI(utilisateur, overlapped). Signature XDK : la fonction prend l'index
+// d'utilisateur et un XOVERLAPPED optionnel ; elle ne rend la main qu'à la fermeture quand l'overlapped est nul.
+// On lui en fournit toujours un, pour pouvoir borner l'attente sans bloquer le fil appelant indéfiniment.
+bool ShowXamGuide(uint32_t user_index, int wait_ms) {
+  Slot* slot = FindSlot("XamShowGuideUI");
+  if (!slot || !slot->guest.load()) {
+    REXLOG_WARN("[guide] XamShowGuideUI : XAM recompilé non chargé ou non redirigé (redirections : "
+                "mode profil XAM, ou DASH_XAM_REDIRECT=XamShowGuideUI)");
+    return false;
+  }
+  auto* ts = rex::runtime::ThreadState::Get();
+  if (!ts) {
+    REXLOG_WARN("[guide] XamShowGuideUI : pas de thread invité");
+    return false;
+  }
+  auto* ks = g_ks.load();
+  if (!ks) return false;
+  uint8_t* base = ks->memory()->virtual_membase();
+
+  // XOVERLAPPED à zéro (0x20 octets) : XAM refuse un overlapped nul quand il doit rendre un résultat.
+  const uint32_t overlapped = REX_KERNEL_MEMORY()->SystemHeapAlloc(0x20);
+  std::memset(base + overlapped, 0, 0x20);
+
+  // XamShowGuideUI(DWORD dwUserIndex) : un SEUL argument. Etabli en desassemblant la fonction de
+  // XAM recompilé (ordinal 772 -> 0x81898630) : elle lit r3, le pose dans une structure locale de
+  // 12 octets, appelle le portier sub_8189F0D0, et renvoie 5 (ERROR_ACCESS_DENIED) si ce portier
+  // échoue. Rien d'autre n'est lu : ni drapeaux, ni overlapped. Les deux essais précédents
+  // (overlapped en r4, puis drapeaux en r4) recevaient donc 5 pour la même raison — le portier,
+  // pas la signature.
+  PPCContext ctx = *ts->context();
+  ctx.r3.u64 = user_index;
+  ctx.r4.u64 = 0;
+  ctx.r5.u64 = 0;
+  ctx.r6.u64 = 0;
+
+  // Diagnostic : le portier de XamShowGuideUI (sub_8189F0D0) teste un drapeau global a
+  // 0x81BFCB8C (lis 0xFFFF81C0, -13592 + 164). Sans lui, XAM renvoie 5 (ERROR_ACCESS_DENIED).
+  // Cause etablie par la mesure (2026-11-20) : le portier sub_8189F0D0 de XamShowGuideUI teste le
+  // mot a 0x81BFCAE8 (registre r31 du code genere) et refuse (r3=5, ERROR_ACCESS_DENIED) si ce mot
+  // est non nul. Sur notre execution il vaut 4 — un compteur d'« interfaces systeme actives » que
+  // XAM incremente pour chaque interface qu'il croit affichee, et que rien ne decremente ici (les
+  // interfaces qui l'incrementent ne sont jamais fermees dans notre environnement).
+  // Le Guide ne peut donc pas s'ouvrir : XAM le refuse, en toute logique, parce qu'il croit
+  // qu'une interface systeme est deja a l'ecran.
+  //
+  // On remet ce compteur a zero le temps de l'appel, puis on restaure la valeur : c'est declarer
+  // a XAM qu'aucune interface systeme n'est affichee, ce qui est le cas devant le Dashboard.
+  // (Ne pas confondre avec 0x81BFCB8C, le mot passe dans le message : deux mots distincts, et mes
+  // premiers essais portaient sur le mauvais.)
+  const uint32_t counter_addr = 0x81BFCAE8u;
+  auto* counter = reinterpret_cast<uint32_t*>(base + counter_addr);
+  const uint32_t counter_before = __builtin_bswap32(*counter);
+  *counter = 0;
+  REXLOG_INFO("[guide] compteur « interfaces systeme actives » (0x{:08X}) : {} -> 0 le temps de l'appel",
+              counter_addr, counter_before);
+  REXLOG_INFO("[guide] XamShowGuideUI appelle (utilisateur {})", user_index);
+  Dispatch(*slot, ctx, base);
+  if (counter_before != 0) *counter = __builtin_bswap32(counter_before);
+  const uint32_t r = static_cast<uint32_t>(ctx.r3.u64);
+  REXLOG_INFO("[guide] XamShowGuideUI : r3=0x{:08X} (compteur restaure a {})", r, counter_before);
+  if (r != 0 && r != 0x3E5) {
+    REXLOG_WARN("[guide] XamShowGuideUI : refusé, r3=0x{:08X}", r);
+    return false;
+  }
+  REXLOG_INFO("[guide] XamShowGuideUI : accepté (r3=0x{:08X})", r);
+  (void)overlapped;  // la fonction ne le prend pas ; gardé pour un usage futur (attente bornée)
+  if (wait_ms > 0) {
+    WaitOverlapped(base, overlapped, wait_ms, "guide");
+  }
+  return true;
+}
+
 bool ProfileModeXam() {
   static const bool on = [] {
     const char* m = std::getenv("DASH_PROFILE_MODE");
@@ -506,7 +578,7 @@ void Configure(rex::system::KernelState* ks, rex::runtime::ExportResolver* resol
     redirect_list = "XGetVideoMode,XamUserGetXUID,XamUserGetSigninState,XamUserLogon,XamUserCheckPrivilege,XamUserIsOnlineEnabled,"
                     "XamShowMessageBoxUI,XamShowMessageBoxUIEx,"
                     "XamShowKeyboardUI,XamShowSigninUI,XamShowSigninUIp,XamShowCreateProfileUI,XamShowDeviceSelectorUI,"
-                    "XamShowGamerCardUIForXUID";
+                    "XamShowGamerCardUIForXUID,XamShowGuideUI";
     if (const char* e = std::getenv("DASH_XAM_REDIRECT"); e && *e) redirect_list += std::string(",") + e;
     REXLOG_INFO("[xamredir] DASH_PROFILE_MODE=xam : redirections {}", redirect_list);
   } else {
@@ -641,6 +713,7 @@ DASH_XAM_REDIRECT_HOOK(XamShowDeviceSelectorUI)
 DASH_XAM_REDIRECT_HOOK(XamShowCreateProfileUI)
 DASH_XAM_REDIRECT_HOOK(XamShowGamerCardUIForXUID)
 DASH_XAM_REDIRECT_HOOK(XamShowMessageBoxUIEx)
+DASH_XAM_REDIRECT_HOOK(XamShowGuideUI)
 DASH_XAM_REDIRECT_HOOK(XamVoiceCreate)
 DASH_XAM_REDIRECT_HOOK(XamVoiceHeadsetPresent)
 DASH_XAM_REDIRECT_HOOK(XamVoiceSubmitPacket)

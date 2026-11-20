@@ -842,19 +842,20 @@ NGPU_HOOK(NGP_Swap) {
           composed.assign(pixels, pixels + size_t(renderer.presented_width()) * renderer.presented_height());
           if (ngpu::HudComposite(composed.data(), renderer.presented_width(), renderer.presented_height())) pixels = composed.data();
         }
-        // La lame Guide maison (common/src/dash_guide.cpp, bouton Guide 0x0400) n'est plus
-        // composee : ce n'est pas le Guide de la console. Sur Xbox 360, le Guide est une
-        // interface de XAM (XamShowGuideUI), pas une lame dessinee par le titre. La garder
-        // donnait deux comportements pour la meme touche, dont un qui n'existe sur aucune
-        // console. Voir docs/xam_13604_compilation.md, « Guide ».
-        // Le module reste compile (ngpu::GuideComposite) pour pouvoir le rappeler en diagnostic
-        // avec DASH_GUIDE_LEGACY=1, sans le remettre dans le chemin normal.
+        // Le Guide n'est PLUS une lame dessinee par le titre : sur Xbox 360 c'est une interface de
+        // XAM (XamShowGuideUI). Mais ce point d'appel reste celui qui LIT le bouton Guide (0x0400)
+        // une fois par image, et c'est lui qui declenche la demande de Guide de la console
+        // (dash::hudui::RequestGuide). Retirer la composition sans garder cette lecture laissait le
+        // bouton Guide sans effet : mesure du 2026-11-20, aucune ligne [guide] dans le journal.
+        // La lame maison n'est composee que si DASH_GUIDE_LEGACY=1 (diagnostic).
         static const bool legacy_guide = std::getenv("DASH_GUIDE_LEGACY") != nullptr;
-        if (legacy_guide && ngpu::GuideComposite) {
+        if (ngpu::GuideComposite) {
           if (composed.size() != size_t(renderer.presented_width()) * renderer.presented_height())
             composed.assign(pixels, pixels + size_t(renderer.presented_width()) * renderer.presented_height());
+          // GuideFrame lit les entrees et, hors mode legacy, appelle RequestGuide() sur front montant ;
+          // il ne dessine que si la lame est ouverte (jamais hors legacy).
           if (ngpu::GuideComposite(composed.data(), renderer.presented_width(),
-                                   renderer.presented_height()))
+                                   renderer.presented_height()) && legacy_guide)
             pixels = composed.data();
         }
         if (const char* dm = std::getenv("DASH_NGPU_DUMP")) {  // "<image>:<fichier.ppm>" : image presentee par le noyau

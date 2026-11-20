@@ -99,14 +99,32 @@ void Push(BoxRequest req) {
 
 // Corps du thread invité (motif XHostThread des tests de dash_xam_redirect.cpp, StartTestThread) : sert les demandes
 // les unes après les autres. Vit jusqu'à la fin du processus (object_ref retenu par Init).
+// Demande de Guide en attente (posée par le rendu, servie par le thread invité).
+std::atomic<bool> g_guide_requested{false};
+
 void GuestLoop() {
   for (;;) {
     BoxRequest req;
+    bool guide = false;
     {
       std::unique_lock<std::mutex> lock(g_mu);
-      g_cv.wait(lock, [] { return !g_queue.empty(); });
-      req = std::move(g_queue.front());
-      g_queue.pop_front();
+      g_cv.wait(lock, [] { return !g_queue.empty() || g_guide_requested.load(); });
+      if (g_queue.empty()) {
+        guide = true;
+        g_guide_requested.store(false);
+      } else {
+        req = std::move(g_queue.front());
+        g_queue.pop_front();
+      }
+    }
+    if (guide) {
+      // Guide de la console, pas la lame maison : XAM recompilé l'affiche (ou dit pourquoi il ne peut pas).
+      const bool ok = dash::xamredir::ShowXamGuide(0, 0);
+      if (!ok) {
+        REXLOG_WARN("[guide] XamShowGuideUI n'a pas abouti (voir la ligne [guide] ci-dessus : XAM non chargé, "
+                    "non redirigé, ou appel refusé)");
+      }
+      continue;
     }
     std::vector<const char16_t*> buttons;
     for (const std::u16string& b : req.buttons) buttons.push_back(b.c_str());
@@ -181,6 +199,19 @@ void TestThread(const char* scenario) {
 }
 
 }  // namespace
+
+void RequestGuide() {
+  if (!std::getenv("DASH_XAM_MODULE")) {
+    REXLOG_WARN("[guide] demande de Guide ignorée : DASH_XAM_MODULE absent (pas de XAM recompilé)");
+    return;
+  }
+  {
+    std::lock_guard<std::mutex> lock(g_mu);
+    g_guide_requested.store(true);
+  }
+  g_cv.notify_one();
+  REXLOG_INFO("[guide] bouton Guide : demande déposée pour le thread invité");
+}
 
 void Init(rex::system::KernelState* ks, bool imgui_available) {
   // Builds avec plugin xenos : la superposition ImGui existe, les fenêtres de dash_xam_ui.cpp restent seules.
