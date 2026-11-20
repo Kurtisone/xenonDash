@@ -1730,3 +1730,35 @@ Il faut un utilisateur. Deux voies, et la première est celle que l'utilisateur 
 
 Tant qu'aucun profil n'existe, l'indicateur d'activité de XAM reste affiché : c'est cohérent, et ce
 n'est pas un défaut à corriger dans notre couche hôte.
+
+### Vérification finale : le profil ne lève pas la boîte, mais l'assombrissement est réglé
+
+Comparaison à l'identique (`DASH_XAM_NOREDIRECT=XamUserGetXUID`), 12 s, seule la cvar change :
+
+| | appels `XamUserGetXUID` | boîte HUD | écran |
+|---|---|---|---|
+| sans profil | 8 | affichée (image 2) | sombre avant correction |
+| avec `--dash_auto_profile=true` | 8 | **affichée aussi** | **lumineux, atténuation locale** |
+
+Deux conclusions :
+
+1. **Le nombre d'appels ne change pas** (8 dans les deux cas) : la « boucle » n'existe pas. XAM
+   énumère les utilisateurs une fois par rafraîchissement de session, ce qui est normal.
+2. **Le profil ne suffit pas** à faire disparaître la boîte. Elle vient donc d'autre chose que
+   l'absence d'utilisateur — probablement de l'initialisation du HUD lui-même (image 2, sans requête).
+
+**En revanche, la correction de l'atténuation se voit** : capture avec profil, écran lumineux
+(vignette verte, tuiles nettes) et zone atténuée limitée à la boîte, au lieu du voile sur toute
+l'image. C'est la demande « l'assombrissement doit être l'arrière-plan » satisfaite.
+
+### Ce que la boîte est, et ce qu'elle n'est pas — état final
+
+- Ce n'est **pas** le Guide (jamais appelé au démarrage, mesuré).
+- Ce n'est **pas** une conséquence de l'absence de profil (la boîte persiste avec un profil).
+- C'est un **indicateur d'activité dessiné par le HUD de XAM dès son image 2**, sans requête de
+  notre part : barre dégradée + anneau, sans texte.
+
+Prochaine mesure utile : instrumenter le **premier dessin** de l'image 1 du HUD (quels `BeginVertices`
+/ `DrawVerticesUP` et depuis quelle adresse de XAM) pour remonter à la fonction qui compose cet
+indicateur. L'inventaire est prêt pour ça : `function_inventory.py dash/hud --top` donne les points
+d'entrée du module HUD.
