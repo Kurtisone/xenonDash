@@ -482,6 +482,27 @@ bool ShowXamGuide(uint32_t user_index, int wait_ms) {
     return false;
   }
   REXLOG_INFO("[guide] XamShowGuideUI : accepté (r3=0x{:08X})", r);
+  // Diagnostic table des apps système (sub_81893EE0 : ctx(app) = 0x81C06F78 - app*184 ; validé par
+  // sub_818941B0 qui enregistre l'app 254 avec la magie 0xAAAABBBB à +8 et son id à +4). Le message
+  // du Guide part vers l'app 254 ; le répartiteur du système UI ne délivre qu'à l'app ACTIVE
+  // (cellule 0x817E4B64). Le champ +4 de chaque contexte est l'id auto-déclaré à l'enregistrement.
+  {
+    const uint32_t aa = __builtin_bswap32(*reinterpret_cast<volatile uint32_t*>(base + 0x817E4B64));
+    for (int app = 246; app <= 258; ++app) {
+      const uint32_t ctxa = 0x81C06F78u - static_cast<uint32_t>(app) * 184u;
+      auto* c = reinterpret_cast<const uint32_t*>(base + ctxa);
+      const uint32_t w4 = __builtin_bswap32(c[1]), w8 = __builtin_bswap32(c[2]), w16 = __builtin_bswap32(c[4]);
+      REXLOG_INFO("[guide] app {:3d} ctx={:08X} +4(id)={:08X} +8={:08X} +16={:08X}{}",
+                  app, ctxa, w4, w8, w16, app == static_cast<int>(aa) ? "  <- app active" : "");
+    }
+    REXLOG_INFO("[guide] cellule app active (0x817E4B64) = {}", aa);
+    // Champs de la structure d'etat UI testes par le chargeur de scenes (sub_818A21B0) :
+    // gardes sur +164/+172/+176 (+164 = le mot que lit aussi le portier) et +216.
+    auto* st = reinterpret_cast<const uint32_t*>(base + 0x81BFCAE8u);
+    REXLOG_INFO("[guide] etat UI 0x81BFCAE8 : +0={:08X} +56={:08X} +164={:08X} +172={:08X} +176={:08X} +216={:08X}",
+                __builtin_bswap32(st[0]), __builtin_bswap32(st[14]), __builtin_bswap32(st[41]),
+                __builtin_bswap32(st[43]), __builtin_bswap32(st[44]), __builtin_bswap32(st[54]));
+  }
   (void)overlapped;  // la fonction ne le prend pas ; gardé pour un usage futur (attente bornée)
   if (wait_ms > 0) {
     WaitOverlapped(base, overlapped, wait_ms, "guide");
@@ -655,6 +676,39 @@ void Configure(rex::system::KernelState* ks, rex::runtime::ExportResolver* resol
                   [](rex::system::KernelState* k) { RunUiCallTest(k, "XamShowSigninUI", 1, 0); });
   StartTestThread(ks, "DASH_TEST_CREATEPROFILE", "XAM test createprofile",
                   [](rex::system::KernelState* k) { RunUiCallTest(k, "XamShowCreateProfileUI", 0, 0); });
+
+  // DASH_WATCH_APPS=1 : surveille la cellule « app active » (0x817E4B64) et le contexte de l'app
+  // 254 (le systeme UI, destinataire du Guide). Journalise sur changement : si l'app active ne
+  // quitte jamais 252 (boot/loading), les scenes du Guide ne s'activent jamais.
+  if (const char* w = std::getenv("DASH_WATCH_APPS"); w && *w && xam) {
+    std::thread([ks] {
+      auto* k = ks;
+      uint8_t* base = k->memory()->virtual_membase();
+      auto rd = [base](uint32_t a) { return __builtin_bswap32(*reinterpret_cast<volatile uint32_t*>(base + a)); };
+      uint32_t prev_app = 0xFFFFFFFF, prev_8 = 0xFFFFFFFF, prev_16 = 0xFFFFFFFF, prev_12 = 0xFFFFFFFF;
+      bool prev_game = true, prev_root = true;
+      for (int i = 0; i < 1200; ++i) {  // 2 min a 100 ms
+        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        const uint32_t app = rd(0x817E4B64);
+        const uint32_t c8 = rd(0x81BFB8E8 + 8), c16 = rd(0x81BFB8E8 + 16), c12 = rd(0x81BFB8E8 + 12);
+        const bool game = REX_KERNEL_FS()->ResolvePath("game:\\flash\\hud.xex") != nullptr;
+        const bool root = REX_KERNEL_FS()->ResolvePath("\\SystemRoot\\hud.xex") != nullptr;
+        if (app != prev_app || c8 != prev_8 || c16 != prev_16 || c12 != prev_12) {
+          REXLOG_INFO("[watch] t={:4.1f}s app_active={:08X} | app254: +8={:08X} +12={:08X} +16={:08X}",
+                      i * 0.1, app, c8, c12, c16);
+          prev_app = app; prev_8 = c8; prev_16 = c16; prev_12 = c12;
+        }
+        if (game != prev_game || root != prev_root) {
+          REXLOG_INFO("[watch] t={:4.1f}s VFS : game:\\flash\\hud.xex = {}, \\SystemRoot\\hud.xex = {}",
+                      i * 0.1, game ? "OK" : "ECHEC", root ? "OK" : "ECHEC");
+          if (!game) {
+            REX_KERNEL_FS()->DumpState();
+          }
+          prev_game = game; prev_root = root;
+        }
+      }
+    }).detach();
+  }
 
   if (const char* test = std::getenv("DASH_TEST_KEYBOARD"); test && *test) {
     const int seconds = std::atoi(test);

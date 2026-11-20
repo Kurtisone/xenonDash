@@ -104,6 +104,13 @@ void MountFlash(rex::filesystem::VirtualFileSystem* vfs, const fs::path& flash_d
   // soit une boucle qui ne peut pas aboutir. Un fichier present dans la flash est desormais
   // joignable par les deux chemins.
   Mount(vfs, "game:", flash_dir, true);
+  // \Device\CdRom0 : XAM cree au boot le lien symbolique GAME: -> \Device\CdRom0 (detection du
+  // lecteur de disque, comportement console). Sans peripherique derriere, ce lien pend et masque
+  // game: (la correspondance des prefixes est insensible a la casse, l'ordre de la map arbitre) :
+  // les chargements de modules des scenes du systeme UI echouaient (« no device »). Sur la console
+  // le lecteur existe meme sans disque ; on le monte sur la racine des donnees, comme Partition1,
+  // pour que game:\flash\<nom> resolve vers le meme fichier quel que soit le lien qui gagne.
+  Mount(vfs, "\\Device\\CdRom0", flash_dir.parent_path(), true);
 }
 
 void MountXamDevices(rex::filesystem::VirtualFileSystem* vfs) {
@@ -212,6 +219,15 @@ REX_HOOK_RAW(__imp__XexLoadImage) {
       }
       if (guest) {
         REXLOG_INFO("[xam] XexLoadImage(\"{}\") -> game:\\flash\\{}", name, name);
+        // Sonde : le peripherique game: est-il visible du VFS noyau au moment de l'appel ?
+        static int probe = 0;
+        if (probe++ < 3) {
+          auto* e1 = REX_KERNEL_FS()->ResolvePath("game:\\flash\\" + std::string(name));
+          auto* e2 = REX_KERNEL_FS()->ResolvePath(std::string("\\SystemRoot\\") + name);
+          REXLOG_INFO("[xam] sonde VFS : game:\\flash\\{} = {}, \\SystemRoot\\{} = {}",
+                      name, e1 ? "OK" : "ECHEC", name, e2 ? "OK" : "ECHEC");
+          if (e1) REXLOG_INFO("[xam] sonde : resolu via {}", e1->absolute_path());
+        }
         ctx.r3.u64 = guest;
       }
     }

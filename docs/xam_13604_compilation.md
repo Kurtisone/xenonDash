@@ -1904,3 +1904,71 @@ n'est tenté** : le dépôt qui aurait dû déclencher `sub_8189CC18` ne se fait
   texte), `[boxroot]`, `[boxids]`, `[errroot]`, `[errbox]` (mot de statut), `[uipump]` (pompe,
   objet, rappel), plus les traces Guide antérieures. Elles vivent dans
   `dashboards/2.0.13604.0-xam/generated/xam/dash_recomp.{1,11,17,20,25,29,33,48}.cpp`.
+
+## 2026-11-20 (nuit) : le Guide — la chaîne complète mesurée, un correctif réel, le blocage restant
+
+Objectif : le bouton Guide (manette) ou G (clavier) affiche le Guide de la console.
+
+### La chaîne, désormais mesurée de bout en bout (instrumentations `[app254]`, `[scene]`, watchpoints)
+
+```
+G / bouton Guide (le SDK met le bit 0x400 dans la manette virtuelle, mnk_input_driver.cpp)
+  -> demande hôte -> ShowXamGuide -> XamShowGuideUI (0x81898630), acceptée (compteur remis à 0)
+  -> message (app 254, 0x21015, {0, user, 0}) dans la file globale (0x81BFB5E0)
+  -> handler de l'app 254 (sub_81894D50, enregistré avec hud.xex comme module)
+  -> chargeur de scènes sub_8189BE20 : 0x21015 - 0x21001 = index 0x14 (0x2100D -> 0x0C)
+     (la table des scènes 0x3001-0x3036 charge des modules : Guide.Friends.xex, vk.xex,
+      Guide.ChatAndMessenger.xex, nuihud.xex… ; 0x21015 et 0x2100D sont des ids de scène valides,
+      mon premier décodage « id hors table » était une erreur d'arithmetique addis)
+  -> scène 0x3015 : charge « hud.xex » (sub_818A21B0) et rend 0
+```
+
+Chaque maillon est vérifié par journal. **Le Guide est accepté et sa scène commandée. Il ne
+s'affiche pas.** Le HUD dessine en continu (l'anneau tourne), l'app système ne bascule jamais :
+la cellule « app active » (0x817E4B64) reste à **252** pendant toute l'exécution (surveillance
+hôte `DASH_WATCH_APPS=1`, 2 min, zéro changement ; watchpoint gdb : une seule écriture, au boot,
+par le module Dashboard — sub_9217F360, SIGSEGV intercepté par le suivi de pages du SDK).
+
+### Correctif réel : le lien symbolique GAME: -> \Device\CdRom0 pendant
+
+Diagnostic par énumération des périphériques (`VirtualFileSystem::DumpState`, ajouté au SDK) :
+
+- `game:` (périphérique sur la flash) est bien enregistré, et le lien `game:` -> Partition1 marche ;
+- XAM pose au boot un **second** lien, `GAME:` -> `\Device\CdRom0` (detection du lecteur de
+  disque) — comportement console, le lecteur existe même sans disque. Chez nous, `\Device\CdRom0`
+  n'était pas monté : le lien pendait, et la résolution (préfixe insensible à la casse, ordre de
+  la map arbitré) tombait dessus une fois sur deux → « no device » pour TOUS les
+  `game:\flash\<nom>` — les chargements de scènes du système UI échouaient silencieusement
+  (19 échecs de hud.xex dans un seul run) ;
+- au boot les chargements passaient encore, via Partition1 — vers les assets.
+
+Deux correctifs :
+1. **SDK** (third_party/rexglue-sdk, commit 766678d) : `ResolvePath` retente le chemin d'origine
+   quand la cible d'un lien symbolique ne correspond à aucun périphérique ; ajout de `DumpState()`.
+2. **hôte** (`common/src/dash_xam_runtime.cpp`) : `\Device\CdRom0` monté sur la racine des
+   données (comme Partition1), pour que `game:\flash\<nom>` resolve quel que soit le lien gagnant.
+
+Après correctif, les chargements de scène résolvent (mesuré : « resolu via
+\Device\CdRom0\flash\hud.xex »).
+
+### Ce qui bloque encore, mesuré
+
+- L'app active reste 252 (le « boot/loading » du système UI — la barre + l'anneau visibles sont
+  SA scène, pas une boîte de message : les scènes de boîtes sont rejetées ou jamais rendues
+  elles aussi — `DASH_TEST_MSGBOX` ne s'affiche pas plus que le Guide).
+- Le compteur d'« interfaces système actives » (état UI 0x81BFCAE8+0) vaut 4 en permanence ;
+  le portier refuse toute nouvelle interface tant qu'il est non nul, et nos boîtes vides du
+  démarrage ne se ferment jamais (aucune chaîne, aucun contenu, rien à valider).
+- Le fournisseur de chaînes localisées (0x81BFDA4C) est installé UNE fois au boot
+  (`[lang] chargeur de chaînes entre`, r3 = bloc 0x301BC000) mais les chaînes restent vides :
+  l'installation échoue silencieusement (à instruire : sub_8189D188/sub_8198D090 sur ce bloc).
+
+**Prochaine cible** : faire fermer les interfaces du démarrage (ou empêcher leur ouverture) pour
+ramener le compteur à 0, et réparer l'installation des chaînes localisées — les deux conditions
+pour que le système UI quitte l'app 252 et rende la scène du Guide. Le correctif CdRom0 est
+nécessaire mais pas suffisant.
+
+Instrumentations actives (généré, non versionné) : `[porte]`, `[msgbox]`, `[boxroot]`,
+`[boxids]`, `[errroot]`, `[errbox]`, `[scene]`, `[app254]`, `[iface0]`, `[lang]`, `[uipump]`,
+`[sysui]` + côté hôte `DASH_WATCH_APPS=1` (cellule app active, contexte 254, sonde VFS) et la
+sonde dans le crochet XexLoadImage (3 premiers appels).
