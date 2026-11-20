@@ -1255,3 +1255,80 @@ Correctif à instruire (ordre suggéré) :
 2. vérifier qui arme ce watch en mode XAM (XAM écrit dans des surfaces partagées avec le GPU) ;
 3. après correctif, le critère de succès est déjà défini et mesurable : le compteur de fautes doit
    passer de ~10⁴–10⁶ à quelques unités, et `VdSwap` doit apparaître dans le journal.
+
+## 2026-11-20 (soir) : LE MODE XAM AFFICHE ENFIN — /dev/shm trop petit
+
+### La cause n'était pas dans le code invité
+
+Indice décisif trouvé en journalisant la **protection hôte réelle** de la page fautive, lue dans
+`/proc/self/maps`, au moment de la faute :
+
+```
+[av] faute ecriture de 0x41064000 heap=0x40000000 protect_invite=0x00000003 hote=... perm=rw-s
+```
+
+Trois faits incompatibles avec les hypothèses précédentes :
+
+- `protect_invite=0x00000003` = lecture **et** écriture : la table invitée autorise l'écriture ;
+- `perm=rw-s` : la page hôte est **déjà** en lecture-écriture ;
+- et pourtant le CPU lève une faute à chaque écriture.
+
+Une faute sur une page `rw` **partagée** (`s` = `MAP_SHARED`) n'est pas un `SIGSEGV` : c'est un
+**`SIGBUS`**, c'est-à-dire « le stockage d'appui ne peut pas fournir cette page ». Le SDK mappe
+l'arène invitée ainsi (`memory_posix.cpp`) :
+
+```cpp
+int ret = shm_open(full_path.c_str(), oflag, 0777);   // fichier dans /dev/shm
+rex_ftruncate64(ret, static_cast<off_t>(length));      // 0x120000000 = 4,5 Go
+...
+int flags = MAP_SHARED;                                // mappage partagé
+```
+
+Or `/dev/shm` du conteneur de test fait **63 Mo**. `ftruncate` réussit (tmpfs accepte la taille
+déclarée), mais aucune page au-delà des 63 Mo ne peut être réellement stockée : chaque écriture dans
+ces pages lève `SIGBUS`, indéfiniment. C'est exactement la tempête de 1,6 M de fautes mesurée, et
+cela explique aussi pourquoi la trace `[pfail]` restait vide : `mprotect` réussissait — le problème
+n'était pas la protection mais le **stockage**.
+
+### Preuve par A/B
+
+| `/dev/shm` | fautes invitées (15 s) | `VdSwap` | capture |
+|---|---|---|---|
+| 63 Mo (défaut du conteneur) | **1 620 000** | 0 | 3 073 o (noir) |
+| 8 Go (`--shm-size=8g`) | **8** | **6** | 330 371 o (image !) |
+
+L'écran s'affiche : menu `Xbox LIVE / My Xbox / Welcome`, tuiles « Getting Started », « Kinect for
+Xbox 360 », « Family First ». Le Dashboard atteint enfin son `VdSwap`.
+
+### Correctif appliqué dans le SDK
+
+`core/memory_posix.cpp` : `memfd_create` en premier (fichier anonyme adossé à la mémoire, **sans
+passer par tmpfs**, donc sans la limite de `/dev/shm`), avec repli sur `shm_open`. Et surtout,
+l'échec de dimensionnement n'est plus silencieux :
+
+```cpp
+if (rex_ftruncate64(ret, static_cast<off_t>(length)) != 0) {
+  REXSYS_ERROR("CreateFileMappingHandle: impossible de dimensionner la memoire invitee a 0x{:X} "
+               "octets ({}) : ... Elargir /dev/shm ou autoriser memfd_create.", length, ...);
+```
+
+Vérification avec `/dev/shm` **toujours à 63 Mo**, sans aucune option spéciale : **8 fautes**,
+**6 `VdSwap`**, image affichée. Le correctif tient.
+
+### Second défaut, distinct : le fond atténué assombrit tout l'écran
+
+L'image présente mais **4× trop sombre** : luma moyenne **31,1** contre **124,1** en référence HLE
+(mesure sur les pixels, `runs/regression13604.png`).
+
+Cause : le HUD de XAM affiche une **boîte modale légitime** (barre de progression vide + indicateur
+d'activité, zone 243,30–607,279 sur 852×480) et son quad de fond atténué demandé par le titre vaut
+`dim = 0,22`. `HudComposite` applique ce facteur à **toute** l'image du Dashboard
+(`native_gpu/src/hud_front.cpp`, `if (dim < 1.0f)`) au lieu de la seule zone de la boîte.
+
+Contre-épreuve : avec `DASH_HUD_DISABLE=1`, la capture retrouve **luma 123,7** (référence 124,1) et
+689 046 octets — l'image est alors exactement correcte. Le Dashboard lui-même est donc **rendu
+fidèlement** ; seul l'assombrissement de la composition est en cause.
+
+Cette boîte ne se referme pas (surveillée 30 s, `[hud] HUD affiche` une seule fois, jamais
+`masque`) : c'est l'attente de `XamShowMessageBoxUI` décrite plus haut, désormais **visible** au lieu
+d'être un écran noir. C'est le sujet suivant, pas une régression.
