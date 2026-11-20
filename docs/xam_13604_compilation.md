@@ -1645,3 +1645,38 @@ Deux sorties possibles, à choisir :
 
 À noter : la boîte « barre + anneau » est très probablement l'**indicateur d'attente de connexion**
 de XAM — cohérent avec un utilisateur absent, et avec le fait qu'elle ne parte jamais.
+
+### Test décisif : la boucle vient de XAM, pas de la redirection
+
+Avec `DASH_XAM_NOREDIRECT=XamUserGetXUID` et un profil synthétique (`--dash_auto_profile=true`) :
+
+```
+[xuid] XamUserGetXUID(user=0) -> r3=0x00000000 (appel 1)            <- HLE répond correctement
+[xuid] XamUserGetXUID(user=2147943717) -> r3=0x80070525 (appel 2)   <- XAM redemande avec l'erreur
+```
+
+Le HLE donne un XUID valide pour l'utilisateur 0, et XAM **redemande quand même** avec
+`2147943717` (= `0x80070525`, le statut d'erreur) comme index. Ce n'est donc pas la redirection qui
+crée la boucle : **XAM lui-même passe un statut d'erreur là où il attend un index**, et boucle.
+
+C'est un défaut dans la logique de XAM recompilé (ou dans ce qu'il lit comme état de session), pas
+dans notre couche hôte. Le corriger demande de trouver où XAM confond statut et index — travail réel,
+à instruire à part.
+
+### Bilan de cette session, sans enjolivement
+
+**Corrigé et vérifié :**
+- Mode XAM affiche (correctif `/dev/shm` : 1,6 M de fautes → 8) ;
+- plantage du HUD (verrou d'entrées : course sur `devices_`) ;
+- chargement : deux boucles de journal (375 044 → 770 lignes) ;
+- `keybind_guide = G` (liaison vide) ;
+- fond atténué limité à la zone de la boîte ;
+- `XamShowGuideUI` appelable et **accepté** (`r3 = 0`).
+
+**Identifié, non résolu :**
+- la boîte au démarrage (barre + anneau, sans texte) : c'est un indicateur d'activité de XAM, pas le
+  Guide — `sub_81898630` n'est jamais appelé au démarrage (mesuré) ;
+- le « chargement à l'infini » : XAM boucle sur `XamUserGetXUID` en passant `0x80070525` en guise
+  d'index utilisateur ;
+- la touche G ne ferme pas la boîte : cohérent, elle ouvre le Guide, elle ne pilote pas un
+  indicateur d'activité.
