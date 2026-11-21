@@ -1,0 +1,140 @@
+From: Kurtisone <104103601+Kurtisone@users.noreply.github.com>
+Date: Fri, 21 Nov 2026 12:30:00 +0100
+Subject: [PATCH 6/6] XenonDash : SampleLevel en vertex shader et signature d'entrée dedoublonnee
+
+Trois corrections d'emission pour les VS du Dashboard 13604 (mesure du 2026-11-21) :
+
+1. Le LOD implicite (Sample) n'est legal qu'en fragment/compute : les VS qui echantillonnent
+   (tfetch2D avec decalages — 9201AA08 requis au demarrage) doivent passer par SampleLevel.
+   Le recompilateur definit desormais XENOS_VERTEX_SHADER avant le collage de shader_common.h
+   (bit 0 du conteneur = VS) et la macro XENOS_SAMPLE choisit Sample/SampleLevel ; les cinq
+   helpers (tfetch2D, Denorm, Bicubic, 3D, Cube) l'utilisent.
+2. Le header des VS 13604 repete les elements identiques pour chaque fetch constante
+   (TexCoord6/7/8 quatre fois dans 920636B0 et consorts) : la signature d'entrée ne declare
+   chaque (usage, index) qu'une fois — dxc refusait le parametre redefini. Les definitions
+   de fetch (par adresse) restent toutes en place.
+3. Suite de 2 : dxc refuse un melange d'entrees localisees et non localisees — les six VS
+   concernes (920636B0...) restent en echec dxc tant que la table USAGE_LOCATIONS n'couvre
+   pas TexCoord8+ (extension d'ABI cote hote : renderer.cpp kLocations + regenerations),
+   chantier separe. Ce patch ne degrade aucun shader traduit jusqu'ici (186/258 inchanges).
+---
+diff --git a/XenosRecomp/shader_recompiler.cpp b/XenosRecomp/shader_recompiler.cpp
+index e8c1ac7..8724e7a 100644
+--- a/XenosRecomp/shader_recompiler.cpp
++++ b/XenosRecomp/shader_recompiler.cpp
+@@ -1179,6 +1179,12 @@ void ShaderRecompiler::recompile(const uint8_t* shaderData, const std::string_vi
+     if (trialsExt)
+         out += "#define XENOS_TRIALS_EXT\n";
+ 
++    // shader_common.h adapte ses helpers d'échantillonnage au stade : le LOD implicite (Sample)
++    // n'est légal qu'en fragment/compute, un VS doit passer par SampleLevel. À définir AVANT le
++    // collage du header commun. Polarity du conteneur : bit 0 = vertex shader.
++    if (shaderContainer->flags & 0x1)
++        out += "#define XENOS_VERTEX_SHADER 1\n\n";
++
+     out += include;
+     out += '\n';
+ 
+@@ -1407,6 +1413,11 @@ void ShaderRecompiler::recompile(const uint8_t* shaderData, const std::string_vi
+     else
+     {
+         auto vertexShader = reinterpret_cast<const VertexShader*>(shader);
++        // Le header des VS du Dashboard 13604 répète les éléments identiques pour chaque fetch constante
++        // (TexCoord6/7/8 quatre fois, mesuré le 2026-11-21) : la signature d'entrée ne doit déclarer
++        // chaque (usage, index) qu'une fois, dxc refusant le paramètre redéfini. Les définitions de
++        // fetch (vertexElements, par adresse) restent toutes en place.
++        std::set<std::pair<uint32_t, uint32_t>> declaredInputs;
+         for (uint32_t i = 0; i < vertexShader->vertexElementCount; i++)
+         {
+             union
+@@ -1417,6 +1428,11 @@ void ShaderRecompiler::recompile(const uint8_t* shaderData, const std::string_vi
+ 
+             value = vertexShader->vertexElementsAndInterpolators[vertexShader->field18 + i];
+ 
++            vertexElements.emplace(uint32_t(vertexElement.address), vertexElement);
++
++            if (!declaredInputs.emplace(uint32_t(vertexElement.usage), uint32_t(vertexElement.usageIndex)).second)
++                continue;  // entrée déjà déclarée dans la signature
++
+             const char* usageType = USAGE_TYPES[uint32_t(vertexElement.usage)];
+ 
+         #ifdef UNLEASHED_RECOMP
+@@ -1440,8 +1456,6 @@ void ShaderRecompiler::recompile(const uint8_t* shaderData, const std::string_vi
+ 
+             println("in {0} i{1}{2} : {3}{2},", usageType, USAGE_VARIABLES[uint32_t(vertexElement.usage)],
+                 uint32_t(vertexElement.usageIndex), USAGE_SEMANTICS[uint32_t(vertexElement.usage)]);
+-
+-            vertexElements.emplace(uint32_t(vertexElement.address), vertexElement);
+         }
+ 
+         if (trialsExt)
+diff --git a/XenosRecomp/shader_common.h b/XenosRecomp/shader_common.h
+index 430aa10..cc62663 100644
+--- a/XenosRecomp/shader_common.h
++++ b/XenosRecomp/shader_common.h
+@@ -17,6 +17,15 @@
+ #define FLT_MIN asfloat(0xff7fffff)
+ #define FLT_MAX asfloat(0x7f7fffff)
+ 
++// Le LOD implicite (Sample) n'est légal qu'en fragment/compute : un vertex shader doit passer par
++// SampleLevel. Le recompilateur définit XENOS_VERTEX_SHADER pour les VS (VS du Dashboard 13604
++// échantillonnant via tfetch2D, mesuré le 2026-11-21).
++#ifdef XENOS_VERTEX_SHADER
++#define XENOS_SAMPLE(texture, sampler, coord) (texture).SampleLevel(sampler, coord, 0.0)
++#else
++#define XENOS_SAMPLE(texture, sampler, coord) (texture).Sample(sampler, coord)
++#endif
++
+ #ifdef __spirv__
+ 
+ struct PushConstants
+@@ -80,7 +89,7 @@ uint2 getTexture2DDimensions(Texture2D<float4> texture)
+ float4 tfetch2D(uint resourceDescriptorIndex, uint samplerDescriptorIndex, float2 texCoord, float2 offset)
+ {
+     Texture2D<float4> texture = g_Texture2DDescriptorHeap[resourceDescriptorIndex];
+-    return texture.Sample(g_SamplerDescriptorHeap[samplerDescriptorIndex], texCoord + offset / getTexture2DDimensions(texture));
++    return XENOS_SAMPLE(texture, g_SamplerDescriptorHeap[samplerDescriptorIndex], texCoord + offset / getTexture2DDimensions(texture));
+ }
+ 
+ #ifdef XENOS_TRIALS_EXT
+@@ -256,7 +265,7 @@ float compTexLod2D(uint resourceDescriptorIndex, uint samplerDescriptorIndex, fl
+ float4 tfetch2DDenorm(uint resourceDescriptorIndex, uint samplerDescriptorIndex, float2 texCoord, float2 offset)
+ {
+     Texture2D<float4> texture = g_Texture2DDescriptorHeap[resourceDescriptorIndex];
+-    return texture.Sample(g_SamplerDescriptorHeap[samplerDescriptorIndex], (texCoord + offset) / getTexture2DDimensions(texture));
++    return XENOS_SAMPLE(texture, g_SamplerDescriptorHeap[samplerDescriptorIndex], (texCoord + offset) / getTexture2DDimensions(texture));
+ }
+ 
+ #endif
+@@ -330,17 +339,17 @@ float4 tfetch2DBicubic(uint resourceDescriptorIndex, uint samplerDescriptorIndex
+     float h1y = h1(fy);
+ 
+     float4 r =
+-        g0(fy) * (g0x * texture.Sample(samplerState, float2(px + h0x, py + h0y) / float2(dimensions)) +
+-            g1x * texture.Sample(samplerState, float2(px + h1x, py + h0y) / float2(dimensions))) +
+-        g1(fy) * (g0x * texture.Sample(samplerState, float2(px + h0x, py + h1y) / float2(dimensions)) +
+-            g1x * texture.Sample(samplerState, float2(px + h1x, py + h1y) / float2(dimensions)));
++        g0(fy) * (g0x * XENOS_SAMPLE(texture, samplerState, float2(px + h0x, py + h0y) / float2(dimensions)) +
++            g1x * XENOS_SAMPLE(texture, samplerState, float2(px + h1x, py + h0y) / float2(dimensions))) +
++        g1(fy) * (g0x * XENOS_SAMPLE(texture, samplerState, float2(px + h0x, py + h1y) / float2(dimensions)) +
++            g1x * XENOS_SAMPLE(texture, samplerState, float2(px + h1x, py + h1y) / float2(dimensions)));
+ 
+     return r;
+ }
+ 
+ float4 tfetch3D(uint resourceDescriptorIndex, uint samplerDescriptorIndex, float3 texCoord)
+ {
+-    return g_Texture3DDescriptorHeap[resourceDescriptorIndex].Sample(g_SamplerDescriptorHeap[samplerDescriptorIndex], texCoord);
++    return XENOS_SAMPLE(g_Texture3DDescriptorHeap[resourceDescriptorIndex], g_SamplerDescriptorHeap[samplerDescriptorIndex], texCoord);
+ }
+ 
+ struct CubeMapData
+@@ -351,7 +360,7 @@ struct CubeMapData
+ 
+ float4 tfetchCube(uint resourceDescriptorIndex, uint samplerDescriptorIndex, float3 texCoord, inout CubeMapData cubeMapData)
+ {
+-    return g_TextureCubeDescriptorHeap[resourceDescriptorIndex].Sample(g_SamplerDescriptorHeap[samplerDescriptorIndex], cubeMapData.cubeMapDirections[texCoord.z]);
++    return XENOS_SAMPLE(g_TextureCubeDescriptorHeap[resourceDescriptorIndex], g_SamplerDescriptorHeap[samplerDescriptorIndex], cubeMapData.cubeMapDirections[texCoord.z]);
+ }
+ 
+ #ifdef XENOS_TRIALS_EXT

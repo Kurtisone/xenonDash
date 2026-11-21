@@ -131,6 +131,30 @@ pilote STFS minimal côté noyau, profil local hors ligne (XUID aléatoire, sign
    l'hôte Python 3.14). `XEX_REKEY_AES=` force un fournisseur. Seul `xex_rekey.py` était concerné :
    tous les autres outils de l'import n'utilisent que la bibliothèque standard (vérifié par grep des
    imports). AppImage -xam reconstruite et redéposée dans `/home/deck/XenonDash/`.
+   *Import hôte de l'utilisateur (2026-11-21, après-midi) : import complet réussi, Dashboard lancé —
+   deux manques identifiés et traités :*
+   - **Polices absentes** (texte invisible) : les paquets de mise à jour n'en contiennent pas (elles
+     vivent dans la flash console). Les `.xtt` validés en conteneur venaient de `--modules`
+     (dump xeBuild) ; sur l'hôte, la copie 6770 de repli du dépôt n'existe pas dans l'AppImage.
+     Corrigé sur la machine : XenonCLatin/JKLatin/SCLatin.xtt (le jeu « Segoe UI (Kinect, Metro) »
+     de l'utilisateur, tailles identiques au dump validé) copiés dans `<données>/flash/` et dans
+     `/home/deck/XenonDash/polices/` (détecté par l'AppRun pour les imports suivants) ;
+     `FONT_NAMES` ajoute SegoeXbox-Light.xtt (police XAM, extraite du su de la 17559, posée dans
+     la flash pour le localisateur `XamGetLanguageTypeface`).
+   - **`ERREUR SPIR-V introuvable VS 2F1495350021EBE2` au boot** : ce shader est `9201AA08_VS`
+     (clé = XXH3 du microcode, retrouvée en extrayant les 258 conteneurs de dash.xex). Cause :
+     le champ const d'une fetch fait 5 bits et ces VS encodent 19 alors que le matériel n'expose
+     que 16 échantillonneurs — l'émission référençait `s19_*` sans déclaration. Correctif
+     `patches/xenosrecomp/0005` (masque `constIndex & 15`, cohérent avec les lectures
+     `g_TexBiasBits/g_TexExpScale` déjà masquées). Dans la foulée, `0006` : `SampleLevel` en VS
+     (le LOD implicite est illégal en VS ; `XENOS_SAMPLE` + `XENOS_VERTEX_SHADER` émis avant le
+     collage de shader_common.h) et déduplication de la signature d'entrée (le header des VS 13604
+     répète les éléments par fetch constante). Résultat : dash 188/258 traduits (au lieu de 186),
+     `2F1495350021EBE2.spv` généré dans les données, régénéré sur la machine de l'utilisateur.
+     Restent : 6 VS en échec dxc (`iTexCoord6` dédoublonné mais mélange localisé/non localisé —
+     demande l'extension d'ABI `USAGE_LOCATIONS` pour TexCoord8+, côté hôte `renderer.cpp` aussi,
+     ce sont des maillages skinnés BlendWeight/Indices) et 64 VS où XenosRecomp **crashe**
+     (returncode -11 = SIGSEGV, bloc contigu 920D6770→920F4AE8) — à investiguer sous gdb.
    *État au 2026-11-20 (soir), **résolu*** : la variante `-xam` **affiche**. La cause du noir n'était
    pas dans le code invité mais dans le mappage mémoire : l'arène de 4,5 Go était un fichier
    `/dev/shm` mappé `MAP_SHARED`, et `/dev/shm` d'un conteneur fait souvent 64 Mo — au-delà,

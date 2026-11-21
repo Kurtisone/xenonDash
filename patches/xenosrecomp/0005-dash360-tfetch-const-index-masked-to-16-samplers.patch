@@ -1,0 +1,46 @@
+From: Kurtisone <104103601+Kurtisone@users.noreply.github.com>
+Date: Fri, 21 Nov 2026 12:00:00 +0100
+Subject: [PATCH 5/5] XenonDash : indice d'échantillonneur des fetches masqué à 16
+
+Le champ const d'une instruction de fetch de texture fait 5 bits (0-31), mais le matériel n'expose
+que 16 échantillonneurs par étape (l'API D3D de la console ne permet SetTexture que sur 0-15) et
+l'ABI des constantes partagées de XenosRecomp réserve 16 descripteurs par dimension. Deux VS du
+Dashboard 13604 (9201A2D8, 9201AA08 — ce dernier requis au démarrage, clé 2F1495350021EBE2)
+encodent 19 dans ce champ : l'émission référençait s19_Texture2DDescriptorIndex sans déclaration
+et dxc refusait le shader. L'indice matériel est constIndex & 15, comme les lectures
+g_TexBiasBits/g_TexExpScale qui masquaient déjà.
+
+Mesure du 2026-11-21 : avec ce correctif, les deux VS se traduisent et le Dashboard ne demande
+plus de SPIR-V absent au démarrage.
+---
+ XenosRecomp/shader_recompiler.cpp | 14 ++++++++++----
+ 1 file changed, 10 insertions(+), 4 deletions(-)
+
+diff --git a/XenosRecomp/shader_recompiler.cpp b/XenosRecomp/shader_recompiler.cpp
+index 40fa00f..e8c1ac7 100644
+--- a/XenosRecomp/shader_recompiler.cpp
++++ b/XenosRecomp/shader_recompiler.cpp
+@@ -274,7 +274,13 @@ void ShaderRecompiler::recompile(const TextureFetchInstruction& instr, bool bicu
+     bool subtractFromOne = false;
+ #endif
+ 
+-    auto findResult = samplers.find(instr.constIndex);
++    // Le champ const d'une fetch fait 5 bits (0-31) mais le matériel n'expose que 16 échantillonneurs
++    // par étape (l'API D3D de la console ne permet SetTexture que sur 0-15) ; les VS du Dashboard 13604
++    // encodent 16-31 dans ce champ (indicateurs ou second banc). L'indice matériel est constIndex & 15,
++    // comme les lectures g_TexBiasBits/g_TexExpScale plus bas ; sans masque, les fetches concernées
++    // émettaient s19_* sans déclaration (2 VS du boot 13604, mesuré le 2026-11-21).
++    const uint32_t samplerIndex = instr.constIndex & 15;
++    auto findResult = samplers.find(samplerIndex);
+     if (findResult != samplers.end())
+     {
+         constNamePtr = findResult->second;
+@@ -285,7 +291,7 @@ void ShaderRecompiler::recompile(const TextureFetchInstruction& instr, bool bicu
+     }
+     else
+     {
+-        constName = fmt::format("s{}", instr.constIndex);
++        constName = fmt::format("s{}", samplerIndex);
+         constNamePtr = constName.c_str();
+     }
+ 
