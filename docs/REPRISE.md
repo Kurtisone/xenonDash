@@ -1,7 +1,8 @@
 # Reprise du projet par une autre session ou un autre modèle
 
-Ce document permet de reprendre le travail sans l'historique de conversation. Dernière mise à jour : 2026-11-15 (build et exécution hors du poste de développement : podman,
-compilation complète du Dashboard 13604, AppImage testée ; voir « Environnement » et « Pièges »). Index de la documentation : [INDEX.md](INDEX.md) ; le README est destiné aux utilisateurs.
+Ce document permet de reprendre le travail sans l'historique de conversation. Dernière mise à jour : 2026-11-21 (le Guide et les boîtes système s'affichent dans la variante -xam ;
+AppImage -xam générée et testée ; voir « Environnement », « Pièges » et l'état détaillé dans `docs/xam_13604_compilation.md`, sections 2026-11-20/21). Index de la documentation :
+[INDEX.md](INDEX.md) ; le README est destiné aux utilisateurs.
 
 ## Objectif en cours (Kinect 2.0.13604)
 Le Dashboard Kinect doit rester dans l'interface Xbox : plus de fenêtres ImGui façon Xenia-canary ; sans profil, le même parcours qu'une console
@@ -49,6 +50,7 @@ EOF
   composite. Vérifier à l'écran passe obligatoirement par Xvfb.
 
 ## Règles de l'utilisateur
+- **Lecteur CD** : `\Device\CdRom0` reste **vide** (pas de disque) — l'expérience Xbox 360 native, le plus juste possible sans modification. Si la machine possède un vrai lecteur optique, il s'exposerait comme CdRom0 (à faire). Les jeux passent par le dossier monté (bibliothèque existante), pas par le lecteur.
 - Commits **uniquement sous son nom** (`git config user.name/user.email` déjà réglés : Kurtisone, noreply GitHub), **jamais de Co-Authored-By ni de lien de session**.
 - Aucun fichier Microsoft, de jeu, shader traduit, capture ou binaire dans le dépôt (`generated/`, `out/`, `work/` sont ignorés).
 - Pas de clés de console fabriquées, pas de contournement de protection de contenu : profil local hors ligne avec données de test.
@@ -106,7 +108,16 @@ pilote STFS minimal côté noyau, profil local hors ligne (XUID aléatoire, sign
 
 ## Suite, par ordre de priorité
 1. Profil existant choisi dans la liste : XAM demande « Enter Pass Code » (cause non établie) ; `XamUserReadProfileSettings(Ex)` redirigé vers XAM plante le Dashboard (lecture invitée de `0x7008004F`) : gamertag/Gamerscore du bandeau et contenu restent liés au profil HLE ; fenêtre « Save Profile » absente du parcours Dashboard.
-2. Rendre `DASH_PROFILE_MODE=xam` le défaut et livrer la variante `-xam` (XAM + HUD) en AppImage (aujourd'hui l'AppImage Kinect est la variante sans XAM recompilé, donc sans HUD).
+2. Rendre `DASH_PROFILE_MODE=xam` le défaut et livrer la variante `-xam` (XAM + HUD) en AppImage.
+   *État au 2026-11-21 : **livrée et vérifiée en environnement neutre** — `out/appimage/XenonDash-2.0.13604.0-xam-x86_64.AppImage`
+   (142 Mo, outils de recompilation embarqués), construite par `APPIMAGE_EXTRACT_AND_RUN=1 BUILD_DIR=linux-amd64-relwithdebinfo
+   ./tools/make_appimage.sh 2.0.13604.0-xam`. Trois pièces ajoutées à l'outillage : (a) les **modules recompilés**
+   (`libdash_*.so`) sont embarqués à côté du binaire (le chargeur les cherche à côté de l'exécutable — sans eux,
+   retombe en mode HLE, « Registering module » absent, mesuré) ; (b) un marqueur `usr/share/xenondash/xam` fait activer
+   par l'AppRun `DASH_XAM_MODULE=2` et `DASH_PROFILE_MODE=xam` ; (c) l'import copie xam.xex à la racine des données
+   (`--shrdres-xam`) pour la génération des shaders HUD (33 générés, 1 non traduit : 817F9550_VS). Vérifié en conteneur
+   depuis un répertoire neutre : import complet, XAM chargé, boîtes système rendues (texte + bouton + atténuation).
+   Reste : 72 shaders dash non traduits (connu, point 4 ci-dessous).
    *État au 2026-11-20 (soir), **résolu*** : la variante `-xam` **affiche**. La cause du noir n'était
    pas dans le code invité mais dans le mappage mémoire : l'arène de 4,5 Go était un fichier
    `/dev/shm` mappé `MAP_SHARED`, et `/dev/shm` d'un conteneur fait souvent 64 Mo — au-delà,
@@ -114,11 +125,17 @@ pilote STFS minimal côté noyau, profil local hors ligne (XUID aléatoire, sign
    (`core/memory_posix.cpp`) par `memfd_create` avec repli `shm_open`, plus un message d'erreur
    explicite si le dimensionnement échoue. Mesure : 1 620 000 fautes -> **8**, 0 -> **6** `VdSwap`,
    image affichée (luma 123,7 contre 124,1 en référence HLE, soit la parité).
-   **Sujet suivant, distinct** : le HUD de XAM affiche une boîte modale `XamShowMessageBoxUI` qui ne
-   se referme pas, et son fond atténué (`dim = 0,22`) assombrit toute l'image au lieu de la seule
-   zone de la boîte. Contournement actuel : `DASH_HUD_DISABLE=1`, qui rend le Dashboard exactement
-   conforme. Diagnostic mémoire activable par `REX_LOG_GUEST_FAULTS=1`. Détail et mesures :
-   `docs/xam_13604_compilation.md`.
+   **Sujet suivant, distinct** : ~~le HUD de XAM affiche une boîte modale `XamShowMessageBoxUI` qui ne
+   se referme pas, et son fond atténué (`dim = 0,22`) assombrit toute l'image~~ **RÉSOLU (2026-11-21)** :
+   le Guide et les boîtes système s'affichent avec leur contenu (lames, textes, boutons) et se ferment
+   au bouton B. La cause du blocage était la diffusion hôte de `XN_SYS_UI` déclenchée par les pixels du
+   chrome de chargement (elle re-posait le bit « interface active » de XAM juste après son boot) —
+   diffusion passée en opt-in (`DASH_HUD_NOTIFY=1`). Autres correctifs de la même séance : le lien
+   `GAME:` → `\Device\CdRom0` posé par XAM pendait (CdRom0 inexistant) et masquait `game:` pour les
+   chargements de modules — CdRom0 monté vide (lecteur sans disque, directive utilisateur) et liens
+   symboliques appariés sensiblement à la casse (SDK 0bc075f) ; chaînes localisées fonctionnelles
+   (provider 0x81BFDA4C installé, textes « Unrecognized Disc », « Game Error »… rendus). Détail et
+   mesures : `docs/xam_13604_compilation.md`, sections 2026-11-20/21.
    *État au 2026-11-16 (soir), mesuré* : la variante `-xam` **compile** (8 modules `.so`, `dash` lié),
    XAM **se charge** et son rendu natif **s'initialise** (`[ngpu] noyau ngpu_core sur llvmpipe`, sur
    **stderr** — jamais dans `dash.log`, ne pas s'y tromper). L'écran reste **noir** : le journal

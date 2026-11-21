@@ -51,6 +51,12 @@ mkdir -p "$A/usr/bin" "$A/usr/share/xenondash/tools"
 cp "$BIN" "$A/usr/bin/dash"
 LIBS="librexruntime.so"; [ $GPU = xenos ] && LIBS="$LIBS librexgpu-xenos.so"
 for l in $LIBS; do cp "$R/sdk/lib/$l" "$A/usr/bin/$l"; done
+# Modules recompilés de la variante (libdash_xam.so, libdash_hud.so…) : le chargeur les cherche
+# à côté de l'exécutable (GetExecutableFolder). Sans eux, l'AppImage retombe en mode HLE : pas de
+# Guide, pas de HUD XAM (mesure du 2026-11-21 : lancement neutre, « Registering module » absent).
+for m in "$BDIR/$BUILD"/libdash_*.so; do
+  [ -f "$m" ] && cp "$m" "$A/usr/bin/" && echo "module recompilé embarqué : $(basename "$m")"
+done
 if [ $STRIP = 1 ]; then strip --strip-unneeded "$A/usr/bin/dash" "$A/usr/bin/"*.so; fi
 # Dépendances dynamiques non système : SDL3, spdlog, ffmpeg... sont liés statiquement. Reste : libc/libstdc++/X11/
 # wayland/xcb/Vulkan (loader et pilote) du système, volontairement non embarqués.
@@ -60,6 +66,12 @@ LD_LIBRARY_PATH=$A/usr/bin ldd "$A/usr/bin/dash" | awk '{print "  " $1}'
 S=$A/usr/share/xenondash
 echo "$V" > "$S/version"
 echo "$GPU" > "$S/gpu"
+# Variante XAM : si le module XAM recompilé est embarqué, l'AppRun activera le mode XAM
+# (DASH_XAM_MODULE=2 : chargement + point d'entrée ; DASH_PROFILE_MODE=xam : parcours console).
+if [ -f "$A/usr/bin/libdash_xam.so" ]; then
+  echo 2 > "$S/xam"
+  echo "mode XAM activé dans l'AppRun (modules recompilés présents)"
+fi
 cp "$R/games.example.toml" "$S/"
 # Import (xenondash_import.py) : ces modules suffisent aussi à la génération des shaders natifs (dash_shaders, hud_shaders)
 for f in port_dashboard.py stfs.py xex_resource.py xex_rekey.py xzp_alias.py d3d_match.py dash_shaders.py hud_shaders.py; do cp "$R/tools/$f" "$S/tools/"; done

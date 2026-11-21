@@ -194,5 +194,12 @@ export XENONDASH_ROOT=$LINK XD_SDK=$LINK/sdk XENONDASH_AUTOSCAN=1 XENONDASH_GAME
 # Le plugin GPU xenos n'est passé qu'aux builds émulés (le build natif n'en a pas besoin).
 GPU_ARG=
 [ "$GPU" = xenos ] && GPU_ARG=--gpu_plugin=xenos
+# Variante XAM (marqueur posé par make_appimage.sh quand libdash_xam.so est embarqué) : le XAM
+# recompilé se charge (mode 2 = + point d'entrée) et le parcours profil passe par XAM — c'est ce
+# qui donne le Guide, les boîtes et le HUD de la console. Sans le marqueur : mode HLE comme avant.
+if [ -f "$SHARE/xam" ]; then
+  DASH_XAM_MODULE=$(cat "$SHARE/xam") ; export DASH_XAM_MODULE
+  DASH_PROFILE_MODE=xam ; export DASH_PROFILE_MODE
+fi
 cd "$DATA" || exit 1
 exec "$HERE/usr/bin/dash" --game_data_root="$DATA" $GPU_ARG --log_file="$DATA/dash.log" "$@"

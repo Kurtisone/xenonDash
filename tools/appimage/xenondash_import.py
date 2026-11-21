@@ -186,6 +186,11 @@ def main():
         shutil.copy(a.games_example, os.path.join(root, "games.example.toml"))
     if not os.path.exists(os.path.join(root, "flash", "shrdres.xzp")):
         pd.log("avertissement : pas de shrdres.xzp (--shrdres-xam absent) : icônes et chaînes partagées manquantes")
+    if a.shrdres_xam and os.path.isfile(a.shrdres_xam) and not os.path.exists(os.path.join(root, "xam.xex")):
+        # Les shaders HUD (interface XAM : Guide, boîtes) se traduisent depuis le xam.xex complet ;
+        # generate_native_shaders() l'attend à la racine des données.
+        shutil.copy(a.shrdres_xam, os.path.join(root, "xam.xex"))
+        pd.log("xam.xex copié à la racine (--shrdres-xam) : shaders HUD générables")
     with open(os.path.join(root, ".ready"), "w") as f:
         f.write("ok\n")
     pd.log(f"import terminé : {root}")
