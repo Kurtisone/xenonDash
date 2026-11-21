@@ -69,9 +69,11 @@ REXCVAR_DEFINE_BOOL(dash_library_scan, false, "Dash",
                     "Crée le dossier de jeux et scanne la bibliothèque au démarrage (tools/game_library.py ; "
                     "toujours actif sous AppImage)");
 
-REXCVAR_DEFINE_BOOL(dash_auto_disc, true, "Dash",
-                    "Sans `disc = true`, le dernier jeu lancé de la bibliothèque est présenté comme disque inséré "
-                    "(le hub NXE ne liste que ce jeu)");
+// Plus d'insertion automatique d'un jeu de la bibliothèque comme « disque inséré » (suppression demandée par
+// l'utilisateur le 2026-11-21) : le lecteur reste vide, conformément à la directive « le lecteur CD reste vide ».
+// Sur console, un disque non reconnu (le default.xex simulé n'est pas un disque valide) déclenchait en outre la
+// boîte modale « Unrecognized Disc » au démarrage. Un jeu ne va dans le plateau que sur demande explicite
+// (`disc = true` dans games.toml ou --dash_disc=<TitleID>).
 
 REXCVAR_DECLARE(std::string, game_data_root);
 
@@ -235,6 +237,7 @@ std::optional<Game> DiscGame() {
 }
 
 // Disque simulé : --dash_disc=<TitleID>, sinon le premier jeu avec `disc = true`, sinon `disc = "<TitleID>"` à la racine.
+// Pas d'insertion automatique (suppression demandée le 2026-11-21, lecteur vide par défaut).
 std::optional<Game> InsertedDisc() {
   if (!REXCVAR_GET(dash_disc).empty()) return Find(ParseHex(REXCVAR_GET(dash_disc)));
   for (auto& g : Games())
@@ -243,18 +246,6 @@ std::optional<Game> InsertedDisc() {
     auto root = toml::parse_file(RegistryPath().string());
     if (auto d = root["disc"].value<std::string>()) return Find(ParseHex(*d));
   } catch (...) {
-  }
-  // Bibliothèque automatique : le hub NXE ne liste (Recent Games, tuile « Play ») que le jeu « dans le plateau » (voir
-  // docs/nxe_jeux.md) ; on y met le dernier jeu lancé de la bibliothèque, sinon le premier par ordre alphabétique.
-  if (REXCVAR_GET(dash_auto_disc)) {
-    std::optional<Game> best;
-    uint64_t best_t = 0;
-    for (auto& g : Games()) {
-      if (!g.from_library) continue;
-      uint64_t t = achievements::LastPlayed(g.title_id);
-      if (!best || t > best_t || (t == best_t && g.name < best->name)) best = g, best_t = t;
-    }
-    return best;
   }
   return std::nullopt;
 }
