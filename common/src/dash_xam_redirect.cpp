@@ -726,6 +726,15 @@ void Configure(rex::system::KernelState* ks, rex::runtime::ExportResolver* resol
             prev_prov = prov;
           }
         }
+        // Profondeur d'interfaces (etat UI 0x81BFCAE8+0) : chronologie — quand passe-t-elle a 4 ?
+        {
+          const uint32_t depth = rd(0x81BFCAE8);
+          static uint32_t prev_depth = 0xFFFFFFFF;
+          if (depth != prev_depth) {
+            REXLOG_INFO("[watch] t={:4.1f}s profondeur interfaces (0x81BFCAE8) = {}", i * 0.1, depth);
+            prev_depth = depth;
+          }
+        }
       }
     }).detach();
   }
