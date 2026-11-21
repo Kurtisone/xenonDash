@@ -1972,3 +1972,42 @@ Instrumentations actives (généré, non versionné) : `[porte]`, `[msgbox]`, `[
 `[boxids]`, `[errroot]`, `[errbox]`, `[scene]`, `[app254]`, `[iface0]`, `[lang]`, `[uipump]`,
 `[sysui]` + côté hôte `DASH_WATCH_APPS=1` (cellule app active, contexte 254, sonde VFS) et la
 sonde dans le crochet XexLoadImage (3 premiers appels).
+
+## 2026-11-21 (matin) : chaînes localisées résolues, erreur de disque supprimée, app 252 toujours là
+
+### Le provider de chaînes marche — l'erreur « Unrecognized disc » identifiée puis supprimée
+
+Instrumentation de la chaîne des chaînes (`[lang]`) + surveillance hôte du slot :
+
+- l'installateur s'exécute et le slot 0x81BFDA4C passe bien à 0x409CFAB0 (t=0,1 s) ;
+- les recherches tournent (provider=409CFAB0, id=163/172…) et renvoient des objets NON nuls ;
+- l'affichage « titre vide » de mes premières traces était un défaut du lecteur : mon garde
+  `p < 0x40000000` excluait les pointeurs du tas physique (0x408D…) où vivent ces chaînes ;
+- octets bruts du titre au boot : « Unrecog… » (= « Unrecognized disc ») et « Xbox Liv… ».
+
+Le titre « Unrecognized disc » : notre \Device\CdRom0 était monté sur les DONNÉES (assets), que
+XAM voit comme un disque non reconnu — le scénario console exact pour ce contenu. Correctif :
+CdRom0 monté sur un dossier VIDE (pas de disque inséré, comportement console d'un lecteur vide).
+Mesuré : plus aucune boîte d'erreur au démarrage (`[msgbox]` disparu du journal).
+
+### Ce qui reste : la profondeur d'interfaces (4) et l'app 252
+
+Le compteur vaut toujours 4 même sans l'erreur de disque : ce n'est donc pas la boîte disque qui
+le maintient. Interprétation la plus cohérente avec tout ce qui est mesuré : ce mot est la
+profondeur de la pile d'interfaces système (les apps UI 250-253 enregistrées avec le handle
+hud.xex), et la scène de boot (252) ne se termine jamais — rien ne la dépile. Le portier refuse
+toute nouvelle interface tant que la pile n'est pas vide ; le Guide est accepté seulement grâce à
+notre remise à zéro temporaire pendant l'appel.
+
+Note méthode : les watchpoints gdb sur le compteur (0x101BFCAE8, et la vue physique
+0x201BFCAE8) n'ont rien attrapé — sous gdb le suivi de pages du SDK (SIGSEGV) tue le process
+avant l'état à 4 si le signal n'est pas passé au gestionnaire (`handle SIGSEGV nostop noprint
+pass`), et les traces stderr n'apparaissent pas dans la sortie gdb. À reprendre avec ce réglage
+et en vérifiant l'amorce du watchpoint (« Hardware watchpoint » dans la sortie).
+
+### État de l'objectif Guide
+
+Chaîne complète fonctionnelle (appel, message, scène, chargement de module) ; correctifs réels
+posés (CdRom0 + repli VFS SDK) ; erreur de disque supprimée ; chaînes localisées résolues.
+Reste : faire terminer la scène de boot du système UI (app 252) — c'est la porte de tout le
+reste (Guide, boîtes, clavier virtuel).

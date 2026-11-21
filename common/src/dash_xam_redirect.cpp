@@ -706,6 +706,26 @@ void Configure(rex::system::KernelState* ks, rex::runtime::ExportResolver* resol
           }
           prev_game = game; prev_root = root;
         }
+        // Provider de chaines localisees (0x81BFDA4C) : journaliser les changements.
+        {
+          const uint32_t prov = rd(0x81BFDA4C);
+          static uint32_t prev_prov = 0xFFFFFFFF;
+          if (prov != prev_prov) {
+            REXLOG_INFO("[watch] t={:4.1f}s provider de chaines (0x81BFDA4C) = {:08X}", i * 0.1, prov);
+            if (prov) {
+              // Entete du provider et du bloc de langue source (0x301BC000) : le parse a-t-il
+              // produit une table non vide ?
+              std::string hp, hb;
+              for (int k = 0; k < 8; ++k) {
+                hp += fmt::format(" {:08X}", rd(prov + 4 * k));
+                hb += fmt::format(" {:08X}", rd(0x301BC000u + 4 * k));
+              }
+              REXLOG_INFO("[watch]   provider @{:08X} :{}", prov, hp);
+              REXLOG_INFO("[watch]   bloc langue 0x301BC000 :{}", hb);
+            }
+            prev_prov = prov;
+          }
+        }
       }
     }).detach();
   }

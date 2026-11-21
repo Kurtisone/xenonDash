@@ -108,9 +108,13 @@ void MountFlash(rex::filesystem::VirtualFileSystem* vfs, const fs::path& flash_d
   // lecteur de disque, comportement console). Sans peripherique derriere, ce lien pend et masque
   // game: (la correspondance des prefixes est insensible a la casse, l'ordre de la map arbitre) :
   // les chargements de modules des scenes du systeme UI echouaient (« no device »). Sur la console
-  // le lecteur existe meme sans disque ; on le monte sur la racine des donnees, comme Partition1,
-  // pour que game:\flash\<nom> resolve vers le meme fichier quel que soit le lien qui gagne.
-  Mount(vfs, "\\Device\\CdRom0", flash_dir.parent_path(), true);
+  // le lecteur existe meme sans disque : on le monte sur un dossier VIDE (pas de disque insere),
+  // et non sur les donnees — monter les assets fait voir a XAM un « disque non reconnu »
+  // (mesure du 2026-11-21 : le titre de la boite d'erreur du demarrage est « Unrecognized... »).
+  const fs::path cdrom_dir = StateDir() / "cdrom";
+  std::error_code ec;
+  fs::create_directories(cdrom_dir, ec);
+  Mount(vfs, "\\Device\\CdRom0", cdrom_dir, true);
 }
 
 void MountXamDevices(rex::filesystem::VirtualFileSystem* vfs) {
