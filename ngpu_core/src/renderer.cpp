@@ -77,6 +77,9 @@ int32_t UsageLocation(uint32_t usage, uint32_t index) {
       {0, 0, 0},  {3, 0, 1},  {6, 0, 2},  {7, 0, 3},  {5, 0, 4},  {5, 1, 5},
       {5, 2, 6},  {5, 3, 7},  {10, 0, 8}, {2, 0, 9},  {1, 0, 10}, {10, 1, 11},
       {5, 4, 12}, {5, 5, 13}, {5, 6, 14}, {5, 7, 15}, {0, 1, 15},
+      // TexCoord 8+ : VS de maillages skinnés du Dashboard 13604 (920636B0...) — d'accord avec le
+      // côté invité (patches/xenosrecomp/0007, USAGE_LOCATIONS de XenosRecomp).
+      {5, 8, 16}, {5, 9, 17}, {5, 10, 18}, {5, 11, 19},
   };
   for (const auto& entry : kLocations) {
     if (entry.usage == usage && entry.index == index) return int32_t(entry.location);

@@ -225,6 +225,20 @@ def stage_assets(a, ctx):
                 log(f"{res}.xzp converti depuis {a.shrdres_xam}")
     else:
         log("avertissement : pas de shrdres.xzp (--shrdres ou --shrdres-xam) : icônes/chaînes partagées absentes")
+    # xam.xex du MODULE (le chargeur du Dashboard lit game:\xam.xex dans la flash quand DASH_XAM_MODULE
+    # est défini) : la clé de session du $flash_xam.xex de la 13604 est chiffrée XEX1, la copie de la
+    # flash doit donc être la version rekeyée (clé retail) — sinon le XAM recompilé ne se chargeait
+    # pas (« module xam.xex recompilé : ÉCHEC », bouton Guide mort ; mesure du 2026-11-21, l'AppImage
+    # sans --modules n'avait jamais de xam.xex dans la flash). Le rekey de shrdres suffit si l'on
+    # n'a pas fourni d'autre xam (--shrdres-xam) : dans ce cas on rekeye le xam de la mise à jour.
+    if own_xam:
+        src = a.shrdres_xam if (not a.shrdres and a.shrdres_xam and
+                                os.path.basename(a.shrdres_xam) == "shrdres_xam_rekey.xex") else None
+        if src is None:
+            src = os.path.join(ctx["work"], "xam_module_rekey.xex")
+            run([sys.executable, os.path.join(TOOLS, "xex_rekey.py"), own_xam[0], src])
+        shutil.copy(src, os.path.join(flash, "xam.xex"))
+        log("xam.xex (rekeyé) copié dans la flash : module XAM du chargeur (game:\\xam.xex)")
     extract_dash_resources(ctx, assets, flash)
 
 
