@@ -33,6 +33,7 @@ std::atomic<long> g_etx_calls{0};
 std::atomic<long> g_keystatus_calls{0};
 std::atomic<long> g_nic_calls{0};
 std::atomic<long> g_mtpd_calls{0};
+std::atomic<long> g_nicstats_calls{0};
 std::atomic<long> g_xexstart_calls{0};
 std::atomic<long> g_powerup_calls{0};
 std::atomic<long> g_vdswap_calls{0};
@@ -107,6 +108,23 @@ REX_HOOK_RAW(__imp__NicGetLinkState) {
   (void)base;
   if (++g_nic_calls == 1)
     REXLOG_INFO("[net] NicGetLinkState : pas de lien (hors ligne)");
+  ctx.r3.u64 = 0;
+}
+
+// NicGetStats(-1, r4) : compteurs du NIC (octets/paquets emis et recus). r3 = -1 (« tous les NIC »),
+// r4 = tampon de 72 octets (6 x u64 puis 6 x u32, etendue lue par l'appelant). Retour ignore.
+// Appelants : xam/dash_recomp.28.cpp:8849/8880/8911/8945 (sub_8190ED78 : r4 = r1+80, etend les
+// valeurs en sommes de compteurs), 14.cpp:27710 (sub_81AE8270 : r4 = objet reseau +13076, la somme
+// des 4 u64 est comparee a 0 : > 0 sinon la branche est sautee) et 35.cpp:27961 (sub_81AE8718 :
+// r4 = r1+96, la division par un compteur est protegee). Raison : le stub laissait r3 et le tampon
+// tels quels (residu de pile / objet), donc des compteurs arbitraires ; une console sans NIC actif
+// n'a aucun trafic : on remplit 72 octets de zeros (pas de division par zero ni de boucle : les
+// sommes et la comparaison > 0 ont ete lues). Les tampons sont lus par l'appelant juste apres,
+// donc deja commits (contrairement a NicGetLinkState). Retourne 0.
+REX_HOOK_RAW(__imp__NicGetStats) {
+  if (ctx.r4.u32 && ctx.r4.u32 < 0xF0000000u) std::memset(base + ctx.r4.u32, 0, 72);
+  if (++g_nicstats_calls == 1)
+    REXLOG_INFO("[net] NicGetStats : compteurs a zero (aucun trafic)");
   ctx.r3.u64 = 0;
 }
 
