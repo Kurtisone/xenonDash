@@ -1,0 +1,29 @@
+From: Kurtisone <104103601+Kurtisone@users.noreply.github.com>
+Date: Fri, 21 Nov 2026 13:00:00 +0100
+Subject: [PATCH 7/7] XenonDash : locations d'entrees pour TexCoord 8+ (VS skinnnes du Dashboard)
+
+Les VS de maillages skinnes du Dashboard 13604 (920636B0, 920644D8, 920654D0,
+92066C20, 92067070, 920674C0) declarent TEXCOORD8 et plus, sans entree dans
+USAGE_LOCATIONS : dxc refusait la signature (melange d'entrees localisees et
+non localisees — « partial explicit stage input location assignment »).
+Locations 16-19 pour TexCoord 8 a 11, en accord avec le cote hote
+(ngpu_core/src/renderer.cpp, UsageLocation, meme correctif).
+---
+diff --git a/XenosRecomp/shader_recompiler.cpp b/XenosRecomp/shader_recompiler.cpp
+index 8724e7a..0ad61c6 100644
+--- a/XenosRecomp/shader_recompiler.cpp
++++ b/XenosRecomp/shader_recompiler.cpp
+@@ -95,6 +95,13 @@ static constexpr DeclUsageLocation USAGE_LOCATIONS[] =
+     { DeclUsage::TexCoord, 6, 14 },
+     { DeclUsage::TexCoord, 7, 15 },
+     { DeclUsage::Position, 1, 15 },
++    // TexCoord 8+ : les VS de maillages skinnés du Dashboard 13604 (920636B0 et consorts) déclarent
++    // TEXCOORD8/9... — dxc refuse une signature mélangeant des entrées localisées et non localisées.
++    // D'accord avec le côté hôte (ngpu_core/src/renderer.cpp, UsageLocation).
++    { DeclUsage::TexCoord, 8, 16 },
++    { DeclUsage::TexCoord, 9, 17 },
++    { DeclUsage::TexCoord, 10, 18 },
++    { DeclUsage::TexCoord, 11, 19 },
+ };
+ 
+ static constexpr std::pair<DeclUsage, size_t> INTERPOLATORS[] =

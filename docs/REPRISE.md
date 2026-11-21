@@ -155,6 +155,29 @@ pilote STFS minimal côté noyau, profil local hors ligne (XUID aléatoire, sign
      demande l'extension d'ABI `USAGE_LOCATIONS` pour TexCoord8+, côté hôte `renderer.cpp` aussi,
      ce sont des maillages skinnés BlendWeight/Indices) et 64 VS où XenosRecomp **crashe**
      (returncode -11 = SIGSEGV, bloc contigu 920D6770→920F4AE8) — à investiguer sous gdb.
+   *Shaders : **tous traduits** (2026-11-21, soir).* Sous gdb, les 64 SIGSEGV se réduisent à
+   trois familles de défauts du header des VS 13604, traitées par `patches/xenosrecomp/0007`
+   et `0008` :
+   - `USAGE_LOCATIONS` sans TexCoord8+ (dxc refuse une signature mélangeant localisé/non
+     localisé) → locations 16-19 pour TexCoord 8-11, **côté hôte aussi** (`ngpu_core/src/renderer.cpp`,
+     `UsageLocation`) — les 6 VS skinnés passent ;
+   - carte des interpolateurs VS indexée par position au lieu d'`interpolator.reg` (listes
+     compactées du header 13604) + exports vers des interpolateurs non déclarés et fetches
+     constantes non déclarées qui déréférençaient `end()` (assert muet en Release) → clé par
+     registre, exports/fetches inconnus ignorés proprement (l'instruction est sautée, bloc
+     prédiqué refermé) ;
+   - textures 1D échantillonnées comme des 2D de hauteur 1 (`inResiduals`), les descripteurs
+     partagés ne couvrant que 2D/3D/Cube.
+   Résultat : **258/258 conteneurs dash et 34/34 conteneurs HUD traduits** (était 186/258 et
+   33/34) ; le HUD `817F9550_VS` (même famille SIGSEGV) passe aussi.
+   *Guide mort sur l'AppImage (2026-11-21, soir) : **corrigé**.* Le chargeur attend
+   `game:\xam.xex` dans la flash (`DASH_XAM_MODULE`), mais l'import **sautait** xam.xex lors de
+   la copie des modules de la mise à jour (le conteneur le recevait du `--modules` xeBuild) —
+   « module xam.xex recompilé : ÉCHEC » à chaque boot de l'utilisateur, aucune redirection XAM,
+   le bouton G ne faisait rien. Correctif : `port_dashboard.py` copie désormais le xam.xex
+   **rekeyé** (clé XEX1 → retail) dans la flash — et le xam.xex à la racine des données
+   (shaders HUD) était lui-même resté non rekeyé (le regen rekeye, sans conséquence). Données de
+   l'utilisateur corrigées à la main en attendant.
    *État au 2026-11-20 (soir), **résolu*** : la variante `-xam` **affiche**. La cause du noir n'était
    pas dans le code invité mais dans le mappage mémoire : l'arène de 4,5 Go était un fichier
    `/dev/shm` mappé `MAP_SHARED`, et `/dev/shm` d'un conteneur fait souvent 64 Mo — au-delà,

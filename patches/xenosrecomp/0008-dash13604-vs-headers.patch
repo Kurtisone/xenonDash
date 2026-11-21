@@ -1,0 +1,108 @@
+From: Kurtisone <104103601+Kurtisone@users.noreply.github.com>
+Date: Fri, 21 Nov 2026 13:45:00 +0100
+Subject: [PATCH 8/8] XenonDash : en tete de VS 13604 — listes compactees, fetch non declarees, textures 1D
+
+Quatre corrections rendant les 64 VS du bloc 920D6770->920F4AE8 traduisibles
+(SIGSEGV mesures sous gdb, assert inoperants en Release puis erreurs dxc) :
+
+1. La carte des interpolateurs VS est indexee par interpolator.reg (numero de
+   registre d'export) et non par la position dans la liste : le header du
+   Dashboard 13604 compactionne ses listes (trous) et les exports referencent
+   le registre reel. Sans cela, find(vectorDest) rate et end() est dereference.
+2. Export vers un interpolateur non declare : l'instruction est sautee avec un
+   message sur stderr (le materiel l'ignorerait) au lieu du dereferencement ;
+   le bloc predique ouvert en tete de fonction est referme.
+3. Fetch constante non declaree dans le header (vfetch) : zero ecrit dans la
+   destination au lieu du dereferencement de end().
+4. Les textures 1D sont echantillonnees comme des 2D de hauteur 1 ("inResiduals"
+   du 920D6770) : les descripteurs partages et les helpers ne couvrent que
+   2D/3D/Cube ; l'offset est emis comme pour les 2D.
+
+Avec 0005-0007 : 258/258 conteneurs dash et 34/34 conteneurs HUD traduits
+(etait : 186/258 et 33/34).
+---
+diff --git a/XenosRecomp/shader_recompiler.cpp b/XenosRecomp/shader_recompiler.cpp
+index 0ad61c6..8edc596 100644
+--- a/XenosRecomp/shader_recompiler.cpp
++++ b/XenosRecomp/shader_recompiler.cpp
+@@ -185,6 +185,21 @@ void ShaderRecompiler::recompile(const VertexFetchInstruction& instr, uint32_t a
+     out += " = ";
+ 
+     auto findResult = vertexElements.find(address);
++    if (findResult == vertexElements.end())
++    {
++        // Fetch constante que le header ne déclare pas (VS du Dashboard 13604) : le matériel
++        // renverrait une donnée indéfinie pour un élément inexistant — on écrit zéro au lieu de
++        // déréférencer end() (assert inopérant en Release, SIGSEGV mesuré le 2026-11-21).
++        out += "0.0;\n";
++        printDstSwizzle01(instr.dstRegister, instr.dstSwizzle);
++        if (instr.isPredicated)
++        {
++            --indentation;
++            indent();
++            out += "}\n";
++        }
++        return;
++    }
+     assert(findResult != vertexElements.end());
+ 
+     switch (findResult->second.usage)
+@@ -346,8 +361,11 @@ void ShaderRecompiler::recompile(const TextureFetchInstruction& instr, bool bicu
+     switch (instr.dimension)
+     {
+     case TextureDimension::Texture1D:
+-        dimension = "1D";
+-        componentCount = 1;
++        // Les descripteurs partagés ne couvrent que 2D/3D/Cube (TEXTURE_DIMENSIONS, ABI hôte) :
++        // une texture 1D du xenos est échantillonnée comme une 2D de hauteur 1 (VS du Dashboard
++        // 13604 « inResiduals », mesuré le 2026-11-21).
++        dimension = "2D";
++        componentCount = 2;
+         break;
+     case TextureDimension::Texture2D:
+         dimension = "2D";
+@@ -382,6 +400,7 @@ void ShaderRecompiler::recompile(const TextureFetchInstruction& instr, bool bicu
+ 
+     switch (instr.dimension)
+     {
++    case TextureDimension::Texture1D:  // échantillonnée comme une 2D (voir plus haut) : offset inclus
+     case TextureDimension::Texture2D:
+         print(", float2({}, {})", instr.offsetX * 0.5f, instr.offsetY * 0.5f);
+         if (explicitLod)
+@@ -689,7 +708,22 @@ void ShaderRecompiler::recompile(const AluInstruction& instr)
+             default:
+             {
+                 auto findResult = interpolators.find(instr.vectorDest);
+-                assert(findResult != interpolators.end());
++                if (findResult == interpolators.end())
++                {
++                    // Export vers un interpolateur que le header ne déclare pas : le matériel
++                    // l'ignorerait — on saute l'instruction au lieu de déréférencer end()
++                    // (assert inopérant en Release, SIGSEGV mesuré sur les VS 13604). Le bloc
++                    // prédiqué, ouvert en tête de fonction, doit être refermé.
++                    std::fprintf(stderr, "XenosRecomp : export vers l'interpolateur %u non déclaré, instruction ignorée\n",
++                        instr.vectorDest);
++                    if (instr.isPredicated)
++                    {
++                        --indentation;
++                        indent();
++                        out += "}\n";
++                    }
++                    return;
++                }
+                 exportRegister = findResult->second;
+                 break;
+             }
+@@ -1577,7 +1611,11 @@ void ShaderRecompiler::recompile(const uint8_t* shaderData, const std::string_vi
+         {
+             auto vertexShader = reinterpret_cast<const VertexShader*>(shader);
+             value = vertexShader->vertexElementsAndInterpolators[vertexShader->field18 + vertexShader->vertexElementCount + i];
+-            interpolators.emplace(i, fmt::format("o{}{}", USAGE_VARIABLES[uint32_t(interpolator.usage)], uint32_t(interpolator.usageIndex)));
++            // Clé = numéro de registre d'export (interpolator.reg), pas la position dans la liste :
++            // le header des VS du Dashboard 13604 compactionne ses listes (trous d'interpolateurs
++            // non utilisés), et les exports référencent le registre réel — indexer par position
++            // faisait rater la recherche et planter le recompilateur (SIGSEGV, 64 VS mesurés).
++            interpolators.emplace(uint32_t(interpolator.reg), fmt::format("o{}{}", USAGE_VARIABLES[uint32_t(interpolator.usage)], uint32_t(interpolator.usageIndex)));
+         }
+     }
+ 
