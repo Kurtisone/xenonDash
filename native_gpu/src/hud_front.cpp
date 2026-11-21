@@ -520,7 +520,15 @@ void PublishOverlay() {
   }
   // Notification systeme « interface systeme affichee » (XN_SYS_UI, 9) : sur la console XAM la diffuse aux titres a l'ouverture et a la
   // fermeture du HUD ; le XAM recompile la garde dans ses propres ecouteurs, que le Dashboard (noyau du SDK) ne lit pas.
-  if (changed && !std::getenv("DASH_HUD_NONOTIFY")) {
+  //
+  // OFF par defaut (DASH_HUD_NOTIFY=1 pour l'activer). Mesure du 2026-11-21 : la diffusion se
+  // declenchait sur les pixels du chrome de chargement du HUD (barre + anneau du boot) — or le
+  // systeme UI vient justement de nettoyer son etat a ce moment (masque 0x81BFCAE8 : 0 -> 4 -> 0).
+  // La notification mensongere faisait reposer le bit « interface active » par les ecouteurs de
+  // XAM : tout le systeme UI se bloquait (le Guide restait sur son panneau de chargement).
+  // A reactiver avec un signal fidele (l'etat de XAM, pas « des pixels opaques ») quand on
+  // integrera la pause des titres.
+  if (changed && std::getenv("DASH_HUD_NOTIFY")) {
     std::fprintf(stderr, "[hud] HUD %s (image %llu)\n", visible ? "affiche" : "masque", (unsigned long long)g.frames);
     rex::system::kernel_state()->BroadcastNotification(rex::system::XNotificationID(0x00000009), visible ? 1 : 0);
   }

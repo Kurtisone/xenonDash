@@ -2056,3 +2056,44 @@ jamais son état « prêt » (ce qui, sur console, dépile et rend la main au Da
 les boîtes et le clavier virtuel attendent tous ce déblocage. Prochaine enquête : la machine à
 états du boot (chaîne [deep] du module Dashboard) et les événements que la scène de boot attend
 (stubs appelés pendant le boot, session/profil vu par XAM).
+
+## 2026-11-21 (fin) : LE GUIDE S'AFFICHE — la boucle de notification était la clé de voûte
+
+### La cause racine, mesurée par A/B
+
+La chronologie du masque (surveillance hôte) a montré que le système UI **termine son boot
+tout seul** : 0 → 4 (boot) → **0** (t=0,6 s, nettoyé par XAM). Puis la diffusion hôte de
+XN_SYS_UI(1) — déclenchée par la logique « pixels opaques » du composite sur le chrome de
+chargement (barre + anneau) — re-posait le bit « interface active » via les écouteurs de XAM :
+tout le système UI se rebloquait (Guide en panneau blanc, boîtes muettes, bit 4 permanent).
+
+A/B mesuré (DASH_HUD_NONOTIFY) :
+- **sans diffusion** : masque 0 → 4 → 0 et il y reste ; G ouvre le Guide (panneau de chargement
+  puis contenu), les boîtes se rendent (texte, bouton, pied, atténuation) et se ferment au
+  bouton B — retour au hub plein écran, lumineux, sans overlay résiduel ;
+- **avec diffusion** : le Guide reste bloqué sur son panneau de chargement (le masque repasse
+  à 4 à l'ouverture — le « HUD affiché » mensonger).
+
+### Correctif
+
+La diffusion XN_SYS_UI passe en **opt-in** (`DASH_HUD_NOTIFY=1`) : elle servira à la pause des
+titres quand on en intégrera, avec un signal fidèle (l'état de XAM, pas « des pixels opaques »).
+Le commentaire du code porte la mesure complète.
+
+### Vérifications regardées (captures)
+
+- G (touche réelle) → le Guide s'ouvre (chargement avec anneau, puis contenu — les lames
+  Marketplace/Games/Home/Media/Settings, « Sign In (0 Profiles) », « Create Profile »,
+  « Recover Gamertag », « Open Tray », horloge, pied A/B/X/Y) ;
+- les boîtes système se rendent entièrement (« Unrecognized Disc — This disc is unreadable…
+  1. Clean the disc… 2. Restart the console », bouton OK, fond atténué) et se ferment au
+  bouton B — retour au hub propre ;
+- la détection de disque de XAM aboutit désormais en différé (la boîte apparaît quand le
+  système UI est débloqué) — le lecteur vide est vu comme « disque illisible », comportement
+  console d'un lecteur avec un disque défectueux ; à suivre (le vidé une fois pour toutes).
+
+### Directives utilisateur (2026-11-21)
+
+- Le lecteur CD reste vide ; les jeux passent par le dossier monté (bibliothèque existante) ;
+  si une machine possède un vrai lecteur optique, il s'exposerait comme \Device\CdRom0 (à faire).
+- Expérience Xbox 360 native, le plus juste possible sans modification.
