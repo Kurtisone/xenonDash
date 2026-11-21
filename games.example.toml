@@ -1,12 +1,9 @@
 # Registre des jeux lançables depuis le Dashboard (phase P5).
 # À copier en <game_data_root>/games.toml (ex. dashboards/2.0.6770.0/assets/games.toml).
-# Lancer : F5 (manette : Back + Y) dans le Dashboard ouvre la liste ; ou --dash_launch=<TitleID> pour un test ;
-# ou tout appel du Dashboard à XamLoaderLaunchTitle(Ex) (disque) pour le jeu `disc`.
+# Lancer : F5 (manette : Back + Y) dans le Dashboard ouvre la liste ; ou --dash_launch=<TitleID> pour un test.
 # Le Dashboard quitte, le jeu s'exécute, puis le Dashboard est relancé (voir docs/technique.md, « Lancer des jeux »).
-
-# Disque simulé : le jeu marqué `disc = true` (plus bas) apparaît comme disque inséré (bouton de disque de l'onglet
-# Games : nom et icône du jeu, A le lance). Équivalents : --dash_disc=<TitleID>, ou `disc = "<TitleID>"` ici.
-# Les appels XamLoaderLaunchTitle sans chemin lancent ce jeu (à défaut, le seul jeu déclaré).
+# La simulation de disque a été supprimée (2026-11-21) : le lecteur ne réagira qu'à un véritable lecteur optique,
+# aucune clé `disc` n'est plus lue (une clé présente dans un games.toml existant est simplement ignorée).
 
 # Jeux listés dans Games Library > My Games (contenu Arcade virtuel ; Play Game les lance).
 library = true
@@ -23,7 +20,6 @@ name = "Skate"
 native = "./skate1"
 cwd = "../Skate1Recompiled/out/pc-profile"
 type = "arcade"        # arcade (défaut), demo, original, xna ou un nombre
-disc = true            # « inséré dans le lecteur »
 # icon = "icones/skate.png"   # PNG <= 16 Ko ; sinon l'icône du <TitleID>.gpd du profil (ou `spa = "..."`)
 
 # Jeu recompile a la demande par une recette (games/<TitleID>/, docs/recettes.md) : au premier lancement le Dashboard construit
@@ -33,7 +29,6 @@ disc = true            # « inséré dans le lecteur »
 # name = "Skate"
 # recipe = "/chemin/vers/le/dossier/du/jeu"
 # type = "arcade"
-# disc = true
 
 [game.4D5307E6]
 name = "Halo 3 (Xenia)"

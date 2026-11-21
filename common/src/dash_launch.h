@@ -16,7 +16,6 @@ struct Game {
   std::string cwd;       // répertoire de travail du jeu (vide = celui du Dashboard)
   bool keep_ld = false;  // conserver LD_LIBRARY_PATH du Dashboard dans l'environnement du jeu
   uint32_t content_type = 0x000D0000;  // catégorie dans Games Library (arcade par défaut)
-  bool disc = false;     // `disc = true` : jeu « inséré dans le lecteur » (bouton de disque du Dashboard)
   std::string icon;      // icône PNG (<= 16 Ko) ; à défaut celle du GPD/SPA du jeu (`spa`, ou <TitleID>.gpd du profil)
   std::string spa;       // fichier XDBF (.spa/.gpd) d'où tirer l'icône
   bool from_library = false;  // vient de games.auto.toml (bibliothèque), pas de games.toml
@@ -49,8 +48,8 @@ void RescanLibrary(bool wait, int timeout_s = 4);  // `game_library.py init` (1r
 
 std::vector<Game> Games();  // relit games.toml à chaque appel
 std::optional<Game> Find(uint32_t title_id);
-std::optional<Game> DiscGame();      // titre lancé par LaunchTitle(NULL) (disque, sinon seul jeu déclaré)
-std::optional<Game> InsertedDisc();  // jeu explicitement dans le lecteur (disc = true, --dash_disc) ; sinon rien
+// Plus aucune notion de « jeu dans le lecteur » : la simulation de disque est supprimée (demande utilisateur,
+// 2026-11-21) — le lecteur ne réagira qu'à un véritable lecteur optique. Les lancements passent par LaunchGame.
 bool LibraryEnabled();
 bool LaunchGame(const Game& g);  // ne revient pas si le lancement réussit
 void Init();                     // --dash_launch

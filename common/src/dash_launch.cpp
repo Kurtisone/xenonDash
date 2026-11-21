@@ -57,8 +57,6 @@ REXCVAR_DEFINE_STRING(dash_xenia, "", "Dash",
                       "variable DASH_XENIA, sinon xenia_canary)");
 REXCVAR_DEFINE_STRING(dash_launch, "", "Dash",
                       "TitleID (hexadécimal) d'un jeu de games.toml à lancer tout de suite au démarrage (test)");
-REXCVAR_DEFINE_STRING(dash_disc, "", "Dash",
-                      "TitleID (hexadécimal) d'un jeu de games.toml présenté comme disque inséré (équivaut à `disc = true`)");
 REXCVAR_DEFINE_INT32(dash_launch_delay, 5, "Dash", "Délai (s) avant le lancement demandé par --dash_launch");
 
 REXCVAR_DEFINE_STRING(dash_library_toml, "", "Dash",
@@ -69,11 +67,10 @@ REXCVAR_DEFINE_BOOL(dash_library_scan, false, "Dash",
                     "Crée le dossier de jeux et scanne la bibliothèque au démarrage (tools/game_library.py ; "
                     "toujours actif sous AppImage)");
 
-// Plus d'insertion automatique d'un jeu de la bibliothèque comme « disque inséré » (suppression demandée par
-// l'utilisateur le 2026-11-21) : le lecteur reste vide, conformément à la directive « le lecteur CD reste vide ».
-// Sur console, un disque non reconnu (le default.xex simulé n'est pas un disque valide) déclenchait en outre la
-// boîte modale « Unrecognized Disc » au démarrage. Un jeu ne va dans le plateau que sur demande explicite
-// (`disc = true` dans games.toml ou --dash_disc=<TitleID>).
+// Plus aucune notion de « disque inséré » : la simulation de disque est supprimée (demande de l'utilisateur,
+// 2026-11-21) — le lecteur ne réagira qu'à un véritable lecteur optique, à câbler plus tard sur \Device\CdRom0.
+// Les lancements de jeux passent par LaunchGame (bibliothèque, tuiles) ; les demandes de lancement invitées
+// (XamLoaderLaunchTitle*) n'aboutissent que si le chemin nomme un jeu connu (Resolve).
 
 REXCVAR_DECLARE(std::string, game_data_root);
 
@@ -155,7 +152,7 @@ void ParseRegistry(const fs::path& path, bool automatic, const std::string& xeni
     auto* t = node.as_table();
     if (!t) continue;
     std::string k(key.str());
-    if (k == "xenia" || k == "disc") continue;
+    if (k == "xenia" || k == "disc") continue;  // « disc » : clé retirée (simulation de disque supprimée) ; ignorée pour compat
     Game g;
     g.title_id = ParseHex(k);
     if (!g.title_id) continue;
@@ -176,7 +173,6 @@ void ParseRegistry(const fs::path& path, bool automatic, const std::string& xeni
       continue;
     }
     g.recipe = (*t)["recipe"].value_or(std::string());
-    g.disc = !automatic && (*t)["disc"].value_or(false);
     g.icon = (*t)["icon"].value_or(std::string());
     g.spa = (*t)["spa"].value_or(std::string());
     g.from_library = automatic;
@@ -228,24 +224,17 @@ bool LibraryEnabled() {
   }
 }
 
-// Titre « dans le lecteur » : `disc = "45410813"` à la racine de games.toml (sinon le seul jeu déclaré).
-std::optional<Game> DiscGame() {
-  if (auto d = InsertedDisc()) return d;
-  auto g = Games();
-  if (g.size() == 1) return g[0];
-  return std::nullopt;
-}
-
-// Disque simulé : --dash_disc=<TitleID>, sinon le premier jeu avec `disc = true`, sinon `disc = "<TitleID>"` à la racine.
-// Pas d'insertion automatique (suppression demandée le 2026-11-21, lecteur vide par défaut).
-std::optional<Game> InsertedDisc() {
-  if (!REXCVAR_GET(dash_disc).empty()) return Find(ParseHex(REXCVAR_GET(dash_disc)));
-  for (auto& g : Games())
-    if (g.disc) return g;
-  try {
-    auto root = toml::parse_file(RegistryPath().string());
-    if (auto d = root["disc"].value<std::string>()) return Find(ParseHex(*d));
-  } catch (...) {
+// Titre à lancer pour un chemin de lancement du Dashboard : on cherche un TitleID (8 chiffres hexadécimaux) dans
+// le chemin, puis un jeu dont le nom figure dans le chemin. Plus aucun repli « disque » : sans correspondance il
+// n'y a rien à lancer (la simulation de disque est supprimée, demande utilisateur du 2026-11-21).
+std::optional<Game> Resolve(const std::string& path) {
+  for (size_t i = 0; i + 8 <= path.size(); i++) {
+    bool hex = true;
+    for (size_t j = 0; j < 8 && hex; j++) hex = std::isxdigit(static_cast<unsigned char>(path[i + j])) != 0;
+    if (hex && (i == 0 || !std::isxdigit(static_cast<unsigned char>(path[i - 1]))) &&
+        (i + 8 == path.size() || !std::isxdigit(static_cast<unsigned char>(path[i + 8])))) {
+      if (auto g = Find(ParseHex(path.substr(i, 8)))) return g;
+    }
   }
   return std::nullopt;
 }
@@ -804,21 +793,6 @@ std::string GuestStr(uint8_t* base, uint32_t addr) {
   return s;
 }
 
-// Titre à lancer pour un chemin de lancement du Dashboard : chemin vide/NULL = le disque, sinon on cherche
-// un TitleID (8 chiffres hexadécimaux) dans le chemin, puis un jeu dont le nom figure dans le chemin.
-std::optional<Game> Resolve(const std::string& path) {
-  if (path.empty() || path == "<NULL>") return DiscGame();
-  for (size_t i = 0; i + 8 <= path.size(); i++) {
-    bool hex = true;
-    for (size_t j = 0; j < 8 && hex; j++) hex = std::isxdigit(static_cast<unsigned char>(path[i + j])) != 0;
-    if (hex && (i == 0 || !std::isxdigit(static_cast<unsigned char>(path[i - 1]))) &&
-        (i + 8 == path.size() || !std::isxdigit(static_cast<unsigned char>(path[i + 8])))) {
-      if (auto g = Find(ParseHex(path.substr(i, 8)))) return g;
-    }
-  }
-  return DiscGame();
-}
-
 std::string HexDump(const std::vector<uint8_t>& v, size_t n = 64) {
   std::string s;
   for (size_t i = 0; i < v.size() && i < n; i++) s += fmt::format("{:02x}", v[i]);
@@ -931,9 +905,10 @@ REX_HOOK_RAW(__imp__XamLoaderLaunchTitleForReason) {
 
 // XamLoaderGetMediaInfo(&type, &titre) : type de média (0 aucun, 1 disque de jeu Xbox 360, 2 Xbox d'origine...) et
 // TitleID du disque (le Dashboard l'appelle en démarrant et pour remplir le bouton de disque).
+// Simulation de disque supprimée (demande utilisateur, 2026-11-21) : toujours « aucun média ». Un vrai lecteur
+// optique sera câblé ici plus tard.
 REX_HOOK_RAW(__imp__XamLoaderGetMediaInfo) {
-  auto d = dash::launch::InsertedDisc();
-  uint32_t type = d ? 1 : 0, title = d ? d->title_id : 0;
+  uint32_t type = 0, title = 0;
   auto put = [&](uint32_t addr, uint32_t v) {
     if (addr) *reinterpret_cast<uint32_t*>(base + addr) = __builtin_bswap32(v);
   };
@@ -952,16 +927,16 @@ REX_HOOK_RAW(__imp__XamLoaderGetMediaInfo) {
   ctx.r3.u64 = 0;
 }
 
-// NXE : XamLoaderGetMediaInfoEx(&a, &b, &c) était un stub (sorties laissées à la valeur de la pile). Le hub l'interroge avant
-// toute action sur le disque (tuile « Play », A, Eject) : la 3e sortie est comparée à 0 et -2 (« pas de média »). Ici : média
-// présent (a = 1 : disque de jeu Xbox 360, b = TitleID du disque) et c = 0 (prêt) ; sans disque a = b = 0 (c = 0 aussi : 0xFFFFFFFE faisait traiter la Games Library comme vide).
+// NXE : XamLoaderGetMediaInfoEx(&a, &b, &c) — le hub l'interroge avant toute action sur le disque (tuile « Play »,
+// A, Eject) : la 3e sortie est comparée à 0 et -2 (« pas de média »). Simulation de disque supprimée : a = b = 0
+// (« aucun média », c = 0 ; 0xFFFFFFFE faisait traiter la Games Library comme vide). Un vrai lecteur optique
+// sera câblé ici plus tard.
 REX_HOOK_RAW(__imp__XamLoaderGetMediaInfoEx) {
-  auto d = dash::launch::InsertedDisc();
   auto put = [&](uint32_t addr, uint32_t v) {
     if (addr) *reinterpret_cast<uint32_t*>(base + addr) = __builtin_bswap32(v);
   };
-  put(ctx.r3.u32, d ? 1 : 0);
-  put(ctx.r4.u32, d ? d->title_id : 0);
+  put(ctx.r3.u32, 0);
+  put(ctx.r4.u32, 0);
   put(ctx.r5.u32, 0);
   ctx.r3.u64 = 0;
 }

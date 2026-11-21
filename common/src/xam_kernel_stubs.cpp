@@ -56,13 +56,17 @@ REX_HOOK_RAW(__imp__EtxProducerRegister) {
   ctx.r3.u64 = 0;
 }
 
-// XeKeysGetStatus(...) : etat du magasin de cles. On annonce « pret » sans fabriquer de cle de
+// XeKeysGetStatus(uint32_t* status_out) : etat du magasin de cles. On annonce « pret » sans fabriquer de cle de
 // console : ce sont les cles locales du palier N4 (aleatoire, jamais celles de la console) qui
 // servent, via XeKeysObfuscate/UnObfuscate (kernel_obfuscate.cpp).
+// La SORTIE (r3 = pointeur) doit être remplie : laissée à 0, l'absence du bit 3 (0x8) déclenchait l'envoi du
+// message 0x00020023 à l'application 254 par XAM au boot (sub_818B8658 -> sub_818C1188) — d'où la boîte modale
+// « Game Error » / « Unrecognized Disc » au démarrage (traque du 2026-11-21). Le bit 2 (0x4) est lu par deux
+// autres sites. Sur console retail ces contrôles de sécurité sont au vert : status = 0xC.
 REX_HOOK_RAW(__imp__XeKeysGetStatus) {
-  (void)base;
+  if (ctx.r3.u32) *reinterpret_cast<uint32_t*>(base + ctx.r3.u32) = __builtin_bswap32(0xCu);
   if (++g_keystatus_calls == 1)
-    REXLOG_INFO("[xekeys] XeKeysGetStatus : cles locales pretes (aucune cle de console)");
+    REXLOG_INFO("[xekeys] XeKeysGetStatus : cles locales pretes (aucune cle de console), status=0xC");
   ctx.r3.u64 = 0;
 }
 
