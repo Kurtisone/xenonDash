@@ -6,6 +6,11 @@ HERE=$(dirname "$(readlink -f "$0")")
 VERSION=$(cat "$HERE/usr/share/xenondash/version")
 DATA=${XENONDASH_DATA:-${XDG_DATA_HOME:-$HOME/.local/share}/xenondash}/$VERSION
 SHARE=$HERE/usr/share/xenondash
+# Dossier de l'AppImage elle-même (variable APPIMAGE posée par le runtime) : c'est LÀ que
+# l'utilisateur pose ses fichiers ($SystemUpdate, xam.xex, polices). $HERE est le point de
+# montage (change à chaque lancement) — y chercher les fichiers à côté échouait et les
+# boîtes de dialogue s'ouvraient malgré tout (mesure du 2026-11-21 sur Steam Deck).
+SIDEDIR=$(dirname "$(readlink -f "${APPIMAGE:-$0}")")
 # Rendu de cette AppImage : « native » (Dashboard par native_gpu, aucun plugin GPU ; shaders SPIR-V générés à l'import) ou
 # « xenos » (émulation GPU par le plugin xenos). Sans marqueur (AppImage antérieure) : xenos.
 GPU=$(cat "$SHARE/gpu" 2>/dev/null || echo xenos)
@@ -71,25 +76,25 @@ do_import() {
   python3 -I "$SHARE/tools/xenondash_import.py" "$@" --games-example "$SHARE/games.example.toml"
 }
 
-# Cherche les fichiers de l'import a cote de l'AppImage (dossier de l'AppImage = $HERE).
+# Cherche les fichiers de l'import a cote de l'AppImage (dossier de l'AppImage = $SIDEDIR).
 # Renseigne UPDATE / MODULES / FONTS / XAM si vides. Ne demande rien : l'utilisateur pose ses
 # fichiers et lance, sans dialogue (demande explicite).
 detect_side_files() {
   [ -n "$UPDATE" ] && return 0
   # 1. Dossier $SystemUpdate (ou tout dossier contenant des $flash_*/dash.xex)
-  for d in "$HERE/\$SystemUpdate" "$HERE/SystemUpdate" "$HERE"/firmware/* "$HERE"/*; do
+  for d in "$SIDEDIR/\$SystemUpdate" "$SIDEDIR/SystemUpdate" "$SIDEDIR"/firmware/* "$SIDEDIR"/*; do
     [ -d "$d" ] || continue
     if [ -f "$d/dash.xex" ] || [ -f "$d/\$flash_dash.xex" ] || [ -n "$(ls "$d"/\$flash_*.xex 2>/dev/null | head -1)" ]; then
       UPDATE=$d; break
     fi
   done
   # 2. Paquet STFS a la racine
-  [ -z "$UPDATE" ] && for f in "$HERE"/su20076000_* "$HERE"/*STFS*; do
+  [ -z "$UPDATE" ] && for f in "$SIDEDIR"/su20076000_* "$SIDEDIR"/*STFS*; do
     [ -f "$f" ] && UPDATE=$f && break
   done
   # 3. Archive zip d'une mise a jour : dezippee une fois dans le cache
   if [ -z "$UPDATE" ]; then
-    for z in "$HERE"/*.zip "$HERE"/*SystemUpdate*.zip; do
+    for z in "$SIDEDIR"/*.zip "$SIDEDIR"/*SystemUpdate*.zip; do
       [ -f "$z" ] || continue
       CACHE=${XENONDASH_DATA:-${XDG_DATA_HOME:-$HOME/.local/share}/xenondash}/cache/$(basename "$z" .zip)
       if [ ! -d "$CACHE/\$SystemUpdate" ] && [ ! -f "$CACHE/dash.xex" ]; then
@@ -103,14 +108,14 @@ detect_side_files() {
   fi
   # 4. Polices : dossier « polices »/« fonts » ou fichiers .xtt a la racine
   if [ -z "$FONTS" ]; then
-    for d in "$HERE"/*font* "$HERE"/*police* "$HERE"/*Segoe*; do
+    for d in "$SIDEDIR"/*font* "$SIDEDIR"/*police* "$SIDEDIR"/*Segoe*; do
       [ -d "$d" ] && ls "$d"/*.xtt >/dev/null 2>&1 && FONTS=$d && break
     done
-    [ -z "$FONTS" ] && [ -n "$(ls "$HERE"/*.xtt 2>/dev/null | head -1)" ] && FONTS=$HERE
+    [ -z "$FONTS" ] && [ -n "$(ls "$SIDEDIR"/*.xtt 2>/dev/null | head -1)" ] && FONTS=$SIDEDIR
   fi
   # 5. xam.xex complet pour shrdres (dossier 17559 a cote)
   if [ -z "$XAM" ]; then
-    for c in "$HERE"/\$flash_xam.xex "$HERE"/xam.xex "$HERE"/*/\$flash_xam.xex "$HERE"/*/xam.xex; do
+    for c in "$SIDEDIR"/\$flash_xam.xex "$SIDEDIR"/xam.xex "$SIDEDIR"/*/\$flash_xam.xex "$SIDEDIR"/*/xam.xex; do
       [ -f "$c" ] && XAM=$c && break
     done
   fi
@@ -162,7 +167,12 @@ if [ "$REIMPORT" = 1 ] || [ -n "$UPDATE" ] || ! ready; then
     [ -z "$XAM" ] && XAM=$(ask "Optionnel : dossier d'une mise à jour récente (17559) contenant \$flash_xam.xex (pour les icônes). Vide pour passer" 0)
   fi
   [ -d "$XAM" ] && for c in "$XAM/\$flash_xam.xex" "$XAM/xam.xex"; do [ -f "$c" ] && XAM=$c && break; done
-  do_import "$DATA" "$UPDATE" "$MODULES" "$XAM" "$FONTS" || { echo "Import en échec (voir ci-dessus)." >&2; exit 1; }
+  # L'import dure plusieurs minutes (shaders) sans fenêtre : un retour de notification, si possible.
+  command -v notify-send >/dev/null 2>&1 && notify-send -a XenonDash "XenonDash : import en cours" "$UPDATE — plusieurs minutes (shaders), une notification signalera la fin" 2>/dev/null
+  do_import "$DATA" "$UPDATE" "$MODULES" "$XAM" "$FONTS" || {
+    command -v notify-send >/dev/null 2>&1 && notify-send -a XenonDash "XenonDash : import en échec" "Voir la console ; relancer depuis un terminal pour le détail" 2>/dev/null
+    echo "Import en échec (voir ci-dessus)." >&2; exit 1; }
+  command -v notify-send >/dev/null 2>&1 && notify-send -a XenonDash "XenonDash : import terminé" "Lancement du Dashboard $VERSION" 2>/dev/null
   IMPORTED=1
 fi
 
