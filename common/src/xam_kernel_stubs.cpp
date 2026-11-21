@@ -15,6 +15,7 @@
 //   HalSendSMCMessage(r3 = buffer d'entree, r4 = buffer de sortie) ; retour teste `< 0`, donc
 //   0 = succes. EtxProducerRegister et XeKeysGetStatus ne sont pas inspectés au-delà de r3.
 #include <atomic>
+#include <cstdlib>
 #include <cstring>
 
 #include <rex/hook.h>
@@ -64,9 +65,14 @@ REX_HOOK_RAW(__imp__EtxProducerRegister) {
 // « Game Error » / « Unrecognized Disc » au démarrage (traque du 2026-11-21). Le bit 2 (0x4) est lu par deux
 // autres sites. Sur console retail ces contrôles de sécurité sont au vert : status = 0xC.
 REX_HOOK_RAW(__imp__XeKeysGetStatus) {
-  if (ctx.r3.u32) *reinterpret_cast<uint32_t*>(base + ctx.r3.u32) = __builtin_bswap32(0xCu);
+  // DASH_XEKEYS_STATUS=<hex> : valeur de test (diagnostic du HUD de XAM, docs/REPRISE.md) ; défaut 0xC inchangé.
+  static const uint32_t status = [] {
+    const char* e = std::getenv("DASH_XEKEYS_STATUS");
+    return e ? static_cast<uint32_t>(std::strtoul(e, nullptr, 16)) : 0xCu;
+  }();
+  if (ctx.r3.u32) *reinterpret_cast<uint32_t*>(base + ctx.r3.u32) = __builtin_bswap32(status);
   if (++g_keystatus_calls == 1)
-    REXLOG_INFO("[xekeys] XeKeysGetStatus : cles locales pretes (aucune cle de console), status=0xC");
+    REXLOG_INFO("[xekeys] XeKeysGetStatus : cles locales pretes (aucune cle de console), status=0x{:X}", status);
   ctx.r3.u64 = 0;
 }
 

@@ -48,6 +48,8 @@ endif()
 # Correctifs de comportement de XAM recompilé (palier N4) : définitions fortes de sub_<adresse> (même mécanisme que les crochets D3D).
 if(TARGET dash_xam)
     target_sources(dash_xam PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src_xam_patch/xam_input_patch.cpp)
+    # Diagnostic de la boucle d'image du HUD (DASH_HUD_LOOP_TRACE=1), sans effet sinon.
+    target_sources(dash_xam PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src_xam_patch/xam_hud_trace.cpp)
 endif()
 
 # Code partagé entre versions (bibliothèque OBJECT : tous les hooks sont liés)

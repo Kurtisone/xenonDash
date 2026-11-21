@@ -610,6 +610,14 @@ void CallModuleImport(ModuleImport& imp, PPCContext& ctx, uint8_t* base) {
     REXLOG_INFO("[xamredir] module : {} (ordinal {}) : appel 1 par {}", imp.name, imp.ordinal,
                 imp.guest.load() ? "XAM recompilé" : "HLE");
   }
+  // Boîte de message du HUD au démarrage (« disque illisible » : ERROR_WRONG_DISK, lecteur vide) : supprimée. Renvoyer une
+  // erreur (ERROR_CANCELLED) faisait arrêter la boucle d'images du HUD (vtable+44, docs : mesure du 21/11) ; on renvoie donc
+  // le chemin de succès (r3 = 0). DASH_HUD_MSGBOX_KEEP=1 conserve la boîte (diagnostic).
+  if (std::string_view(imp.name) == "XamShowMessageBox" && !std::getenv("DASH_HUD_MSGBOX_KEEP")) {
+    REXLOG_INFO("[xamredir] XamShowMessageBox refusee (lecteur vide, boite sans cause) lr={:08X}", (uint32_t)ctx.lr);
+    ctx.r3.u64 = 0;
+    return;
+  }
   // Frappes données au HUD (XamInputGetKeystrokeHud(utilisateur, X_INPUT_KEYSTROKE*)) : journal de chaque réponse non vide.
   if (std::string_view(imp.name) == "XamInputGetKeystrokeHud") {
     const uint32_t user = ctx.r3.u32, out = ctx.r4.u32;
