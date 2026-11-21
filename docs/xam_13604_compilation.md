@@ -2026,3 +2026,33 @@ Pistes suivantes pour la scène de boot bloquée (app 252, profondeur d'interfac
   pages du SDK tue sinon le process sous gdb) en vérifiant l'amorce (« Hardware watchpoint ») ;
 - la logique de dépilage de la pile d'interfaces dans XAM (qui appelle la fermeture, et sur
   quel événement — la scène de boot tourne (anneau animé) mais son « ready » n'arrive jamais).
+
+## 2026-11-21 (suite) : le mot 0x81BFCAE8 est un masque de bits, les symlinks déterministes
+
+### Le mot n'est pas une profondeur : 0 → 4 → 64 → 4 (chronologie hôte, 100 ms)
+
+Le surveillance hôte de 0x81BFCAE8 montre une transition ACTIVE pendant le boot : 0 (init) → 4
+(t=0,1 s, pendant l'énumération de profil et les premiers chargements de modules) → **64**
+(t=0,5 s, autour de la première présentation du Dashboard) → **4** (t=0,6 s, état stable). Des
+bits, pas un compteur : le bit 2 reste posé (l'état « interface affichée » du système UI), la
+transition 64 = 0x40 ressemble à un état transitoire. Le portier refuse tant que le mot est non
+nul — c'est le bit 2 permanent qui bloque l'ouverture du Guide.
+
+### Les chargements de modules re-défaillaient par intermittence — corrigé
+
+Avec CdRom0 vide, le lien `GAME:` → lecteur vide gagnait parfois la course du préfixe
+(insensible à la casse) contre `game:` → Partition1 : un chargement de scène sur deux échouait
+(mesuré : « File not found: game:\flash\hud.xex » à 41.544 dans un run, résolu via CdRom0 dans
+le run précédent). Correctif SDK (commit 0bc075f) : l'appariement des liens symboliques est
+**sensible à la casse** — `game:` (volume du titre, monté par l'hôte) et `GAME:` (lecteur, posé
+par XAM) sont deux volumes distincts et déterministes. Mesuré après correctif : tous les
+chargements passent par Partition1, plus aucune alternance.
+
+### Pourquoi le Guide ne s'affiche toujours pas
+
+Le système UI reste sur l'app 252 (sa scène de boot tourne : l'anneau s'anime). Le bit 2 du
+masque = « une interface est affichée » ; elle ne se ferme jamais car la scène de boot n'atteint
+jamais son état « prêt » (ce qui, sur console, dépile et rend la main au Dashboard). Le Guide,
+les boîtes et le clavier virtuel attendent tous ce déblocage. Prochaine enquête : la machine à
+états du boot (chaîne [deep] du module Dashboard) et les événements que la scène de boot attend
+(stubs appelés pendant le boot, session/profil vu par XAM).
