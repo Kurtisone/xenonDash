@@ -278,3 +278,52 @@ pilote STFS minimal côté noyau, profil local hors ligne (XUID aléatoire, sign
    journalisation, gel déterministe, vtable nulle comme cause du gel) ; la vraie cause était une
    erreur de documentation. Un test A/B avec le code d'origine est le seul juge.
 7. Recompilateur générique : XDK tardives (Trials Fusion refusé : image noire, shaders chargés hors `Set*Shader`).
+
+## Volée du 2026-11-21 (soir) : freeze de Game Library corrigé, front Guide root-casé, manette instrumentée
+
+Retour utilisateur sur l'AppImage 839476b1 : « manette sans réaction, G n'ouvre pas le Guide,
+le Dashboard gèle si j'entre puis sors de Game Library ».
+
+1. **Le « freeze » Game Library était un REX_FATAL** (processus avorté) : à la sortie de la
+   bibliothèque, le destructeur de la tâche de chargement (`sub_922AA048`, appelé depuis la
+   release `sub_922AA198` sur le thread de la tâche) appelle `vtbl[+4]` du sous-objet à `+36`
+   de l'objet détruit — objet système (tas 0x40…, quatre handles noyau `F80003E8…F4` en +16..28)
+   dont le sous-objet contient `2` au lieu d'une vtable : il n'a jamais été construit côté invité.
+   Appel indirect vers 0 → `InvalidFunctionTrap` → abort. **Correctif : le trap n'est plus fatal**
+   (SDK `function_dispatcher.cpp` : journal borné, `r3=0`, reprise après le `bctrl` ; `Execute()`
+   gérait déjà l'absence sans fatal). Validé au banc avec les VRAIS jeux de l'utilisateur montés
+   (`-v /home/deck/XenonDash/Games:/games:ro`, `XENONDASH_GAMES_DIR=/games`) : entrée + sortie de
+   la bibliothèque sans FATAL, retour au hub propre (capture). Le `lr=0x922AA0D8` du journal
+   utilisateur correspond exactement — même crash, même site.
+2. **Piège gdb (nouveau)** : gdb intercepte SIGSEGV avant le récupérateur du SDK (`[rec2]`,
+   restauration d'une page commitée) — un boot qui passe sans gdb plantait sous gdb (écriture à
+   `base+0xFE451900` dans le remplissage d'image du hub). Pour déboguer le banc sous gdb :
+   `handle SIGSEGV nostop noprint pass`. Le crash memset vu sous gdb n'existe donc pas hors gdb.
+3. **`NicGetLinkState` n'écrit plus à travers r4** : l'appelant réseau `sub_81910F30` l'appelle avec
+   le r4 HÉRITÉ du contexte (`sub_819231E8` ne charge que r3) ; écrire la page pointée a segfaulté
+   quand elle n'était pas committée (gel du boot au banc). L'état « pas de lien » passe par r3=0 ;
+   les appelants qui lisent `*r4` l'ont pré-rempli à zéro (même état).
+4. **Front Guide root-casé (chaîne complète, sondes [guidetrace]/[guideio]/[scene]/[uistate])** :
+   G → portier `sub_8189F0D0` accepte (1) → message `0x20004117` envoyé à l'app 254 (r3=0) →
+   le chargeur de l'app 254 (`sub_8189BE20`, case 20) demande la scène `0x21015` → l'ouvreur
+   `sub_818A21B0` EXIGE `UIstate(0x81BFCAE8)+172 != 0`, `+176 != 0`, `+216 == 0` — chez nous tout
+   est à zéro → échec immédiat (E_FAIL) → rien ne se rend. Le semeur `sub_8189F050` (écrit +176,
+   puis `KeSetEvent(+192)` si +172 déjà posé) **n'a jamais été appelé** (sonde d'entrée, zéro hit) ;
+   il est déclenché par le message **`0x80000005` à l'app 254** (dispatch `loc_81895064` de
+   `sub_81894D50`, payload avec u16 à +4 == 2) — message que personne n'émet dans notre
+   environnement (trafic app 254 relevé : 0x00020005..0x0002000F, jamais 0x80000005). Sur console
+   ce message vient vraisemblablement de la notification noyau « system UI » que l'HÔTE doit
+   délivrer (listeners XNotify) à l'activation du shell. **Prochaine étape** : identifier l'émetteur
+   attendu (ou armer l'état côté hôte au chargement de XAM) et trouver qui pose +172 (candidats :
+   `sub_818A2C98`, `sub_8189F860`, `sub_8189E460`).
+5. **Manette** : dans la session 12:56 de l'utilisateur, les boutons ARRIVAIENT au hook
+   (`[xinputd] boutons 0x1000/0x2000/0x0400`) ; dans la session 14:20, AUCUN. SDL voyait pourtant
+   les deux manettes (Steam Deck interne + Afterglow) et la passerelle xinputd était annoncée.
+   Diagnostic ajouté : `XInputdReadState` journalise désormais « l'InputSystem n'a pas d'etat »
+   (5 premiers échecs) — la prochaine session utilisateur dira si XAM ne pollé plus ou si SDL ne
+   livre plus d'état (Steam Input ?). Le clavier, lui, marche toujours (hub navigable au banc).
+6. Banc : une entrée de registre synthétique (games.toml sans fichiers réels) provoque un crash
+   memset différent au premier present (remplissage de plans d'image UI, pointeur non commité) —
+   n'existe pas avec de vrais jeux ; reproduire l'environnement utilisateur en montant son dossier
+   de jeux, pas par une entrée synthétique.
+

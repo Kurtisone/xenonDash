@@ -149,6 +149,10 @@ REX_HOOK_RAW(__imp__XInputdReadState) {
   }
   rex::input::X_INPUT_STATE st{};
   if (is->GetState(0, &st) != 0) {
+    // Diagnostic manette (2026-11-21) : XAM interroge mais l'InputSystem n'a pas d'état — distinguer
+    // ce cas d'un XAM qui ne pollé pas du tout (session du 14:20 sans aucune trace de lecture).
+    static std::atomic<int> n{0};
+    if (n.fetch_add(1) < 5) REXLOG_WARN("[xinputd] XInputdReadState : l'InputSystem n'a pas d'etat (port 0)");
     ctx.r3.u64 = kStatusNotConnected;
     return;
   }
