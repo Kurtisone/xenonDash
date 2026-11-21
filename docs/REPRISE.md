@@ -354,6 +354,31 @@ lisent dans `~/.local/share/xenondash/2.0.13604.0-xam/dash.log`, lui demander le
 2. Pièges du jour : `pkill -f <motif>` se tue lui-même quand le motif figure dans la ligne de commande
    du bash -c englobant (deux fois) — tuer par PID (`kill $(pgrep -x dash)` ou pgrep -f avec un motif
    minimal) ; deux instances de dash simultanées font que les touches xdotool vont à la mauvaise
-   fenêtre (vérifier `pgrep -c relwithdebinfo/dash` avant d'interagir).
+   fenêtre (vérifier `pgrep -c relwithdebinfo/dash` avant d'interagir) ; plusieurs instances × ~2 Go
+   d'arène invité déclenchent l'OOM killer (le run gdb meurt en SIGKILL).
+
+## Volée du 2026-11-21 (nuit, 2) : la scène du Guide charge aussi sur machine — la présentation reste à trouver
+
+Retour utilisateur sur 11ea9fa6 : le journal de SA machine montre l'armement et le chargement
+réussis chez lui aussi (`handler n=23 lr=00000000 r3=80000012` [appel direct hôte] → `+176=1` →
+`[scene] retour r3=00000000`). Le Guide ne s'affiche toujours pas : **la scène chargée ne prend pas
+la présentation**. Mesures de la nuit (banc, watchpoints gdb) :
+
+1. La pompe UI (`sub_818905B0`) appelle le rappel `[obj+48]` des items — pour l'objet de requête du
+   Guide (0x402E9B80, adresse stable réutilisée) le rappel n'est **jamais écrit** (watchpoint : zéro
+   hit pendant tout le flux G). MAIS la pompe SAUTE ces items (sub_8188F200 rend 2 → chemin
+   loc_8189063C sans bctrl ; zéro `[trap]` dans tout le journal) : items au repos, comportement
+   normal — piste écartée.
+2. Forcer la cellule « app active » (0x817E4B64) de 252 vers 254 après le chargement ne change RIEN
+   à l'affichage (expérience annulée du code ; résultat documenté ici). Ce n'est pas le sélecteur
+   de rendu.
+3. L'ouvreur de scène qui réussit notifie les apps 255 (`sub_818C54E0(255,1)`) et 9
+   (`sub_8187E240(9,1)`) et écrit `[0x81C0638C]=1` — suivre ces notifications est la prochaine piste
+   pour trouver qui fait présenter la scène.
+4. **Prochain chantier (précis)** : le chemin de présentation des apps UI de XAM (contextes +8=0x3002B000)
+   — qui appelle VdSwap pour une scène XAM (au repos, seul le dash présente : `[swap] lr=0x9218ED74`),
+   et ce qui déclenche la bascule du compositeur. Le clavier continue de piloter le hub ; aucun
+   blocage nouveau introduit par l'armement (navigation revérifiée au banc).
+
 
 

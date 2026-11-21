@@ -503,6 +503,13 @@ bool ShowXamGuide(uint32_t user_index, int wait_ms) {
   REXLOG_INFO("[guide] XamShowGuideUI appelle (utilisateur {})", user_index);
   Dispatch(*slot, ctx, base);
   if (counter_before != 0) *counter = __builtin_bswap32(counter_before);
+  // NOTE (banc 2026-11-21, nuit) : après le chargement réussi de la scène du Guide, la scène ne
+  // prend pas la présentation. Deux pistes ÉCARTÉES par la mesure : (a) le rappel de l'objet de
+  // requête ([0x402E9B80+48], appelé par la pompe UI sub_818905B0) n'est JAMAIS écrit — mais la
+  // pompe SAUTE ces items (état 2, zéro [trap]) : comportement normal, pas le blocage ; (b) forcer
+  // la cellule « app active » (0x817E4B64) à 254 ne change rien à l'affichage — ce n'est pas le
+  // sélecteur de rendu. Le prochain chantier : qui fait présenter la scène chargée par XAM (boucle
+  // de rendu des apps UI, +8=3002B000) et sur quoi le compositeur base la bascule.
   const uint32_t r = static_cast<uint32_t>(ctx.r3.u64);
   REXLOG_INFO("[guide] XamShowGuideUI : r3=0x{:08X} (compteur restaure a {})", r, counter_before);
   if (r != 0 && r != 0x3E5) {
