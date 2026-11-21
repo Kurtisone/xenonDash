@@ -19,16 +19,16 @@ avec une bibliothèque de jeux qui se remplit toute seule et des jeux recompilé
 
 ## Installer et lancer
 
-1. Récupérez l'AppImage `XenonDash-2.0.13604.0-x86_64.AppImage` et rendez-la exécutable (`chmod +x`).
+1. Récupérez l'AppImage `XenonDash-Kinect.AppImage` et rendez-la exécutable (`chmod +x`).
 2. Lancez-la. **Au premier lancement**, elle vous demande (fenêtre `zenity` ou `kdialog` si installés, sinon dans le terminal) où se trouve la mise à jour système, l'importe, génère les shaders graphiques (une vingtaine de secondes)
    et crée votre **dossier de jeux** : `~/XenonDash/Games`. Les lancements suivants démarrent directement.
-3. Les données (profil, importation, journal `dash.log`) sont dans `~/.local/share/xenondash/2.0.13604.0/`.
+3. Les données (profil, importation, journal `dash.log`) sont dans `~/.local/share/xenondash/2.0.13604.0-xam/`.
 
 En ligne de commande, si vous préférez :
 
 ```sh
-./XenonDash-2.0.13604.0-x86_64.AppImage --import '/chemin/vers/$SystemUpdate'
-./XenonDash-2.0.13604.0-x86_64.AppImage --help
+./XenonDash-Kinect.AppImage --import '/chemin/vers/$SystemUpdate'
+./XenonDash-Kinect.AppImage --help
 ```
 
 ## Ajouter des jeux
@@ -49,9 +49,9 @@ Un jeu que XenonDash ne sait pas faire fonctionner nativement est **refusé avec
 | | État |
 |---|---|
 | Dashboard Kinect : hub, My Xbox, Xbox LIVE (hors ligne), Game Library, succès, navigation | fonctionne |
-| Profil local « Joueur » créé automatiquement | fonctionne |
-| **Volet Guide** (touche `G`) : carte du joueur, succès, fermeture | fonctionne — mais voir la remarque ci-dessous : ce **n'est pas** le Guide de la console |
-| Création de profil comme sur une vraie console (clavier virtuel Xbox, fenêtre de connexion) | **en développement**, pas encore dans l'AppImage |
+| Profil local « Joueur » créé automatiquement ; création de profil et connexion comme sur console (fenêtres XAM) | fonctionne (profil local hors ligne) |
+| **Bouton Guide** (touche `G`) : le Guide de la console (XAM recompilé) s'ouvre et charge sa scène | **en cours** — l'écran bascule encore sur le hub, l'affichage du Guide est le chantier en cours |
+| Création de profil comme sur une vraie console (clavier virtuel Xbox, fenêtre de connexion) | fonctionne (parcours XAM) |
 | Éditeur d'avatar | non disponible (nécessite un paquet que le firmware de base ne contient pas) |
 | Bibliothèque de jeux : dossiers, XEX, paquets XBLA | fonctionne |
 | Bibliothèque de jeux : ISO, Games on Demand | prévu, vérifié sur des fichiers de test seulement |
@@ -77,22 +77,16 @@ Un jeu que XenonDash ne sait pas faire fonctionner nativement est **refusé avec
 | `W` `A` `S` `D` (AZERTY : `Z` `Q` `S` `D`) | Stick gauche |
 | Flèches | Stick droit |
 | `Shift` + flèches | Croix directionnelle |
-| `G` | **Bouton Guide** (volet latéral, voir ci-dessous) |
+| `G` | **Bouton Guide** (Guide de la console, voir ci-dessous) |
 | `F6` | Rescanner le dossier de jeux |
 
-### Le volet Guide, et ce qu'il n'est pas
+### Le bouton Guide
 
-`G` (ou le bouton Xbox avec `--guide_button`) ouvre un volet latéral : carte du joueur, succès,
-retour au tableau de bord. Il fonctionne, mais **ce n'est pas le Guide de la Xbox 360**.
-
-Le vrai Guide est une interface du système, dessinée par XAM et hud.xex :
-- `hud.xex` n'est **pas** chargé en mode HLE (celui qui affiche) ;
-- `XamShowGuideUI` est un **stub** dans le SDK, et n'est jamais appelé de toute façon ;
-- en rendu natif, ImGui est indisponible : aucune superposition du SDK ne peut s'afficher.
-
-Le volet actuel est donc dessiné par XenonDash dans l'image finale (comme le HUD de XAM). Il
-ressemble à un menu générique, pas aux lames de la console. Le remplacer par le vrai Guide demande
-que XAM recompilé affiche quelque chose — c'est le chantier de l'écran noir.
+`G` (ou le bouton Xbox de la manette) appelle le **Guide de la console** : c'est XAM recompilé qui
+le gère (ouverture de l'interface système, chargement de sa scène). L'intégration est en cours :
+la séquence complète se déroule (la scène du Guide se charge), mais l'écran bascule encore sur le
+hub — l'affichage du Guide lui-même est le chantier en cours (détails techniques dans
+`docs/REPRISE.md`, « État du front »).
 
 > **Attention** : `Entrée` est **Start**, pas A, et `Échap` n'est lié à rien. Suivre
 > l'ancienne version de ce tableau (Entrée = A, Échap = B) donne l'impression que le
@@ -104,9 +98,9 @@ Le nom d'une touche suit les *keysyms* X11 (`space`, `semicolon`, `apostrophe`, 
 
 ## En cas de problème
 
-- **Écran noir au lancement** : `./XenonDash-…AppImage --regen-shaders` regénère les shaders ; vérifiez que les pilotes Vulkan sont installés (`vulkaninfo`).
-- **L'AppImage ne démarre pas** : `APPIMAGE_EXTRACT_AND_RUN=1 ./XenonDash-…AppImage`.
-- **Le jeu n'apparaît pas** : vérifiez le dossier (`~/XenonDash/Games`), appuyez sur F6, et regardez le journal `~/.local/share/xenondash/2.0.13604.0/dash.log`.
+- **Écran noir au lancement** : `./XenonDash-Kinect.AppImage --regen-shaders` regénère les shaders ; vérifiez que les pilotes Vulkan sont installés (`vulkaninfo`).
+- **L'AppImage ne démarre pas** : `APPIMAGE_EXTRACT_AND_RUN=1 ./XenonDash-Kinect.AppImage`.
+- **Le jeu n'apparaît pas** : vérifiez le dossier (`~/XenonDash/Games`), appuyez sur F6, et regardez le journal `~/.local/share/xenondash/2.0.13604.0-xam/dash.log`.
 - **La construction d'un jeu échoue** : le Dashboard affiche un message et le journal de construction est `~/.local/share/xenondash/games/<TitleID>/<clé>/build.log`. Vérifiez `clang`, `cmake`, `ninja` et l'espace disque.
 - **Refaire l'import** : `--reimport` (vos profils sont conservés). `--data-dir` affiche le dossier de données, `--games-dir` le dossier de jeux.
 

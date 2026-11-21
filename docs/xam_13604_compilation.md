@@ -1,12 +1,24 @@
 # Compiler XAM 13604 et ses modules : les trois obstacles et leurs contournements
 
+> **État courant (2026-11-21, nuit) — lire ceci d'abord ; la suite du document est le journal
+> historique (sections datées).** La chaîne est **opérationnelle** : XAM 13604 recompilé se charge
+> et se rend (hub NXE, boîtes système, création de profil), 258/258 + 34/34 shaders traduits,
+> AppImage unique `XenonDash-Kinect.AppImage` testée sur la machine de l'utilisateur. Derniers
+> correctifs : boîte modale du boot éliminée (`XeKeysGetStatus` → 0xC), simulation de disque
+> supprimée entièrement, « freeze » de la sortie de Game Library corrigé (appel indirect non
+> enregistré non plus fatal, SDK f2c7948), **Guide armé — sa scène 0x21015 charge (r3=0)** ;
+> reste la couche présentation (qui fait présenter la scène chargée — piste : notifications
+> post-ouverture apps 255/9, chemin VdSwap des apps UI de XAM). Résumé de reprise :
+> `docs/REPRISE.md` (« État du front »).
+
 Date : 2026-11-16. Contexte : tentative de faire tourner le parcours de création de profil
 d'une vraie console (`DASH_PROFILE_MODE=xam`), en compilant `dashboards/2.0.13604.0-xam`
 depuis les fichiers `xeBuild-Data` de la 2.0.13604 fournis par l'utilisateur.
 
-**Résultat : la chaîne compile et XAM se charge, mais l'écran reste noir.** Les trois
-contournements ci-dessous sont reproductibles et valent d'être conservés ; le blocage final
-est décrit à la fin.
+**Résultat à l'époque : la chaîne compilait et XAM se chargeait, mais l'écran restait noir**
+(obstacle résolu depuis — `/dev/shm` de 64 Mo en conteneur, remplacé par `memfd_create` ;
+voir les sections datées de la fin). Les trois contournements ci-dessous sont reproductibles
+et valent d'être conservés.
 
 ## Les fichiers requis, et leur version
 

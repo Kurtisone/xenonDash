@@ -198,8 +198,8 @@ et `p6_2.0.13604.0.png` (AppImage).
   `IsUnsafeProgrammingAllowed`, `FlushLogonQueue` : profil local hors ligne, `xuid_online = 0`, succès) ;
   `XamLoaderLaunchTitleForReason` et `XamContentLaunchImageInternalEx` (variantes NXE/Metro du lancement) ajoutées.
 - *Résultat 13604* : « Joueur / 155 » (Gamerscore) en haut à droite, tuile du profil (gamertag, Gamerscore, « Latest Games »
-  avec l'icône de Skate, avatar par défaut) dans My Xbox ; bouton de disque « Play Skate » (icône) avec `games.toml`
-  (`disc = true`) ; **Game Library > Recent Games** affiche « Skate, Xbox 360 Game, 70/1000 » (avec `library = true`) et les
+  avec l'icône de Skate, avatar par défaut) dans My Xbox ; bouton de disque « Play Skate » (icône) — à l'époque avec
+  `games.toml` (`disc = true`, simulation **supprimée depuis**) ; **Game Library > Recent Games** affiche « Skate, Xbox 360 Game, 70/1000 » (avec `library = true`) et les
   collections All Games / Full Games / Xbox 360 Games ; page du jeu (Gamerscore 70/1000, 5/44 succès et leurs images),
   **Achievements > View All** (écran natif du Dashboard) ; lancement de Skate (`--dash_launch=45410813`) puis retour au
   Dashboard avec le profil intact (superviseur P5). Captures : `dashboards/2.0.13604.0/runs/preuves/profil_13604_*.png`.
@@ -265,7 +265,7 @@ est correct (la framebuffer invitée contenait bien l'interface). Pour piloter l
 premières touches sont perdues).
 
 **Profil et jeux (phase P4b)** : mêmes correctifs que la 13604 (`common/src/dash_user.cpp`, réglages `0x63E80044`...). Le hub
-Metro affiche le gamertag « Joueur » en haut à droite, le bouton de disque « Play Skate » (icône, avec `games.toml`) et le
+Metro affiche le gamertag « Joueur » en haut à droite, le bouton de disque « Play Skate » (icône, avec `games.toml` ; simulation de disque **supprimée depuis**, 2026-11-21) et le
 lancement de Skate (`--dash_launch`) puis le retour au Dashboard fonctionnent (captures `dashboards/2.0.17559.0/runs/preuves/
 profil_17559_*.png`). Essayé et **écarté** : répondre « succès » au message `XLIVEBASE 0xFC/0x58003` (appelé en boucle, échec
 journalisé) via `XMsgInProcessCall`/`XMsgSystemProcessCall` : le hub reste alors sur un fond vide ; l'échec est donc conservé.
@@ -389,18 +389,19 @@ du lanceur) : une table `[game.<TitleID hexa>]` par jeu avec `name` et soit `nat
 relatif au répertoire du Dashboard ou absolu), soit `xenia = "chemin absolu du XEX/ISO"` (lancé avec la commande
 Xenia : `--dash_xenia=...`, sinon variable `DASH_XENIA`, sinon `[xenia] command`, sinon `xenia_canary`).
 Au lieu de `native`/`xenia`, `recipe = "<dossier du jeu | default.xex | ISO>"` : le jeu est **recompilé en natif à la demande** par une
-recette (voir « Recettes de jeux » ci-dessous). Autres clés : `type` (`arcade` par défaut, `demo`, `original`, `xna` ou un nombre), `keep_ld_library_path`, `disc = true`
-(ce jeu est « inséré dans le lecteur » : bouton de disque du Dashboard ; `--dash_disc=<TitleID>` ou `disc = "<TitleID>"`
-à la racine équivalent), `icon = "fichier.png"` (PNG de 16 Ko au plus) ou `spa = "fichier.spa|.gpd"` (XDBF d'où tirer
-l'icône du jeu, sinon `<TitleID>.gpd` du profil) pour l'icône du disque et de « My Games », et à la racine
-`library = true` (jeux listés dans « My Games », voir plus bas).
+recette (voir « Recettes de jeux » ci-dessous). Autres clés : `type` (`arcade` par défaut, `demo`, `original`, `xna` ou un nombre),
+`keep_ld_library_path`, `icon = "fichier.png"` (PNG de 16 Ko au plus) ou `spa = "fichier.spa|.gpd"` (XDBF d'où tirer
+l'icône du jeu, sinon `<TitleID>.gpd` du profil) pour l'icône de « My Games », et à la racine
+`library = true` (jeux listés dans « My Games », voir plus bas). **La clé `disc` n'existe plus** :
+la simulation de disque a été supprimée entièrement (2026-11-21, demande utilisateur) — une clé
+présente dans un ancien registre est simplement ignorée ; le lecteur ne réagira qu'à un vrai
+lecteur optique.
 
 **Comment lancer** :
 1. **F5** dans le Dashboard (manette : Back + Y) : liste des jeux du registre, Haut/Bas, Entrée/A lance, Échap/B ferme
    (comme les écrans XAM remplacés : `XN_SYS_UI` et entrées du Dashboard suspendues) ;
 2. tout appel du Dashboard à `XamLoaderLaunchTitle` / `XamLoaderLaunchTitleEx` : le titre est retrouvé par un
-   TitleID présent dans le chemin, sinon c'est le jeu `disc` (ou le seul jeu déclaré) ; sans correspondance, l'appel
-   est journalisé et ignoré ;
+   TitleID présent dans le chemin ; sans correspondance, l'appel est journalisé et ignoré ;
 3. `--dash_launch=<TitleID> [--dash_launch_delay=5]` : lancement automatique au démarrage (tests).
 
 **Mécanisme retenu** : le Dashboard **ne reste pas en veille**. Il lance un superviseur détaché (`/bin/sh -c`, nouvelle
@@ -425,24 +426,18 @@ données de lancement (type 38 : relance d'un titre système). Les hooks de `das
 
 **Bouton de disque et « My Games » (phase P5b, fonctionnels dans le 6770).** Analyse du code recompilé :
 
-*Disque* (`common/src/dash_disc.cpp`, avec `XamLoaderGetMediaInfo` dans `dash_launch.cpp`). Le bouton « Unplayable
-Disc » vient d'un état global (0x92803A8C) tenu par `sub_9210EB88` / `sub_9210E478` : le Dashboard dépile une
-notification système **`0x8000000D`** dont le paramètre est le type de média (**1 = disque de jeu Xbox 360**, 2 = Xbox
-d'origine), l'enregistre avec `XamLoaderGetDvdTrayState`, puis `sub_921B2340` lance, pour le type 1, un thread
-(`sub_921B0DC8`) qui :
-1. ouvre `\Device\Cdrom0\default.xex`, vérifie un en-tête XEX2 (SHA-1 de l'en-tête, résumé SHA-1 de l'image par pages de
-   64 Ko, compression « basic », clés d'en-tête `0x40006` informations d'exécution, `0x2FF` ressources, `0x3FF` format de
-   fichier ; `XexTransformImageKey` au passage), retrouve la ressource nommée `%08X` du TitleID ;
-2. envoie `XMsgStartIORequest(0xFB, 0xB003C, {XDBF, taille, 40, tampon du nom, &taille de l'icône, tampon de l'icône})` :
-   XAM renvoie le **nom du titre** (UTF-16, 40 caractères) et l'**icône PNG** (16 384 octets au plus).
-Implémentation : un XEX synthétique (non chiffré, sans code, 64 Ko, aucun octet de Microsoft) est généré en temps réel
-dans `$TMPDIR/xenondash-cdrom0-<uid>/` et monté comme `\Device\Cdrom0` ; `XexTransformImageKey` renvoie 0 ;
-`XMsgStartIORequest(Ex)` est interposé pour le seul message `0xFB/0xB003C` (l'application 0xFB appartient déjà à XGI dans
-le SDK, qui journalise « Unimplemented XGI message ») et répond avec le nom et l'icône du registre ;
-`XamLoaderGetMediaInfo(&type, &TitleID)` renvoie 1 et le TitleID du disque ; la notification est diffusée **une seule
-fois** (1,5 s après la création de l'écouteur de masque `0x23`) : la rediffuser (écouteur créé plus tard par la Games
-Library) serait prise pour une nouvelle insertion et le Dashboard lancerait le jeu tout seul (lancement automatique).
-Le bouton affiche alors le nom du jeu ; A appelle `XamLoaderLaunchTitleEx(NULL, 0x12)` -> jeu `disc` -> chemin P5.
+*Disque — SUPPRIMÉ (2026-11-21, demande utilisateur).* L'implémentation historique (XEX synthétique
+monté comme `\Device\CdRom0`, notification `0x8000000D` de type 1, `XamLoaderGetMediaInfo` renvoyant
+le disque) a été retirée entièrement : `dash_disc.cpp` ne garde plus que les icônes de bibliothèque
+et la notification « aucun média » (paramètre 0), `XamLoaderGetMediaInfo/Ex` renvoient « aucun
+média », `XamLoaderGetDvdTrayState` renvoie 2 (fermé sans disque, SDK), `XexTransformImageKey`
+renvoie 0. L'analyse du mécanisme console reste valable et est conservée ci-dessous pour le jour où
+un vrai lecteur optique sera exposé comme `\Device\CdRom0` : le Dashboard dépile la notification
+système **`0x8000000D`** dont le paramètre est le type de média (1 = disque de jeu Xbox 360), puis
+un thread ouvre `\Device\Cdrom0\default.xex`, vérifie un en-tête XEX2 (SHA-1 d'en-tête, résumé par
+pages de 64 Ko, clés `0x40006`/`0x2FF`/`0x3FF` ; `XexTransformImageKey`), retrouve la ressource
+`%08X` du TitleID et demande à XAM (`XMsgStartIORequest(0xFB, 0xB003C, …)`) le **nom du titre**
+(UTF-16, 40 caractères) et l'**icône PNG** (16 384 octets au plus).
 
 *My Games* (`common/src/dash_library.cpp`, `dash_content.cpp`). La Games Library est une scène « Arcade:: »
 (`2500_LiveArcadeHome.xur`) : pour chaque contenu énuméré de type Arcade (`0xD0000`), une tâche `CLoaderTask`
@@ -488,8 +483,7 @@ sont lançables ; un XEX inconnu est refusé (pas de repli sur l'émulation).
 #   [game.45410813]
 #   name = "Skate"
 #   recipe = "/chemin/vers/le/dossier/du/jeu"     # contient default.xex et data/ (ou le .xex, ou l'ISO)
-#   disc = true
-# puis, depuis le Dashboard : bouton de disque (ou F5, ou My Games) -> « Skate »
+# puis, depuis le Dashboard : F5, My Games ou Game Library -> « Skate »
 # a la main :
 tools/recipe_build.py identify /chemin/vers/le/dossier/du/jeu     # TitleID, version, hachage de l'image decodee, recette trouvee ?
 tools/recipe_build.py build    /chemin/vers/le/dossier/du/jeu     # construit le cache (~10 min) ; --force, --jobs N

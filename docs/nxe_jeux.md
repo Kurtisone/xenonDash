@@ -55,10 +55,12 @@ en cause : la version précédente de ce paragraphe, qui le supposait, était fa
 Type affiché : tous les jeux restent « Arcade Game » (0xD0000). Le type 0x7000 pour les jeux disque (« Xbox 360 Game ») a été essayé puis retiré : les icônes de Skate
 disparaissaient, et le journal ne montre plus de montage du contenu (`XamContentCreateInternal`) pour lui (`shots/t3_lib.png`). Cause non établie.
 
-**Repli dans l'interface** (ce qui est livré) :
-- le dernier jeu lancé de la bibliothèque (sinon le premier par ordre alphabétique) est présenté comme **disque inséré** (`dash_auto_disc`, vrai par défaut ;
-  `disc = true` dans `games.toml` l'emporte) : tuile « Play <jeu> », Recent Games, page du jeu et Play Game fonctionnent ;
-- les **autres jeux** sont lançables par **F5** (liste de tous les jeux du registre, A lance) ; après un lancement, le jeu devient le disque du démarrage suivant.
+**Repli dans l'interface** (historique 6770 ; la simulation de disque a été **supprimée** depuis —
+2026-11-21, le lecteur ne réagira qu'à un vrai lecteur optique) :
+- à l'époque, le dernier jeu lancé de la bibliothèque était présenté comme **disque inséré**
+  (`dash_auto_disc`, vrai par défaut ; `disc = true` dans `games.toml` l'emportait) : tuile
+  « Play <jeu> », Recent Games, page du jeu et Play Game fonctionnaient ;
+- les **autres jeux** sont lançables par **F5** (liste de tous les jeux du registre, A lance).
 
 Jeux jamais lancés : le profil local est neuf (aucun GPD). `AllTitles()` (`dash_achievements.cpp`) ajoute en mémoire à la liste des jeux joués les jeux de la bibliothèque absents
 de `FFFE07D1.gpd` (nom UTF-8 -> UTF-16, 0 succès, icône du scan servie par `XamReadTile(Ex)` type 1) ; la date de dernier lancement va dans `<profil>/library_played.txt`
@@ -104,7 +106,7 @@ Limites et reste :
   Le cache de Skate (`45410813`) n'existe pas sur cette machine : pas de test de bout en bout de Skate ;
 - Trials Fusion (`58411401`) : pas de refus `supported=false` (`launch-info` ne renvoie pas ce champ) : la construction tente, puis échoue sur l'espace disque ;
   message rouge lisible (`shots/t5_after.png`) ; retour au Dashboard pilotable non vérifié (le dialogue XUI reste affiché) ;
-- jeu disque simulé (`dash_auto_disc`, vrai par défaut) : pas de doublon dans Recent Games (Trials une fois) ; la tuile de My Xbox et « All Games » ne sont pas vérifiées ;
+- jeu disque simulé (`dash_auto_disc`, vrai par défaut à l'époque — **supprimé depuis**) : pas de doublon dans Recent Games (Trials une fois) ; la tuile de My Xbox et « All Games » ne sont pas vérifiées ;
 - les autres jeux via F5 (voir §3) ;
 - pourcentage et estimation (44 min) viennent de `recipe_build.py` (pas de ma compétence) ; le pourcentage saute à 51 % au début du codegen ;
 - relance par `$APPIMAGE` : les options données à l'AppImage (hors `AppRun`) ne sont pas rejouées ; sous `APPIMAGE_EXTRACT_AND_RUN=1` l'extraction est conservée tant que l'AppImage tourne ;

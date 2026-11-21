@@ -91,7 +91,7 @@ Décalages `+10896` / `+10908` identiques ; plus loin dans le périphérique ils
 
 ## 5. Intégration au Dashboard
 
-`games.toml` : `[game.45410813] name = "Skate"`, `recipe = "<dossier du jeu | default.xex | ISO>"` (à la place de `native`). `LaunchGame` (disque simulé, My Games, F5) :
+`games.toml` : `[game.45410813] name = "Skate"`, `recipe = "<dossier du jeu | default.xex | ISO>"` (à la place de `native`). `LaunchGame` (My Games, F5 ; le « disque simulé » des débuts a été supprimé depuis) :
 1. interroge `recipe_build.py launch-info` : si le cache est construit, la commande « native » est `./skate1` dans `<cache>/bin` et le lancement suit le chemin P5 (le Dashboard cède la place, relancé au retour) ;
 2. sinon il lance la construction dans un **processus détaché** (journal `<cache>/build.log`), **reste vivant**, affiche une **fenêtre de progression ImGui** (étape, barre, durée écoulée/estimée, journal),
    journalise toutes les 5 s, envoie `notify-send` s'il existe, et **lance le jeu tout seul** à la fin (échec : message et journal, le Dashboard continue).

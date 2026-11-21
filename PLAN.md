@@ -8,6 +8,11 @@ recompilée en natif, livrée sous forme d'**un AppImage par interface**, capabl
 ne sont jamais versionnés : l'AppImage les importe depuis une mise à jour officielle fournie par
 l'utilisateur au premier lancement.
 
+> **Où en est-on (2026-11-21)** : le front est le Guide de la Kinect 13604 avec XAM recompilé —
+> la scène du Guide charge désormais (r3=0) ; reste sa présentation à l'écran. État complet :
+> [docs/REPRISE.md](docs/REPRISE.md) (« État du front »). Les mentions « disque » dans les
+> phases ci-dessous sont historiques : la simulation de disque a été supprimée (2026-11-21).
+
 ## Décisions
 
 | Sujet | Décision | Raison |
