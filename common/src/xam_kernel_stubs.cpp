@@ -36,6 +36,11 @@ std::atomic<long> g_mtpd_calls{0};
 std::atomic<long> g_xexstart_calls{0};
 std::atomic<long> g_powerup_calls{0};
 std::atomic<long> g_vdswap_calls{0};
+std::atomic<long> g_textinput_calls{0};
+std::atomic<long> g_natal_calls{0};
+std::atomic<long> g_hive_calls{0};
+std::atomic<long> g_devstats_calls{0};
+std::atomic<long> g_etxlogs_calls{0};
 
 }  // namespace
 
@@ -226,4 +231,54 @@ REX_HOOK_RAW(__imp__VdSwap) {
   if (++g_vdswap_calls <= 6)
     REXLOG_INFO("[swap] VdSwap appele (r3=0x{:08X}) lr=0x{:08X}", ctx.r3.u32, uint32_t(ctx.lr));
   if (sdk) sdk(ctx, base);
+}
+
+// XInputdGetLastTextInputTime(index_manette, uint64_t* sortie) : appelant xam/dash_recomp.38.cpp:4780
+// (sub_818C596C), boucle sur 4 manettes ; r3 != 0 = « pas de donnee », la manette est sautee puis
+// le code retombe sur HidGetLastInputTime. Aucune saisie texte : on renvoie ERROR_DEVICE_NOT_CONNECTED
+// (1167) sans toucher a la sortie.
+REX_HOOK_RAW(__imp__XInputdGetLastTextInputTime) {
+  (void)base;
+  if (++g_textinput_calls == 1)
+    REXLOG_INFO("[xinput] XInputdGetLastTextInputTime : aucune saisie (1167)");
+  ctx.r3.u64 = 1167;
+}
+
+// UsbdGetNatalHardwareVersion() : version du materiel Kinect (1 ou 2 = present). Appelants :
+// xam/dash_recomp.9.cpp:4954, 20.cpp:16413, 46.cpp:17083, 51.cpp:16903 ; toute valeur autre que 1/2
+// prend le chemin « pas de Kinect » (erreur 0x8007048F pour le premier). On renvoie 0 : aucun Kinect.
+REX_HOOK_RAW(__imp__UsbdGetNatalHardwareVersion) {
+  (void)base;
+  if (++g_natal_calls == 1)
+    REXLOG_INFO("[usbd] UsbdGetNatalHardwareVersion : 0 (pas de Kinect)");
+  ctx.r3.u64 = 0;
+}
+
+// XamGetLiveHiveValueW(nom, tampon, taille, -1, 0) : valeur de la « ruche » Xbox LIVE. Appelants :
+// dash/dash_recomp.88.cpp:7543 (r3 < 0 = ignore le tampon, renvoie l'erreur) et dash_recomp.108.cpp:5739
+// (r3 != 0 = chemin « absent »). Hors ligne : aucune valeur, ERROR_NOT_FOUND (0x80070490, negatif).
+REX_HOOK_RAW(__imp__XamGetLiveHiveValueW) {
+  (void)base;
+  if (++g_hive_calls == 1)
+    REXLOG_INFO("[live] XamGetLiveHiveValueW : valeur absente (hors ligne)");
+  ctx.r3.u64 = 0x80070490u;
+}
+
+// XInputdGetDeviceStats(index, sortie) : appelants xam/dash_recomp.7.cpp:4646 et 24.cpp:4721 ; r3 < 0
+// donne l'erreur 1167 (manette absente), sortie non lue. Aucune manette : echec negatif, sortie intacte.
+REX_HOOK_RAW(__imp__XInputdGetDeviceStats) {
+  (void)base;
+  if (++g_devstats_calls == 1)
+    REXLOG_INFO("[xinput] XInputdGetDeviceStats : manette absente (0x8007048F)");
+  ctx.r3.u64 = 0x8007048Fu;
+}
+
+// EtxConsumerProcessLogs(...) : appelant xam/dash_recomp.37.cpp:31254 ; r3 >= 0 = succes, sinon
+// seuls 0x80000011 / 0xC0000225 sont tolerés. Aucun journal ETW a traiter : succes (comme
+// EtxProducerRegister / EtxConsumerRegister).
+REX_HOOK_RAW(__imp__EtxConsumerProcessLogs) {
+  (void)base;
+  if (++g_etxlogs_calls == 1)
+    REXLOG_INFO("[etx] EtxConsumerProcessLogs : succes (rien a traiter)");
+  ctx.r3.u64 = 0;
 }
