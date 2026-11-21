@@ -327,3 +327,33 @@ le Dashboard gèle si j'entre puis sors de Game Library ».
    n'existe pas avec de vrais jeux ; reproduire l'environnement utilisateur en montant son dossier
    de jeux, pas par une entrée synthétique.
 
+## Volée du 2026-11-21 (nuit) : l'état shell du Guide armé — la scène 0x21015 CHARGE
+
+Retour utilisateur sur 6151e19e : « plus de freeze » (correctif bibliothèque confirmé sur machine) ;
+G toujours rien ; manette Afterglow toujours rien. Son collage console ne contient AUCUNE ligne
+`[xinputd]` : normal — REXLOG va dans `dash.log`, pas sur la console ; les diagnostics manette se
+lisent dans `~/.local/share/xenondash/2.0.13604.0-xam/dash.log`, lui demander le FICHIER.
+
+1. **L'état shell est maintenant armé et la scène du Guide charge** (plus d'E_FAIL). Décodage du
+   gestionnaire de l'app 254 (`sub_81894D50`, dispatch sur r3) :
+   `0x80000012` → loc_81894F3C = « interface système ON » (DACs, sous_81871DD8/818878B8/87ED0/878E8,
+   **sub_8189F050(1)** qui écrit UIstate+176=1 et KeSetEvent(+192), HalRegisterXamPowerDownCallback) ;
+   `0x80000011` → loc_81894F84 = « OFF » (sub_8189F050(0), +196=0). Le trio observé à chaque pression G
+   (0x8000000B → 0x80000007 avec objet de requête → 0x8000000C) arrive déjà chez nous ; seul 0x80000012
+   manquait. **Correctif (dash_xam_redirect.cpp, ShowXamGuide)** : avant l'appel de XamShowGuideUI,
+   (a) appel DIRECT du gestionnaire `sub_81894D50(0x80000012)` via le répartiteur (l'envoi par
+   sub_8187B960 est accepté en file, r3=0, mais le répartiteur du système UI ne le distribue JAMAIS —
+   mesuré : aucun [msgdispatch] 0x80000012, état inchangé) ; (b) pose de **UIstate+172=1** : ce mot est
+   posé sur console par l'init vidéo de XAM (sub_8189F860/sub_8189E460, relues de
+   VdGetCurrentDisplayInformation) — une chaîne D3D que le rendu natif ngpu remplace ; le rendu EST prêt
+   (le hub s'affiche), le drapeau déclare fidèlement cet état. Résultat au banc :
+   `[scene] retour r3=00000000` (la scène 0x21015 charge, l'état avance : +0=2, +56=1), navigation hub
+   intacte. **Restant** : la scène chargée ne prend pas encore le rendu — l'app active reste 252
+   (XLiveBase) et le compositeur continue d'afficher le hub ; prochaine étape : la bascule de
+   présentation vers la scène du Guide (app 254/252, [uipump], surface de la scène).
+2. Pièges du jour : `pkill -f <motif>` se tue lui-même quand le motif figure dans la ligne de commande
+   du bash -c englobant (deux fois) — tuer par PID (`kill $(pgrep -x dash)` ou pgrep -f avec un motif
+   minimal) ; deux instances de dash simultanées font que les touches xdotool vont à la mauvaise
+   fenêtre (vérifier `pgrep -c relwithdebinfo/dash` avant d'interagir).
+
+
