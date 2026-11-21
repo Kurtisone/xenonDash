@@ -41,7 +41,12 @@ python3 tools/xex_rekey.py xam.xex xam_rekey.xex    # « clé xex1 -> rechiffré
 # puis remplacer assets/flash/xam.xex par le fichier déchiffré
 ```
 
-`xex_rekey.py` exige `python3-cryptography` (installé dans l'image `xd-builder`).
+`xex_rekey.py` n'a **plus aucune dépendance Python** (2026-11-21) : AES-128-CBC fourni par le
+module `cryptography` s'il existe, sinon libcrypto (OpenSSL) par ctypes, sinon une implémentation
+pur Python. Sur l'hôte SteamOS (pas de `cryptography`), l'import de l'AppImage plantait sur ce
+module ; les trois fournisseurs sont vérifiés équivalents octet pour octet (vecteur FIPS-197 +
+SHA-256 identique du xam.xex rekeyé). `XEX_REKEY_AES=cryptography|libcrypto|pure` force un
+fournisseur (tests).
 
 ## Obstacle 2 — `signin`, `createprofile` et `gamerprofile` partagent la même base
 

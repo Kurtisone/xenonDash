@@ -123,6 +123,14 @@ pilote STFS minimal côté noyau, profil local hors ligne (XUID aléatoire, sign
    (`--shrdres-xam`) pour la génération des shaders HUD (33 générés, 1 non traduit : 817F9550_VS). Vérifié en conteneur
    depuis un répertoire neutre : import complet, XAM chargé, boîtes système rendues (texte + bouton + atténuation).
    Reste : 72 shaders dash non traduits (connu, point 4 ci-dessous).
+   *Complément au 2026-11-21 (import hôte, **corrigé**)* : premier import complet sur l'hôte SteamOS —
+   échec à `xex_rekey.py` (`ModuleNotFoundError: cryptography`, module présent dans le conteneur de
+   build mais pas sur SteamOS). `tools/xex_rekey.py` réécrit **sans dépendance obligatoire** : AES par
+   `cryptography`, sinon libcrypto/ctypes, sinon pur Python ; les trois fournisseurs sont équivalents
+   octet pour octet (vecteur FIPS-197 tour par tour, SHA-256 identique du xam.xex rekeyé, testé sur
+   l'hôte Python 3.14). `XEX_REKEY_AES=` force un fournisseur. Seul `xex_rekey.py` était concerné :
+   tous les autres outils de l'import n'utilisent que la bibliothèque standard (vérifié par grep des
+   imports). AppImage -xam reconstruite et redéposée dans `/home/deck/XenonDash/`.
    *État au 2026-11-20 (soir), **résolu*** : la variante `-xam` **affiche**. La cause du noir n'était
    pas dans le code invité mais dans le mappage mémoire : l'arène de 4,5 Go était un fichier
    `/dev/shm` mappé `MAP_SHARED`, et `/dev/shm` d'un conteneur fait souvent 64 Mo — au-delà,
