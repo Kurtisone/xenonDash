@@ -109,7 +109,12 @@ pilote STFS minimal côté noyau, profil local hors ligne (XUID aléatoire, sign
 ## Suite, par ordre de priorité
 1. Profil existant choisi dans la liste : XAM demande « Enter Pass Code » (cause non établie) ; `XamUserReadProfileSettings(Ex)` redirigé vers XAM plante le Dashboard (lecture invitée de `0x7008004F`) : gamertag/Gamerscore du bandeau et contenu restent liés au profil HLE ; fenêtre « Save Profile » absente du parcours Dashboard.
 2. Rendre `DASH_PROFILE_MODE=xam` le défaut et livrer la variante `-xam` (XAM + HUD) en AppImage.
-   *État au 2026-11-21 : **livrée et vérifiée en environnement neutre** — `out/appimage/XenonDash-2.0.13604.0-xam-x86_64.AppImage`
+   *État au 2026-11-21 : **livrée et vérifiée sur la machine de l'utilisateur** — l'AppRun cherche
+   les fichiers de l'import dans le dossier de l'AppImage (`$APPIMAGE`, pas le point de montage :
+   la première version cherchait dans le montage et les boîtes de dialogue s'ouvraient malgré les
+   fichiers présents), avec notification notify-send au début/à la fin de l'import. Vérifié sur
+   Steam Deck : `$SystemUpdate` et xam.xex détectés, import STFS démarré immédiatement, zéro
+   dialogue. Historique de l'outillage : — `out/appimage/XenonDash-2.0.13604.0-xam-x86_64.AppImage`
    (142 Mo, outils de recompilation embarqués), construite par `APPIMAGE_EXTRACT_AND_RUN=1 BUILD_DIR=linux-amd64-relwithdebinfo
    ./tools/make_appimage.sh 2.0.13604.0-xam`. Trois pièces ajoutées à l'outillage : (a) les **modules recompilés**
    (`libdash_*.so`) sont embarqués à côté du binaire (le chargeur les cherche à côté de l'exécutable — sans eux,
