@@ -200,17 +200,27 @@ pilote STFS minimal côté noyau, profil local hors ligne (XUID aléatoire, sign
    « disque simulé : 4D5307DC dans le lecteur » au boot. Supprimé : le lecteur reste vide
    (directive), un jeu n'y va que sur `disc = true`/`--dash_disc`. `XamLoaderGetDvdTrayState`
    passe à 2 (fermé SANS disque ; XAM ne lit pas cet export, vérifié dans le code généré).
-   *État visuel mesuré au banc conteneur (Xvfb + captures, xdotool ajouté à l'image xd-builder
-   pour injecter clavier/focus)* : le hub NXE est **impeccable** (lames, tuiles Kinect/avatars,
-   textes, couleurs correctes) ; **G ouvre le Guide** (chrome, horloge, B Cancel) mais le
-   contenu reste sur le spinner de chargement (« il ne se charge pas » de l'utilisateur,
-   reproduit) ; une **boîte modale au boot** apparaît encore (contenu variable « Unrecognized
-   Disc » / « Game Error », levée depuis un rappel pompé par `sub_818905B0` ([uipump], objet+48)
-   après le message 0x00020023 du handler app254) — `Enter` la ferme (parfois, course),
-   **jamais les touches pad** (VK_PAD_A via `XamInputGetKeystrokeHud` pourtant bien livrées :
-   chaîne pad→SDL→InputSystem→XInputd→XAM validée par les journaux). Chantiers suivants :
-   (1) origine de la boîte de boot, (2) spinner du Guide, (3) brancher la manette sur le
-   pipeline que lit l'UI (le clavier passe par `XamInputGetKeystrokeEx` HLE).
+   *LA BOÎTE MODALE DU BOOT : ÉLIMINÉE (d0a352e).* Traque par instrumentation en chaîne dans le
+   généré XAM ([msgdispatch] sub_8187B320 → [msgsend] sub_8187B4F0 → [appsend] sub_8187B8F0 →
+   [appsend2] sub_8187BA98 → [notify254] sub_818C1188) : XAM n'envoie le message 0x00020023 à
+   l'app 254 (qui ouvre la boîte, contenu variable « Game Error »/« Unrecognized Disc ») que si
+   le **bit 3 (0x8) de XeKeysGetStatus est clair**. Le hook du projet
+   (`xam_kernel_stubs.cpp`) ne remplissait jamais la sortie (r3 = pointeur de status, laissé à
+   0). Correctif : `*r3 = 0xC` (bits 2|3 — le bit 2 est lu par deux autres sites ; sur console
+   retail ces contrôles sont au vert). **Validé au banc : boot propre au premier essai**
+   (boxroot=0), hub NXE direct sans aucune boîte (captures). Navigation au clavier validée au
+   banc (les touches pad VK font défiler le carrousel).
+   *Suppression COMPLÈTE de la fonction disque (d0a352e, suite de la demande)* : plus de
+   `disc = true` dans games.toml (clé ignorée pour compat), plus de `--dash_disc`, plus de XEX
+   synthétique sur `\Device\CdRom0` (dash_disc.cpp réécrit : icônes de bibliothèque + notification
+   « aucun média » seulement). `XamLoaderGetMediaInfo/Ex` → « aucun média », `Resolve` sans
+   repli « seul jeu déclaré » (les lancements passent par LaunchGame ou un chemin nommant un jeu).
+   *Restant (front actuel)* : la scène du Guide **0x21015 renvoie E_FAIL** — le chargeur de
+   l'app 254 (sub_8189BE20, switch sur scene-0x21001, cases 0..53) saute son case 20 à
+   l'échec : le Guide s'ouvre (portier→1) mais sans contenu (spinner ou rien selon le flux).
+   Qui doit charger 0x21015 (Guide : app 252 ? HUD ?) — chantier suivant. La manette réelle
+   est à re-tester sur la machine (la chaîne pad→SDL→InputSystem→XInputd→XAM est vivante et
+   la boîte qui bloquait n'existe plus).
    *État au 2026-11-20 (soir), **résolu*** : la variante `-xam` **affiche**. La cause du noir n'était
    pas dans le code invité mais dans le mappage mémoire : l'arène de 4,5 Go était un fichier
    `/dev/shm` mappé `MAP_SHARED`, et `/dev/shm` d'un conteneur fait souvent 64 Mo — au-delà,
