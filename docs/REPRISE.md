@@ -194,6 +194,23 @@ pilote STFS minimal côté noyau, profil local hors ligne (XUID aléatoire, sign
    l'argument de `make_appimage.sh` ne choisit plus que l'arbre de build, le nom de sortie est
    fixe, l'entrée .desktop devient « XenonDash Kinect ». Le répertoire de données reste
    `~/.local/share/xenondash/2.0.13604.0-xam/` (profils/flash/shaders conservés).
+   *Disque simulé supprimé (demande utilisateur, 2026-11-21, 68c0aa8 + SDK d62f5dd).* Ce n'était
+   pas un fichier : le cvar `dash_auto_disc` (vrai par défaut) présentait « le dernier jeu lancé
+   de la bibliothèque » (ici Crackdown, seul jeu scanné) comme disque inséré — d'où
+   « disque simulé : 4D5307DC dans le lecteur » au boot. Supprimé : le lecteur reste vide
+   (directive), un jeu n'y va que sur `disc = true`/`--dash_disc`. `XamLoaderGetDvdTrayState`
+   passe à 2 (fermé SANS disque ; XAM ne lit pas cet export, vérifié dans le code généré).
+   *État visuel mesuré au banc conteneur (Xvfb + captures, xdotool ajouté à l'image xd-builder
+   pour injecter clavier/focus)* : le hub NXE est **impeccable** (lames, tuiles Kinect/avatars,
+   textes, couleurs correctes) ; **G ouvre le Guide** (chrome, horloge, B Cancel) mais le
+   contenu reste sur le spinner de chargement (« il ne se charge pas » de l'utilisateur,
+   reproduit) ; une **boîte modale au boot** apparaît encore (contenu variable « Unrecognized
+   Disc » / « Game Error », levée depuis un rappel pompé par `sub_818905B0` ([uipump], objet+48)
+   après le message 0x00020023 du handler app254) — `Enter` la ferme (parfois, course),
+   **jamais les touches pad** (VK_PAD_A via `XamInputGetKeystrokeHud` pourtant bien livrées :
+   chaîne pad→SDL→InputSystem→XInputd→XAM validée par les journaux). Chantiers suivants :
+   (1) origine de la boîte de boot, (2) spinner du Guide, (3) brancher la manette sur le
+   pipeline que lit l'UI (le clavier passe par `XamInputGetKeystrokeEx` HLE).
    *État au 2026-11-20 (soir), **résolu*** : la variante `-xam` **affiche**. La cause du noir n'était
    pas dans le code invité mais dans le mappage mémoire : l'arène de 4,5 Go était un fichier
    `/dev/shm` mappé `MAP_SHARED`, et `/dev/shm` d'un conteneur fait souvent 64 Mo — au-delà,
