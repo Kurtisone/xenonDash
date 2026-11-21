@@ -164,12 +164,22 @@ def main():
                 os.remove(dst)
             shutil.move(os.path.join(stage, d), dst)
         shutil.rmtree(stage, ignore_errors=True)
-        # xam.xex de la mise à jour elle-même (même version que le Dashboard) : source des shaders du HUD
+        # xam.xex de la mise à jour elle-même (même version que le Dashboard) : source des shaders du HUD.
+        # La racine des données doit contenir la version REKEYÉE (clé retail), pas le brut : le chargeur
+        # résout game:\xam.xex tantôt vers la flash (montage dash::xamrt), tantôt vers la racine (montage
+        # « game: » du noyau = répertoire de l'exécutable ; la correspondance des préfixes du VFS est
+        # insensible à la casse et l'ordre de la map arbitre — le brut, clé de session chiffrée XEX1,
+        # échouait au déchiffrement retail/devkit : « XEX load failed with code 2 », Guide mort ;
+        # mesure strace du 2026-11-21 : le loader ouvrait <racine>/xam.xex, pas flash/xam.xex).
         own_xam = next((f for f in ctx["files"] if os.path.basename(f).lower() == "$flash_xam.xex"), None)
-        if own_xam:
-            shutil.copyfile(own_xam, os.path.join(root, "xam.xex"))
-        elif os.path.exists(os.path.join(root, "xam.xex")):
-            os.remove(os.path.join(root, "xam.xex"))
+        root_xam = os.path.join(root, "xam.xex")
+        flash_xam = os.path.join(root, "flash", "xam.xex")
+        if os.path.isfile(flash_xam):
+            shutil.copyfile(flash_xam, root_xam)  # rekeyé par stage_assets (port_dashboard)
+        elif own_xam:
+            shutil.copyfile(own_xam, root_xam)
+        elif os.path.exists(root_xam):
+            os.remove(root_xam)
             pd.log("avertissement : pas de $flash_xam.xex dans la mise à jour : shaders du HUD non générés")
     except pd.StageError as e:
         sys.exit(f"[import] ÉCHEC : {e}")
@@ -188,9 +198,10 @@ def main():
         pd.log("avertissement : pas de shrdres.xzp (--shrdres-xam absent) : icônes et chaînes partagées manquantes")
     if a.shrdres_xam and os.path.isfile(a.shrdres_xam) and not os.path.exists(os.path.join(root, "xam.xex")):
         # Les shaders HUD (interface XAM : Guide, boîtes) se traduisent depuis le xam.xex complet ;
-        # generate_native_shaders() l'attend à la racine des données.
-        shutil.copy(a.shrdres_xam, os.path.join(root, "xam.xex"))
-        pd.log("xam.xex copié à la racine (--shrdres-xam) : shaders HUD générables")
+        # generate_native_shaders() l'attend à la racine des données. Rekeyé (clé retail) : le
+        # chargeur du Dashboard doit aussi pouvoir le déchiffrer où qu'il résolve game:\xam.xex.
+        pd.run([sys.executable, os.path.join(pd.TOOLS, "xex_rekey.py"), a.shrdres_xam, os.path.join(root, "xam.xex")])
+        pd.log("xam.xex (rekeyé) copié à la racine (--shrdres-xam) : shaders HUD générables, game:\\xam.xex lisible")
     with open(os.path.join(root, ".ready"), "w") as f:
         f.write("ok\n")
     pd.log(f"import terminé : {root}")

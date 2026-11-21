@@ -170,14 +170,30 @@ pilote STFS minimal côté noyau, profil local hors ligne (XUID aléatoire, sign
      partagés ne couvrant que 2D/3D/Cube.
    Résultat : **258/258 conteneurs dash et 34/34 conteneurs HUD traduits** (était 186/258 et
    33/34) ; le HUD `817F9550_VS` (même famille SIGSEGV) passe aussi.
-   *Guide mort sur l'AppImage (2026-11-21, soir) : **corrigé**.* Le chargeur attend
-   `game:\xam.xex` dans la flash (`DASH_XAM_MODULE`), mais l'import **sautait** xam.xex lors de
-   la copie des modules de la mise à jour (le conteneur le recevait du `--modules` xeBuild) —
-   « module xam.xex recompilé : ÉCHEC » à chaque boot de l'utilisateur, aucune redirection XAM,
-   le bouton G ne faisait rien. Correctif : `port_dashboard.py` copie désormais le xam.xex
-   **rekeyé** (clé XEX1 → retail) dans la flash — et le xam.xex à la racine des données
-   (shaders HUD) était lui-même resté non rekeyé (le regen rekeye, sans conséquence). Données de
-   l'utilisateur corrigées à la main en attendant.
+   *Guide mort sur l'AppImage (2026-11-21, soir) : **corrigé et validé**.* Deux couches :
+   (1) l'import **sautait** xam.xex lors de la copie des modules de la mise à jour —
+   « module xam.xex recompilé : ÉCHEC » à chaque boot, aucune redirection XAM, G ne faisait
+   rien ; `port_dashboard.py` copie désormais le xam.xex **rekeyé** (clé XEX1 → retail) dans
+   la flash. (2) Ça ne suffisait pas : **strace** (l'AppImage refuse FUSE dans une session
+   stracée, utiliser `--appimage-extract-and-run`) montre que le chargeur ouvre
+   `<racine>/xam.xex`, pas `flash/xam.xex` — le montage `game:` du noyau (répertoire de
+   l'exécutable) masque celui de la flash (préfixes insensibles à la casse, ordre de map
+   arbitre, cf. commentaire de `MountFlash`) ; or la racine contenait le xam.xex **brut**
+   (copié pour les shaders HUD, clé de session chiffrée XEX1) → « XEX load failed with code 2 »
+   (hash de bloc, clé de session fausse), retail **et** devkit. Le code 2 n'est PAS un fichier
+   absent : réplique Python de l'algorithme du loader (`/tmp/xdcheck.py`, jetable) sur le
+   fichier rekeyé = hash du premier bloc MATCH. Correctif durable : `xenondash_import.py` pose
+   le rekeyé **aux deux emplacements** (flash ET racine ; le repli `--shrdres-xam` rekeye
+   aussi avant de copier). Validé sur la machine : « module xam.xex recompilé : **chargé** »,
+   redirections `XamShowGuideUI (ordinal 772) -> XAM recompilé`, et la passerelle manette de
+   XAM vit (`[xinputd] manette virtuelle 0x10000001 annoncée à XAM, port=0`,
+   `XInputdGetCapabilities` polles en boucle) — la manette « morte depuis quelques sessions »
+   avait la même cause (sans xam.xex, pas de pile d'entrée XAM).
+   *Une seule AppImage (demande utilisateur, 2026-11-21) : `XenonDash-Kinect.AppImage`* —
+   fin des noms versionnés/variantes (`XenonDash-2.0.13604.0[-xam]-x86_64.AppImage` abandonnés) ;
+   l'argument de `make_appimage.sh` ne choisit plus que l'arbre de build, le nom de sortie est
+   fixe, l'entrée .desktop devient « XenonDash Kinect ». Le répertoire de données reste
+   `~/.local/share/xenondash/2.0.13604.0-xam/` (profils/flash/shaders conservés).
    *État au 2026-11-20 (soir), **résolu*** : la variante `-xam` **affiche**. La cause du noir n'était
    pas dans le code invité mais dans le mappage mémoire : l'arène de 4,5 Go était un fichier
    `/dev/shm` mappé `MAP_SHARED`, et `/dev/shm` d'un conteneur fait souvent 64 Mo — au-delà,

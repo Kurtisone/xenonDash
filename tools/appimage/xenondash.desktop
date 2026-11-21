@@ -1,7 +1,7 @@
 [Desktop Entry]
 Type=Application
-Name=XenonDash @VERSION@
-Comment=Dashboard Xbox 360 @VERSION@ recompilé en natif (usage personnel)
+Name=XenonDash Kinect
+Comment=Dashboard Xbox 360 recompilé en natif, avec module XAM (usage personnel)
 Exec=AppRun
 Icon=xenondash
 Categories=Game;Emulator;

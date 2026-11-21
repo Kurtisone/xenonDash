@@ -1,5 +1,8 @@
 #!/bin/sh
-# Construit out/appimage/XenonDash-<version>-x86_64.AppImage (phase P6 ; voir docs/technique.md, « AppImage »).
+# Construit out/appimage/XenonDash-Kinect.AppImage (phase P6 ; voir docs/technique.md, « AppImage »).
+# Une seule AppImage (demande du 2026-11-21 : « pas de variantes, une XenonDash-Kinect, point ») :
+# l'argument <version> choisit seulement l'arbre de build (dashboards/<version>) dont embarquer le
+# binaire et les modules recompilés — le mode XAM s'active tout seul quand libdash_xam.so est là.
 # usage: tools/make_appimage.sh <version> [--no-strip] [--no-build-tools]
 # --no-build-tools : sans les outils de recompilation de jeux (SDK, ngpu_core, XenosRecomp...) : AppImage légère, sans « Play Game »
 # --no-toolchain : sans clang/cmake/ninja embarqués (les jeux devront être recompilés ailleurs) ;
@@ -123,6 +126,6 @@ cp "$A/xenondash.png" "$A/usr/share/icons/hicolor/256x256/apps/xenondash.png"
 cp "$A/xenondash.png" "$A/.DirIcon"
 
 mkdir -p "$R/out/appimage"
-OUT=$R/out/appimage/XenonDash-$V-x86_64.AppImage
+OUT=$R/out/appimage/XenonDash-Kinect.AppImage
 ARCH=x86_64 "$TOOLS/appimagetool" --appimage-extract-and-run --no-appstream "$A" "$OUT"
 ls -la "$OUT"; sha256sum "$OUT"
