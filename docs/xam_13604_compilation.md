@@ -2011,3 +2011,18 @@ Chaîne complète fonctionnelle (appel, message, scène, chargement de module) ;
 posés (CdRom0 + repli VFS SDK) ; erreur de disque supprimée ; chaînes localisées résolues.
 Reste : faire terminer la scène de boot du système UI (app 252) — c'est la porte de tout le
 reste (Guide, boîtes, clavier virtuel).
+
+### XamPackageManagerGetExperienceMode : stub à r3 résiduel → 0 (expérience complète)
+
+Le Dashboard appelle cet export plusieurs fois au boot (chaîne [deep], sub_92170720…) ; le stub
+générique laissait r3 tel quel (valeur résiduelle de l'appelant). Corrigé dans le SDK :
+REX_EXPORT_STUB_RETURN(..., 0). Mesuré : l'app système reste sur 252 — ce n'est pas le seul
+verrou, mais la valeur 0 est la seule défendable (le hub rend toujours, pas de régression).
+
+Pistes suivantes pour la scène de boot bloquée (app 252, profondeur d'interfaces 4) :
+- les autres stubs appelés pendant le boot (XamGetLiveHiveValueW, MmDoubleMapMemory,
+  XamNotifyCreateListenerInternal…) ;
+- le watchpoint du compteur à reprendre avec `handle SIGSEGV nostop noprint pass` (le suivi de
+  pages du SDK tue sinon le process sous gdb) en vérifiant l'amorce (« Hardware watchpoint ») ;
+- la logique de dépilage de la pile d'interfaces dans XAM (qui appelle la fermeture, et sur
+  quel événement — la scène de boot tourne (anneau animé) mais son « ready » n'arrive jamais).
