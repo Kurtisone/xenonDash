@@ -16,10 +16,6 @@ namespace dash::achievements {
 int32_t GpdGamerscore();
 }
 
-namespace dash::xamui {
-rex::u32 OpenAchievementsForCurrentTitle();
-}
-
 namespace dash::profile {
 std::string Gamertag();
 bool ProfileExistsOnDisk();
@@ -44,10 +40,9 @@ bool FillCard(PlayerCard* card) {
 void PerformAction(int action) {
   switch (action) {
     case kActionAchievements: {
-      // Meme interface que le crochet XamShowAchievementsUI (dash_xam_ui.cpp) : c'est celle qui
-      // affiche les succes du jeu en cours en rendu natif.
-      const u32 r = dash::xamui::OpenAchievementsForCurrentTitle();
-      REXLOG_INFO("[guide] succes du jeu en cours -> {:08X}", uint32_t(r));
+      // Rendu natif : l'écran des succès est celui du XAM recompilé (XamShowAchievementsUI, firmware), pas
+      // une fenêtre ImGui. Non encore relié depuis le Guide : tant que l'action ne l'appelle pas, rien ne s'affiche.
+      REXLOG_INFO("[guide] succes du jeu en cours : écran firmware non relié");
       break;
     }
     case kActionProfile:

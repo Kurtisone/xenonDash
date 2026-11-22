@@ -36,10 +36,6 @@ void Init();
 namespace dash::hudui {
 void Init(rex::system::KernelState* ks, bool imgui_available);
 }  // namespace dash::hudui
-namespace dash::xamui {
-void Init(rex::ui::WindowedAppContext* app, rex::ui::ImGuiDrawer* imgui, rex::ui::ImmediateDrawer* immediate);
-bool IsOpen();
-}  // namespace dash::xamui
 
 namespace xenondash {
 
@@ -103,18 +99,8 @@ void DashAppBase::OnPostSetup() {
   dash::profile::ApplyProfileSettings();
   dash::launch::Init();
   dash::disc::Init();
-  // Interfaces XAM remplacées par ImGui (dash_xam_ui.cpp) : entrées du Dashboard suspendues
-  // tant qu'elles sont affichées.
-  dash::xamui::Init(&app_context(), imgui_drawer(), immediate_drawer());
-  if (auto* input = static_cast<rex::input::InputSystem*>(runtime()->input_system());
-      input && imgui_drawer()) {
-    auto* drawer = imgui_drawer();
-    input->SetActiveCallback(
-        [drawer] { return !dash::xamui::IsOpen() && !drawer->GetIO().WantCaptureMouse; });
-  }
   // Palier N5 : progression de construction par les boîtes de message Xbox du HUD de XAM (rendu natif, sans
-  // superposition ImGui). Après xamui::Init : sans ImGui disponible (présentateur détaché), les fenêtres ImGui ne
-  // peuvent pas être dessinées ; avec plugin xenos elles restent seules et l'appel ne fait rien.
+  // superposition ImGui). Les fenêtres ImGui ont été retirées : seul le HUD de XAM affiche la progression.
   dash::hudui::Init(runtime()->kernel_state(), imgui_drawer() != nullptr);
   // La flash (\SystemRoot, \Device\Flash) est montée avant XAM : son point d'entrée lit ces chemins.
   dash::xamrt::MountFlash(runtime()->file_system(), game_data_root() / "flash");
