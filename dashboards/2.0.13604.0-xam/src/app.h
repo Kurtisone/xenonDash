@@ -14,11 +14,9 @@ class DashApp : public xenondash::DashAppBase {
     return std::unique_ptr<DashApp>(new DashApp(ctx, "dash", PPCImageConfig, "dash.xex"));
   }
 
-#ifdef DASH_NATIVE_GPU
   // Rendu natif (native_gpu/) : pas de plugin GPU Xenos ; fenetre et presentation gerees par native_gpu (Dashboard et HUD de XAM).
   void OnPreSetup(rex::RuntimeConfig& config) override {
     xenondash::DashAppBase::OnPreSetup(config);
     if (!std::getenv("DASH_NGPU_DISABLE")) config.gpu_plugin.clear();
   }
-#endif
 };

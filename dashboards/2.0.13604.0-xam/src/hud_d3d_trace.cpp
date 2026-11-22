@@ -124,7 +124,7 @@ extern "C" bool hudd3d_probe(uint32_t addr, PPCContext& ctx, uint8_t* base, void
   return true;
 }
 
-// Version sans facade native (build sans DASH_NATIVE_GPU) : seulement les diagnostics ; la facade (native_gpu/src/hud_front.cpp) la remplace.
+// Version de repli (facade absente) : seulement les diagnostics ; la facade (native_gpu/src/hud_front.cpp) la remplace.
 extern "C" __attribute__((weak)) void hudd3d_call(uint32_t addr, PPCContext& ctx, uint8_t* base, void (*orig)(PPCContext&, uint8_t*)) {
   if (!hudd3d_probe(addr, ctx, base, orig)) orig(ctx, base);
 }

@@ -136,7 +136,7 @@ void GuestLoop() {
   }
 }
 
-// Palier N5 : la fenêtre ImGui de progression (dash_xam_ui.cpp, invisible en rendu natif) devient la boîte de message
+// Palier N5 : la fenêtre ImGui de progression (ImGui, retirée) devient la boîte de message
 // Xbox du HUD. Une boîte au démarrage de la construction (nom du jeu, durée estimée, journal ; « Masquer » la ferme
 // sans toucher à la construction), une à l'échec (erreur + journal) ; rien au succès (le jeu se lance tout seul,
 // BuildMonitor de dash_launch.cpp).
@@ -213,10 +213,8 @@ void RequestGuide() {
   REXLOG_INFO("[guide] bouton Guide : demande déposée pour le thread invité");
 }
 
-void Init(rex::system::KernelState* ks, bool imgui_available) {
-  // Builds avec plugin xenos : la superposition ImGui existe, les fenêtres de dash_xam_ui.cpp restent seules.
-  if (imgui_available) return;
-  if (!ks || !std::getenv("DASH_XAM_MODULE")) return;  // sans XAM recompilé : ni ImGui ni HUD (journal de dash_xam_ui.cpp)
+void Init(rex::system::KernelState* ks) {
+  if (!ks || !std::getenv("DASH_XAM_MODULE")) return;  // sans XAM recompilé : pas de HUD
   // L'unique thread invité des fenêtres (l'object_ref vit jusqu'à la fin du processus, comme les tests de
   // dash_xam_redirect.cpp). Le corps attend la première demande ; une demande antérieure au chargement de XAM échoue
   // avec un avertissement (ShowXamMessageBox).

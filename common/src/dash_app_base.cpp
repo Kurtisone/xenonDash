@@ -19,7 +19,6 @@
 #include <rex/system/xthread.h>
 #include <string_view>
 #include <rex/system/user_module.h>
-#include <rex/ui/imgui_drawer.h>
 
 #include "dash_input.h"
 #include "dash_launch.h"
@@ -34,7 +33,7 @@ namespace dash::disc {
 void Init();
 }
 namespace dash::hudui {
-void Init(rex::system::KernelState* ks, bool imgui_available);
+void Init(rex::system::KernelState* ks);
 }  // namespace dash::hudui
 
 namespace xenondash {
@@ -101,7 +100,7 @@ void DashAppBase::OnPostSetup() {
   dash::disc::Init();
   // Palier N5 : progression de construction par les boîtes de message Xbox du HUD de XAM (rendu natif, sans
   // superposition ImGui). Les fenêtres ImGui ont été retirées : seul le HUD de XAM affiche la progression.
-  dash::hudui::Init(runtime()->kernel_state(), imgui_drawer() != nullptr);
+  dash::hudui::Init(runtime()->kernel_state());
   // La flash (\SystemRoot, \Device\Flash) est montée avant XAM : son point d'entrée lit ces chemins.
   dash::xamrt::MountFlash(runtime()->file_system(), game_data_root() / "flash");
   // P4 (prototype) : XAM recompilé comme module ReXGlue (voir docs/technique.md, « XAM recompilé »). Actif seulement si le projet

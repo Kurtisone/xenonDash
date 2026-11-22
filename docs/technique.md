@@ -329,7 +329,7 @@ vide), `xam_auto_overrides.toml` (généré par `tools/codegen_module.py`, voir 
 | 3 | Générateur de redirections + `DASH_XAM_IMPORTS=<liste>` ; premier sous-ensemble : `XamShowAchievementsUI`, `XamShowMessageBoxUI`, `XamShowGuideUI`... | 1-2 j |
 | 4 | Profil/succès servis par XAM (STFS de profil non chiffré fictif, `XamUserReadProfileSettings`, GPD) | 3-5 j |
 | 5 | Rendu XUI de XAM (scènes `gamercrd.xzp`/`shrdres.xzp`, polices `XenonSCLatin`), manette (`Drv*`/`XInputd*`) | 2-4 j |
-| 6 | Retirer `dash_xam_ui.cpp` (ImGui) pour 17559, smoke + captures `p4_*.png`, AppImage | 1 j |
+| 6 | Retirer `dash_xam_ui.cpp` (ImGui) : fait (fichier supprimé, rendu natif seul) ; smoke + captures `p4_*.png`, AppImage | 1 j |
 
 Total : **10-17 jours-développeur** ; l'étape 1 est faite (le Dashboard s'affiche, les écrans XAM peuvent être validés et capturés). Le risque principal est l'étape 4 (XAM réel contre profil HLE), qu'on peut contourner en
 gardant le profil/GPD du projet et en ne redirigeant vers XAM que l'interface.
@@ -381,7 +381,7 @@ sont **pas redistribuables** (ne jamais les versionner ni les publier).
 
 ## Lancer des jeux (phase P5)
 
-Code : `common/src/dash_launch.cpp` (+ `dash_launch.h`, lanceur ImGui dans `dash_xam_ui.cpp`), donc commun à toutes
+Code : `common/src/dash_launch.cpp` (+ `dash_launch.h`, ancien lanceur ImGui de `dash_xam_ui.cpp`, retiré), donc commun à toutes
 les versions. Exemple de registre versionné : `games.example.toml`.
 
 **Registre** `<game_data_root>/games.toml` (ex. `dashboards/2.0.6770.0/assets/games.toml`, relu à chaque ouverture
@@ -589,8 +589,7 @@ placés dans `dashboards/2.0.6770.0/assets/profiles/<XUID>/` :
 - Écrans vérifiés : **Achievements** (tous jeux), **Played Games** (liste, succès, Gamerscore,
   icônes), **Game Summary** d'un jeu (icône, derniers succès avec leurs images, totaux).
 - **Achievements d'un jeu** (Game Summary > Achievements) : sur la console, c'est l'interface de XAM
-  (`XamShowAchievementsUI`), que l'émulation haut niveau n'a pas. `src/dash_xam_ui.cpp` la remplace
-  par un écran ImGui : tous les succès du jeu (obtenus d'abord, puis verrouillés en grisé, secrets
+  (`XamShowAchievementsUI`), que l'émulation haut niveau n'a pas. un ancien écran ImGui de remplacement (`dash_xam_ui.cpp`, supprimé ; le rendu est natif, sans ImGui) l'affichait : tous les succès du jeu (obtenus d'abord, puis verrouillés en grisé, secrets
   masqués), images, points, progression ; Haut/Bas pour parcourir, Échap/B pour fermer. Comme XAM,
   il envoie `XN_SYS_UI` et suspend les entrées du Dashboard. Test direct :
   `DASH_ENV="DASH_TEST_XAMUI=45410813" ./input_test.sh essai 70 "Down" "Escape"`.

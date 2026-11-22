@@ -353,7 +353,7 @@ Ce palier ajoute un mécanisme de redirection configurable, sans modifier le SDK
   décodée (données utiles décalées, en gros-boutiens) : non exploitable. Les noms viennent donc du SDK, les adresses de
   l'exécution.
 - **Imports déjà remplacés dans `common/`** (non redirigeables sans toucher à leur fichier) : `XamShowAchievementsUI`
-  (`dash_xam_ui.cpp`), `XamLoaderLaunchTitle` (`dash_launch.cpp`), `XamNotifyCreateListener` (`dash_disc.cpp`),
+  (ancien `dash_xam_ui.cpp`, retiré), `XamLoaderLaunchTitle` (`dash_launch.cpp`), `XamNotifyCreateListener` (`dash_disc.cpp`),
   `XamContentClose` et `XamContentCreateEnumerator` (`dash_library.cpp`, `dash_content.cpp`), `XamUserGetName`
   (`dash_profile.cpp`). Ils restent sur le hook de `common/`.
 
@@ -1119,9 +1119,9 @@ Modifiés : `common/CMakeLists.txt`, `common/src/{dash_app_base,dash_disc,dash_p
 
 ## Palier N5 — fenêtres du HUD appelées depuis l'hôte (progression de construction)
 
-Date : 2026-11-17. Avec le rendu natif (`-DDASH_NATIVE_GPU=ON`), le présentateur SDK est détaché : aucun
-`ImGuiDrawer` hôte, donc les fenêtres ImGui de `dash_xam_ui.cpp` (progression de construction, lanceur F5,
-statut bibliothèque) ne sont plus dessinées — `OpenLauncherHotkey()` sortie silencieuse, aucun journal
+Date : 2026-11-17. Le rendu natif est désormais le seul chemin (l'option `DASH_NATIVE_GPU` et le repli ImGui ont été retirés) : le
+présentateur SDK est détaché, aucun `ImGuiDrawer` hôte, et les fenêtres ImGui de `dash_xam_ui.cpp` (progression de
+construction, lanceur F5, statut bibliothèque ; fichier supprimé) ne sont plus dessinées — `OpenLauncherHotkey()` sortie silencieuse, aucun journal
 (voir `docs/ngpu_core.md`, « Non fait »). Remplacement par les **vraies fenêtres Xbox du HUD de XAM**
 (boîte de message du palier N2), comme le veut l'utilisateur (pas de menus façon Xenia-canary).
 
@@ -1134,9 +1134,9 @@ statut bibliothèque) ne sont plus dessinées — `OpenLauncherHotkey()` sortie 
   d'interface, sans sémantique de profil) ; hors mode profil, `DASH_XAM_REDIRECT` s'ajoute à cette liste de base
   au lieu de la remplacer.
 - `common/src/dash_xam_hud_ui.{cpp,h}` (`dash::hudui`) : thread invité **unique** (`XHostThread`, motif des tests)
-  et file de demandes (une seule boîte à la fois, sérialisées) ; `Init(ks, imgui_available)` appelé de
-  `OnPostSetup` **après** `dash::xamui::Init` — ne s'active que sans ImGui disponible et avec `DASH_XAM_MODULE`.
-- `dash_xam_ui.cpp` : quand `imgui_drawer()` est nul, `Init` journalise le repli (plus de silence).
+  et file de demandes (une seule boîte à la fois, sérialisées) ; `Init(ks)` appelé de
+  `OnPostSetup` — ne s'active qu'avec `DASH_XAM_MODULE`.
+- `dash_xam_ui.cpp` : supprimé (fenêtres ImGui retirées) ; la progression passe uniquement par le HUD de XAM.
 
 ### Utilisation : progression de construction
 
@@ -1164,5 +1164,5 @@ statut bibliothèque) ne sont plus dessinées — `OpenLauncherHotkey()` sortie 
 ### Fichiers (palier N5)
 
 Nouveaux : `common/src/dash_xam_hud_ui.{cpp,h}`. Modifiés : `common/CMakeLists.txt`,
-`common/src/{dash_app_base,dash_xam_redirect,dash_xam_ui}.{cpp,h}`, ce document, `REPRISE.md`,
+`common/src/{dash_app_base,dash_xam_redirect}.{cpp,h}` (`dash_xam_ui` supprimé depuis), ce document, `REPRISE.md`,
 `ngpu_core.md`, `nxe_jeux.md`, `recettes.md`, `technique.md`.

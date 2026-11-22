@@ -101,7 +101,7 @@ l'utilisateur au premier lancement.
 ### P4 — Versions avec XAM recompilé (17559 d'abord) (EN COURS : palier 1 FAIT, palier 2 prototype)
 - Dashboard 17559 + XAM 17559 recompilés ; XAM comme module ReXGlue (`[[modules]]`), ses exports
   remplaçant ceux du HLE ; démarrage de XAM (threads système, notifications, Guide).
-- Les remplaçants ImGui (`dash_xam_ui.cpp`) ne servent plus pour ces versions.
+- Les remplaçants ImGui (`dash_xam_ui.cpp`) sont retirés (rendu natif seul) ; succès = XAM du firmware, pas encore relié au Guide.
 - **Fait** : Dashboard 17559 porté par l'outil (`dashboards/2.0.17559.0/`, 38 105 fonctions, compile, démarre ; 3 correctifs
   `common/` : image en lecture/écriture, `KeGetImagePageTableEntry`, `KeQueryInterruptTime`) ; XAM 17559 recompilé
   (`tools/codegen_module.py`, 19 972 fonctions, `libdash_xam.so`) et **chargé avec son point d'entrée dans le même processus

@@ -358,7 +358,7 @@ u32 XamIsXbox1TitleId_entry(u32 title_id) {
   return (title_id & 0xFFFF) < 0x7D0;
 }
 
-// Succès d'un jeu avec leurs images, pour l'écran de remplacement de XAM (dash_xam_ui.cpp).
+// Succès d'un jeu avec leurs images, (l'ancien écran ImGui de remplacement a été retiré ; succès = XAM du firmware, pas encore relié au Guide).
 struct TitleView {
   std::u16string name;
   std::vector<std::pair<gpd::Achievement, std::vector<uint8_t>>> items;

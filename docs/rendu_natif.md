@@ -466,7 +466,7 @@ Inchangé/non revérifié : `Release/AddRef` (`9212B950/B8D8`), `SetSamplerState
 2. Viewport/scissor (XUI rogne les listes), profondeur/stencil, cull, états d'échantillonnage (`SetSamplerState` : filtre linéaire/bord par défaut), mips, cubes/3D.
 3. Autres chemins de dessin : `DrawIndexedVerticesUP`, `DrawVertices*`/`SetStreamSource` + `SetIndices`, vidéo (A7, memexport).
 4. Formats de sommet rares (10_11_11, 2_10_10_10, 16 bits normalisés), `Lock/Unlock` des textures (détection de modification par hachage une fois par image).
-5. Pas de recouvrement ImGui en mode détaché (écrans XAM de remplacement `dash_xam_ui.cpp`, lanceur F5 : invisibles tant qu'il n'y a pas de `ImmediateDrawer` hôte) ;
+5. Pas de recouvrement ImGui en mode détaché (rendu natif seul) : les fenêtres ImGui (`dash_xam_ui.cpp`) ont été retirées ; succès = XAM du firmware, pas encore relié au Guide ;
    le curseur/les entrées clavier passent par la fenêtre du SDK (inchangé).
 6. Le modèle par adresse fixe vaut pour 6770 seulement ; la dérivation par motif de code (13604/17559, XAM) reste à faire (étape A1 bis).
 
