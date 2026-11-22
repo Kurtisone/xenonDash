@@ -479,9 +479,19 @@ void PublishOverlay() {
     }
     // Visible : au moins quelques pixels notablement opaques (une image au repos peut garder des pixels d'alpha tres faible).
     visible = pixels >= 16 && amax >= 8;
+    // Masque « interfaces systeme actives » de XAM (0x81BFCAE8 +0) : 0 -> 4 (boot) -> 0 (t=0,6 s, systeme UI pret), non nul quand le
+    // Guide ou une boite est ouvert. A 0, ce que le HUD dessine encore est le chrome de la scene de boot de l'app 252 (barre + anneau
+    // + fond atténué) que XAM laisse tourner : il ne doit ni s'afficher ni atténuer le hub. Meme signal que le portier des entrees
+    // (dash_xam_redirect.cpp, Dispatch). DASH_HUD_CHROME=1 : ancien comportement (overlay affiche des qu'il a des pixels).
+    uint32_t ui_mask = 0;
+    if (auto* ks = rex::system::kernel_state())
+      ui_mask = __builtin_bswap32(*reinterpret_cast<const volatile uint32_t*>(ks->memory()->virtual_membase() + 0x81BFCAE8u));
+    static const bool keep_chrome = std::getenv("DASH_HUD_CHROME") != nullptr;
+    if (!keep_chrome && ui_mask == 0) visible = false;
     bx0 = x0; by0 = y0; bx1 = x1; by1 = y1;
     if (std::getenv("DASH_HUD_STATS") && (g.frames % 60 == 1 || Evlog()))
-      std::fprintf(stderr, "[hud] overlay image %llu : %zu pixels non transparents, alpha max %u, boite %u,%u - %u,%u\n", (unsigned long long)g.frames, pixels, amax, x0, y0, x1, y1);
+      std::fprintf(stderr, "[hud] overlay image %llu : %zu pixels non transparents, alpha max %u, boite %u,%u - %u,%u, masque UI %08X -> %s\n",
+                   (unsigned long long)g.frames, pixels, amax, x0, y0, x1, y1, ui_mask, visible ? "visible" : "masque");
   }
   if (const char* dm = std::getenv("DASH_HUD_DUMP")) {  // "<image>:<fichier.ppm>" : overlay sur fond gris (sans transparence) + alpha dans <fichier>.a.pgm
     char* colon = nullptr;

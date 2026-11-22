@@ -100,11 +100,34 @@ void Dispatch(Slot& s, PPCContext& ctx, uint8_t* base) {
   const bool is_state = std::string_view(s.name) == "XamInputGetState";
   const bool is_key = std::string_view(s.name) == "XamInputGetKeystrokeEx";
   if ((is_state || is_key) && ngpu::HudActive) {
-    const bool hud = ngpu::HudActive();
+    // Scene XAM ouverte = overlay visible ET masque « interfaces systeme actives » de XAM non nul (0x81BFCAE8 +0 : le portier
+    // sub_8189F0D0 refuse toute ouverture tant qu'il est non nul, cf. ShowXamGuide). Le chrome permanent du HUD rend l'overlay
+    // visible au repos : la visibilite seule ne suffit pas (mesure du 2026-11-22).
+    const uint32_t ui_mask = __builtin_bswap32(*reinterpret_cast<const volatile uint32_t*>(base + 0x81BFCAE8u));
+    const bool visible = ngpu::HudActive();
+    const bool hud = visible && ui_mask != 0;
     if (hud) wait_release.store(true);
+    if (std::getenv("DASH_HUD_INPUT_LOG")) {
+      static std::atomic<int> prev{-1};
+      const int now = (hud ? 1 : 0) | (wait_release.load() ? 2 : 0);
+      if (prev.exchange(now) != now)
+        std::fprintf(stderr, "[hud] entrees %s (overlay visible=%d masque UI=%08X attente relachement=%d, via %s)\n",
+                     (now & 3) ? "CAPTEES" : "libres", int(visible), ui_mask, int(wait_release.load()), s.name);
+    }
     if (hud || wait_release.load()) {
       if (is_key) {
-        ctx.r3.u64 = 0x10D2;  // ERROR_EMPTY
+        if (hud) {
+          ctx.r3.u64 = 0x10D2;  // ERROR_EMPTY
+          return;
+        }
+        // Apres la scene : la file de frappes du Dashboard est lue mais jetee jusqu'au relachement (KEYUP) ou file vide. Sans ce
+        // chemin, l'attente ne se levait que par XamInputGetState, que le hub n'appelle presque pas : le hub restait sourd.
+        DispatchImpl(s, ctx, base);
+        const uint32_t out = ctx.r5.u32;  // XamInputGetKeystrokeEx(r3 = &utilisateur, r4 = drapeaux, r5 = X_INPUT_KEYSTROKE*)
+        const bool empty = ctx.r3.u32 != 0;
+        const bool keyup = !empty && out && (((base[out + 4] << 8) | base[out + 5]) & 0x0002);
+        if (empty || keyup) wait_release.store(false);
+        ctx.r3.u64 = 0x10D2;
         return;
       }
       const uint32_t out = ctx.r4.u32;
