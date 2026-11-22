@@ -49,6 +49,15 @@ EOF
   ./tools/make_appimage.sh 2.0.13604.0-xam` — sortie fixe `out/appimage/XenonDash-Kinect.AppImage`
   (une seule AppImage, demande utilisateur ; le nom ne varie plus). `appimagetool` réclame `file`
   et `rsvg-convert` (paquet `librsvg2-bin`).
+- **Validation minimale du XMB (procédure éprouvée, 2026-11-22)** : lancer `Xvfb :N -screen 0 1280x720x24
+  -fbdir <dossier> &`, puis le dash avec `DISPLAY=:N DASH_AUDIO=nop DASH_XAM_MODULE=2 DASH_PROFILE_MODE=xam
+  VK_ICD_FILENAMES=/usr/share/vulkan/icd.d/lvp_icd.json LD_LIBRARY_PATH=<sdk>/lib
+  --game_data_root=~/.local/share/xenondash/2.0.13604.0-xam --gpu_plugin=xenos` (en arrière-plan).
+  Attendre **60 s**, puis `xdotool windowfocus $(xdotool search --onlyvisible . | tail -1)`, attendre
+  5 s, capturer avec `tools/xwd2png.py <dossier>/Xvfb_screen0 <out.png>` et lire l'image. Sans le focus
+  ou avant 60 s, la capture est noire même pour le build de référence. Résultat attendu : XMB (Xbox LIVE,
+  My Xbox, Welcome, Getting Started, Kinect for Xbox 360, Family First). Vérifié le 2026-11-22 : build de
+  référence `out/build/native/dash` et build du fork (`xenondash-sdk` f2c7948) donnent la même capture.
 - **Banc visuel (conteneur)** : `Xvfb :N -screen 0 1280x720x24 -fbdir <dossier>` (créer le dossier
   et `/tmp/.X11-unix` chmod 1777 au préalable), capture par `tools/xwd2png.py <fbdir>/Xvfb_screen0
   <out.png>`, `VK_ICD_FILENAMES=…/lvp_icd.json` (lavapipe). Le GPU réel ne peut pas présenter sur
