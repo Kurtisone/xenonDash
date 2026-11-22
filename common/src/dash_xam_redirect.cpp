@@ -103,9 +103,12 @@ void Dispatch(Slot& s, PPCContext& ctx, uint8_t* base) {
     // Scene XAM ouverte = overlay visible ET masque « interfaces systeme actives » de XAM non nul (0x81BFCAE8 +0 : le portier
     // sub_8189F0D0 refuse toute ouverture tant qu'il est non nul, cf. ShowXamGuide). Le chrome permanent du HUD rend l'overlay
     // visible au repos : la visibilite seule ne suffit pas (mesure du 2026-11-22).
+    // Même critère que le compositeur (hud_front.cpp, PublishOverlay) : masque +0 non nul (ouverture) ou pile de scènes +36 >= 2
+    // (Guide ou boîte empilé sur la scène de boot ; le masque retombe à 0 Guide affiché).
     const uint32_t ui_mask = __builtin_bswap32(*reinterpret_cast<const volatile uint32_t*>(base + 0x81BFCAE8u));
+    const uint32_t depth = __builtin_bswap32(*reinterpret_cast<const volatile uint32_t*>(base + 0x81BFCAE8u + 36));
     const bool visible = ngpu::HudActive();
-    const bool hud = visible && ui_mask != 0;
+    const bool hud = visible && (ui_mask != 0 || depth >= 2);
     if (hud) wait_release.store(true);
     if (std::getenv("DASH_HUD_INPUT_LOG")) {
       static std::atomic<int> prev{-1};
@@ -495,34 +498,8 @@ bool ShowXamGuide(uint32_t user_index, int wait_ms) {
   *counter = 0;
   REXLOG_INFO("[guide] compteur « interfaces systeme actives » (0x{:08X}) : {} -> 0 le temps de l'appel",
               counter_addr, counter_before);
-  // Activation de l'interface système : sur console, le noyau annonce l'ouverture du shell à l'app 254 par le
-  // message 0x80000012 (traité par sub_81894D50 en loc_81894F3C : DACs, HAL, puis sub_8189F050(1) qui arme
-  // UIstate+176 et libère l'événement +192). SANS ce message l'ouvreur de scène sub_818A21B0 refuse toute
-  // scène du Guide (E_FAIL mesuré au banc et sur machine, 2026-11-21 : +172/+176 à zéro).
-  // Premier essai (envoi du message par sub_8187B960) : la file accepte (r3=0) mais le répartiteur du
-  // système UI ne le distribue jamais (aucun [msgdispatch] 0x80000012, état inchangé) — il filtre les
-  // messages qu'il ne connaît pas. On appelle donc le GESTIONNAIRE directement, sur ce fil invité, avec
-  // les mêmes arguments que la distribution (le chemin 0x80000012 ne lit ni r4 ni r5).
-  if (PPCFunc* handler = ks->function_dispatcher()->GetFunction(0x81894D50u)) {
-    PPCContext mctx = *ts->context();
-    mctx.r3.u64 = 0x80000012u;
-    mctx.r4.u64 = 0;
-    mctx.r5.u64 = 0;
-    handler(mctx, base);
-  } else {
-    REXLOG_WARN("[guide] sub_81894D50 (gestionnaire app 254) introuvable dans le répartiteur");
-  }
-  // +172 = « pipeline d'affichage prêt » : posé sur console par l'init vidéo de XAM (sub_8189F860 /
-  // sub_8189E460, relues de VdGetCurrentDisplayInformation) — une chaîne D3D que notre rendu natif
-  // ngpu remplace et qui n'est donc jamais appelée. Le rendu EST prêt (le hub s'affiche) : poser le
-  // drapeau est la déclaration fidèle de notre état. L'ouvreur de scène exige +172 != 0 et +176 != 0.
-  {
-    auto* st = reinterpret_cast<volatile uint32_t*>(base + 0x81BFCAE8u);
-    st[43] = __builtin_bswap32(1u);  // +172
-    REXLOG_INFO("[guide] interface système ON (sub_81894D50 0x80000012 + pipeline prêt) ; état UI "
-                "+172={:08X} +176={:08X} +216={:08X}",
-                __builtin_bswap32(st[43]), __builtin_bswap32(st[44]), __builtin_bswap32(st[54]));
-  }
+  // Plus de message 0x80000012 envoyé à la main ni de +172 forcé : avec XeKeysGetStatus=0x4, le fil du HUD de XAM
+  // (sub_818A2F90 -> sub_818A2C98) pose lui-même +172/+176 (mesure du 2026-11-22).
   REXLOG_INFO("[guide] XamShowGuideUI appelle (utilisateur {})", user_index);
   Dispatch(*slot, ctx, base);
   if (counter_before != 0) *counter = __builtin_bswap32(counter_before);
@@ -641,6 +618,8 @@ void CallModuleImport(ModuleImport& imp, PPCContext& ctx, uint8_t* base) {
     ctx.r3.u64 = 0;
     return;
   }
+  if (std::string_view(imp.name) == "XamAppUnloadSelf")
+    REXLOG_INFO("[xamredir] XamAppUnloadSelf lr={:08X}", (uint32_t)ctx.lr);  // 0x913EC1A4 : sub_913EC0C8 (+92 = 0) ; sinon sub_913EA4C0
   // Frappes données au HUD (XamInputGetKeystrokeHud(utilisateur, X_INPUT_KEYSTROKE*)) : journal de chaque réponse non vide.
   if (std::string_view(imp.name) == "XamInputGetKeystrokeHud") {
     const uint32_t user = ctx.r3.u32, out = ctx.r4.u32;

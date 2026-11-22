@@ -125,7 +125,7 @@ REX_HOOK_RAW(__imp__ObReferenceObject) {
   auto lock = rex::thread::global_critical_region::AcquireDirect();
   if (static_cast<uint32_t>(header->wait_list_flink) != rex::system::kXObjSignature) return;
   auto object = REX_KERNEL_OBJECTS()->LookupObject<rex::system::XObject>(header->wait_list_blink);
-  if (object) object->RetainHandle();
+  if (object && object->guest_object() == ea) object->RetainHandle();  // en-tête périmé : voir ObDereferenceObject
 }
 
 // ExCreateThread avec le drapeau 0x80 : la console rend le POINTEUR de l'objet fil (et non un handle) avec une référence
@@ -169,6 +169,27 @@ REX_HOOK_RAW(__imp__ObDereferenceObject) {
                     static_cast<uint32_t>(ctx.lr));
       ctx.r3.u64 = 0;
       return;
+    }
+    // En-tête périmé : la mémoire invitée d'un objet natif libéré garde la signature du SDK (kXObjSignature) et son
+    // ancien handle ; XAM la réutilise pour un objet initialisé sans appel au noyau (KeInitialize* en ligne). Le handle,
+    // lui, a pu être réattribué entre-temps : le SDK libérait alors le handle d'un AUTRE objet. Constaté le 2026-11-22 :
+    // ObDereferenceObject(0x30199010) depuis lr=0x818C3F2C libérait le handle du module hud.xex (son LDR garde le handle),
+    // repris aussitôt par un événement : XexGetModuleSection(hud) -> STATUS_INVALID_HANDLE, toute ressource
+    // section://@0,hud# en E_FAIL (table de chaînes, GuideMain.xur) et le Guide se refermait (2 démarrages sur 5).
+    // Un objet atteint par l'en-tête doit avoir CE pointeur natif ; sinon l'en-tête est périmé et rien n'est libéré.
+    auto* hd = reinterpret_cast<rex::system::X_DISPATCH_HEADER*>(base + ea);
+    if (static_cast<uint32_t>(hd->wait_list_flink) == rex::system::kXObjSignature) {
+      const uint32_t handle = hd->wait_list_blink;
+      auto o = REX_KERNEL_OBJECTS()->LookupObject<rex::system::XObject>(handle);
+      if (o && o->guest_object() != ea) {
+        static std::atomic<int> n{0};
+        if (n.fetch_add(1) < 8)
+          REXLOG_WARN("[kernel] ObDereferenceObject(0x{:08X}) : en-tête périmé (handle 0x{:08X} = objet de type {} "
+                      "en 0x{:08X}) depuis lr=0x{:08X} : ignoré",
+                      ea, handle, static_cast<uint32_t>(o->type()), o->guest_object(), static_cast<uint32_t>(ctx.lr));
+        ctx.r3.u64 = 0;
+        return;
+      }
     }
   }
   sdk(ctx, base);

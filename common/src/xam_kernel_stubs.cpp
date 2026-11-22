@@ -71,10 +71,12 @@ REX_HOOK_RAW(__imp__EtxProducerRegister) {
 // « Game Error » / « Unrecognized Disc » au démarrage (traque du 2026-11-21). Le bit 2 (0x4) est lu par deux
 // autres sites. Sur console retail ces contrôles de sécurité sont au vert : status = 0xC.
 REX_HOOK_RAW(__imp__XeKeysGetStatus) {
-  // DASH_XEKEYS_STATUS=<hex> : valeur de test (diagnostic du HUD de XAM, docs/REPRISE.md) ; défaut 0xC inchangé.
+  // Défaut 0x4 (bit 3 absent) : avec 0xC le fil du HUD de XAM (sub_818A2F90 -> sub_818A2500) ne démarre pas et le Guide
+  // ne s'affiche jamais ; avec 0x4 il démarre et remplit lui-même l'état UI (mesure du 2026-11-22).
+  // DASH_XEKEYS_STATUS=<hex> : valeur de test.
   static const uint32_t status = [] {
     const char* e = std::getenv("DASH_XEKEYS_STATUS");
-    return e ? static_cast<uint32_t>(std::strtoul(e, nullptr, 16)) : 0xCu;
+    return e ? static_cast<uint32_t>(std::strtoul(e, nullptr, 16)) : 0x4u;
   }();
   if (ctx.r3.u32) *reinterpret_cast<uint32_t*>(base + ctx.r3.u32) = __builtin_bswap32(status);
   if (++g_keystatus_calls == 1)
