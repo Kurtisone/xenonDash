@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Remplace les REX_UNIMPLEMENTED du code généré de XAM par leur équivalent C++.
 
-Le recompilateur du SDK (fork third_party/rexglue-sdk, version de la révision courante) n'émet pas trois
+Le recompilateur du SDK (fork third_party/xenondash-sdk, version de la révision courante) n'émet pas trois
 instructions présentes dans XAM 13604 : `crmove` et `crnot` (manipulations de bits du registre de condition,
 dash_recomp.2.cpp) et `vavguw` (moyenne non signée de mots, dash_recomp.54.cpp). Le code généré lève alors
 `std::runtime_error`. Ce script réécrit ces lignes en C++ direct, à partir de la ligne de commentaire qui précède

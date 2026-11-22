@@ -11,7 +11,7 @@ Le noyau est sous **GPL-3.0** (voir `../LICENSE`), comme Skate1Native dont il es
 | `third_party/plume/contrib/volk` | zeux/volk | MIT (`LICENSE.md`) |
 | `third_party/plume/contrib/VulkanMemoryAllocator` | GPUOpen VulkanMemoryAllocator | MIT (`LICENSE.txt`) |
 | `third_party/smol-v/` | aras-p/smol-v | domaine public / MIT (`license.txt`) |
-| xxHash (en-tête, pris dans `third_party/rexglue-sdk/thirdparty/xxHash`) | Yann Collet | BSD-2 |
+| xxHash (en-tête, pris dans `third_party/xenondash-sdk/thirdparty/xxHash`) | Yann Collet | BSD-2 |
 
 Aucun fichier de jeu, shader extrait ou traduit, ni capture n'est versionné ici : les shaders SPIR-V sont produits sur la machine de
 l'utilisateur par XenosRecomp à partir de ses propres fichiers.

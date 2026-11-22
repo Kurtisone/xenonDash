@@ -2,7 +2,7 @@
 
 Date : 2026-11-08. Inventaire en lecture seule de `../Skate1Recompiled` (« Skate1Native », dépôt `Kurtisone/Skate1Recompiled`)
 et de `../TrialsReVolution` (« Trials: ReVolution Collection », dépôt `Kurtisone/Trials-ReVolution-Collection`), comparés au fork SDK
-de XenonDash (`third_party/rexglue-sdk`, branche `xenondash`) et à `native_gpu/` (P7, [rendu_natif.md](rendu_natif.md)).
+de XenonDash (`third_party/xenondash-sdk`, branche `xenondash`) et à `native_gpu/` (P7, [rendu_natif.md](rendu_natif.md)).
 Rien n'a été modifié dans les deux projets voisins. Les essais d'application de correctifs ont été faits sur une copie
 temporaire du SDK de XenonDash (supprimée). Aucun extrait important de code GPL n'est reproduit : tout est résumé.
 
@@ -31,7 +31,7 @@ temporaire du SDK de XenonDash (supprimée). Aucun extrait important de code GPL
 | Point | Constat |
 |---|---|
 | Jeu | skate (EA Black Box, 2007), `game/default.xex` extrait d'une ISO par `tools/extract_iso.py` (6,4 Go de `game/`). XDK D3D 2.0.5632 lié statiquement |
-| SDK | `third_party/rexglue-sdk` **vendorisé** (pas de sous-module, 1,1 Go avec sa construction), v0.10.0 + travaux de `rexglue-skate3` (mchughalex) + changements propres (historique `Kurtisone/rexglue-skate3`, branche `skate1-dev`, jusqu'à `94cf105`). Aucun correctif séparé : il faut comparer par `diff` à la 0.10.0 |
+| SDK | `third_party/xenondash-sdk` **vendorisé** (pas de sous-module, 1,1 Go avec sa construction), v0.10.0 + travaux de `rexglue-skate3` (mchughalex) + changements propres (historique `Kurtisone/rexglue-skate3`, branche `skate1-dev`, jusqu'à `94cf105`). Aucun correctif séparé : il faut comparer par `diff` à la 0.10.0 |
 | Dépôt | ~49 commits, un seul auteur (Kurtisone). Pas de sous-modules : tout est copié dans `third_party/` (`libadrenotools`, `plume`, `smol-v`, `XenosRecomp`, SDK) |
 | Génération | `skate1_manifest.toml` (sdk 0.10.0, entrée `game/default.xex`) + `config/skate1_functions.toml` (509 lignes : bornes de fonctions, setjmp/longjmp) ; `rexglue codegen` ≈ **9 min**, sortie `generated/` 266 Mo (`.text` ~50 % plus gros que Skate 2) |
 | Exécution | `config/skate1.runtime.toml` (47 lignes : touches, `quit_dialog`, options GPU émulé de repli) |
@@ -52,7 +52,7 @@ conteneur, Android (`tools/android/`, `libadrenotools`), `tools/native_replay` (
 |---|---|
 | Jeux | Trials HD (`5841095A`, XEX 0.0.1.2), Evolution (`58410AAD`, 0.0.0.3), Fusion (`58411401`, 0.0.0.3), jeux XBLA dont le seul `default.xex` est tiré du paquet STFS (`Content/0000000000000000/<TitleID>/000D0000`) |
 | Structure | `games/<jeu>/` : `<jeu>_manifest.toml`, `codegen.toml` (setjmp/longjmp, fibres `[rexcrt]`), `functions.toml` (HD 112 lignes, Evo 13, Fusion 19), `missing_funcs.toml` (Evo 171, Fusion 243), `src/` (main, `port_defaults`, `input_options`, `frame_stats`, `draw_distance`, HD : `fps_unlock`, `dof_option`) ; `games/shared/src` (toast de succès, retour au lanceur, modes de qualité, fenêtre, garde FPE, export des succès, limiteur) ; `games/shared/native_gpu` (rendu natif par flux de commandes, 5 266 lignes) ; `src/` = **lanceur** ImGui/SDL (accueil, installation de paquets, DLC, sauvegardes, succès, raccourci Steam) ; `third_party/trg-launcher`, `plume`, `libadrenotools`, `smol-v` ; `tools/` (`setup_sdk.sh`, `trials_extract.cpp`, `native/` shaders) |
-| SDK | `tools/setup_sdk.sh` : clone de `rexglue/rexglue-sdk`, `c94f5eb` (v0.10.0), SDL 3.4.14, puis `git apply` de `sdk-patches/linux-android/*.patch` (tampon de hachage pour ne pas ré-appliquer). Windows : un SDK de TekRantGaming (FSR 1, NIS) hors dépôt, plus `sdk-patches/0001..0021` via `git am` |
+| SDK | `tools/setup_sdk.sh` : clone de `rexglue/xenondash-sdk`, `c94f5eb` (v0.10.0), SDL 3.4.14, puis `git apply` de `sdk-patches/linux-android/*.patch` (tampon de hachage pour ne pas ré-appliquer). Windows : un SDK de TekRantGaming (FSR 1, NIS) hors dépôt, plus `sdk-patches/0001..0021` via `git am` |
 | Build | `build-linux.sh --packages <dossier>` : conteneur Ubuntu 22.04 (clang 20), **16 Go de RAM, 40 Go par jeu**, « about half an hour » de recompilation par jeu ; `dist/` 149 Mo, `out/` 3,2 Go ici, `games/trials_fusion/generated` 240 Mo. Vérification du jeu par **TitleID** du paquet (message d'erreur « that is another game »), version du XEX attendue affichée (`games.cpp`) mais pas de hachage |
 | Rendu | Défaut : **émulation GPU de ReXGlue** (backend Vulkan, `render_target_path_vulkan`) avec les 21 correctifs. En option, rendu natif piloté par le flux de commandes (`native_gpu_render`, Fusion seulement, Turnip T30, dépôt `docs/native_port.md`) : 45 FPS sur la première piste sous RADV, mémoire-export, textures virtuelles, ombres, éclairage corrigés au fil des journaux |
 | Vérifié | Fusion : paquet → binaire Linux → piste sur AMD ; Android (Odin 2). HD et Evolution **jamais construits** sous Linux |
@@ -65,9 +65,9 @@ rendu FSR/NIS (Windows), build conteneur, Android.
 
 ### 1.3 Fork SDK de XenonDash et `native_gpu/`
 
-- `third_party/rexglue-sdk` : `c94f5eb` + 6 commits (noyau et runtime génériques : table des fonctions dans le tas de l'image, clavier/souris
+- `third_party/xenondash-sdk` : `c94f5eb` + 6 commits (noyau et runtime génériques : table des fonctions dans le tas de l'image, clavier/souris
   synthétisés, arguments u64 noyau/XAM, imports sans thunk ignorés au codegen, chargement de modules `libXXX.so` à côté de l'exécutable,
-  DPC `KeInsertQueueDpc` + HMAC-SHA1). Doublés par `patches/rexglue-sdk-000{1,2,3}-*.patch` + `patches/xenosrecomp-dash360.patch`.
+  DPC `KeInsertQueueDpc` + HMAC-SHA1). Doublés par `patches/xenondash-sdk-000{1,2,3}-*.patch` + `patches/xenosrecomp-dash360.patch`.
 - `native_gpu/` (5 026 lignes, option `DASH_NATIVE_GPU`) : écrit sans code d'UnleashedRecomp (MIT/BSD seulement), Vulkan direct, 3 281
   enveloppeurs de fonctions D3D du Dashboard 6770 (symboles forts sur alias faibles `sub_XXXXXXXX`), GPU nul + vblank, **aucune
   modification du SDK** (le mode « détaché » suffit).
@@ -240,7 +240,7 @@ pour les jeux ayant un profil natif ; avec repli explicite sinon ».
 
 ### 4.3 Proposition : un SDK unifié
 
-Un seul dépôt `rexglue-sdk` (fork Forgejo, branche `xenondash`) en **série de correctifs ordonnée**, chaque correctif avec son rôle et son
+Un seul dépôt `xenondash-sdk` (fork Forgejo, branche `xenondash`) en **série de correctifs ordonnée**, chaque correctif avec son rôle et son
 interrupteur (cvar ou option CMake), appliquée au-dessus de `c94f5eb` :
 
 1. `generic-runtime-*` (les 6 commits XenonDash, tels quels) ;
@@ -408,11 +408,11 @@ Jalons : « SDK unifié construit » vers 10 j ; « Skate rendu par le noyau com
 `skate1_manifest.toml`, `config/*`, `src/*`, `src/native_gpu/*`, `tools/d3d/*`, `tools/steamdeck/Containerfile`, SDK vendorisé comparé à `c94f5eb`.
 `TrialsReVolution` : `README.md`, `BUILDING.md`, `THIRD_PARTY_NOTICES.md`, `docs/{native_port,linux_android}.md`, `build-linux.sh`, `tools/setup_sdk.sh`,
 `sdk-patches/**`, `games/**` (hors `generated/`), `src/*`, `tools/native/xenosrecomp.patch`, `tools/linux/Containerfile`.
-XenonDash : `PLAN.md` (P7/P8), `README.md`, `docs/rendu_natif.md`, `native_gpu/`, `patches/`, historique de `third_party/rexglue-sdk`.
+XenonDash : `PLAN.md` (P7/P8), `README.md`, `docs/rendu_natif.md`, `native_gpu/`, `patches/`, historique de `third_party/xenondash-sdk`.
 
 ## 8. Avancement : SDK unifié et XenosRecomp unifié (P8, étapes 2 et 2b, 2026-11-12)
 
-### 8.1 SDK unifié : branche `unified` du fork (`third_party/rexglue-sdk`)
+### 8.1 SDK unifié : branche `unified` du fork (`third_party/xenondash-sdk`)
 
 Branche `unified` partant de `xenondash` (`4af94a8`, non réécrite), poussée sur le remote `xenondash`. 11 commits, un par correctif
 d'origine (auteur d'origine conservé : tous de Kurtisone) :
@@ -470,10 +470,10 @@ Non rejoués : `tools/test_appimage.sh`, `DASH_NATIVE_GPU=ON`, Skate et Fusion (
 lancer la validation directement dans `dashboards/<version>` réécrit leurs `generated/` (régénérés ensuite avec `sdk/`, sans perte) :
 d'où `--dest` sur une copie.
 
-**Bascule** : le sous-module `third_party/rexglue-sdk` du superprojet pointe sur `unified` ; `sdk/` est réinstallé depuis `unified`
+**Bascule** : le sous-module `third_party/xenondash-sdk` du superprojet pointe sur `unified` ; `sdk/` est réinstallé depuis `unified`
 (`sdk/bin/rexglue --version` : `0.10.0.19-dev.g091e6d3`). L'ancien `sdk/` est sauvegardé dans `work/sdk-xenondash-backup/` (non versionné).
 Les projets de Dashboard déjà construits régénèrent leur code au prochain build (le binaire `rexglue` a changé).
-`patches/rexglue-sdk-000{1,2,3}-*.patch` restent valables comme historique mais ne sont plus à appliquer.
+`patches/xenondash-sdk-000{1,2,3}-*.patch` restent valables comme historique mais ne sont plus à appliquer.
 
 ### 8.2 XenosRecomp unifié : `patches/xenosrecomp/` + `tools/build_xenosrecomp.sh`
 

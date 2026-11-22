@@ -22,11 +22,11 @@ Notes détaillées des agents (non versionnées, `work/notes/`) : `xam13604-AVAN
 ## Environnement de compilation (hors poste de développement)
 
 Sur une machine sans `clang`/`cmake`/`ninja` (SteamOS, `/usr` non inscriptible), tout passe par
-**podman**, avec une image dérivée de `localhost/rexglue-sdk-builder` :
+**podman**, avec une image dérivée de `localhost/xenondash-sdk-builder` :
 
 ```sh
 podman build -t xd-builder:latest -f - . <<'EOF'
-FROM localhost/rexglue-sdk-builder:latest
+FROM localhost/xenondash-sdk-builder:latest
 USER root
 RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
       libvulkan-dev libxkbcommon-dev xxhash vulkan-tools xvfb mesa-vulkan-drivers \
@@ -34,10 +34,10 @@ RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-ins
 EOF
 ```
 
-- **Sous-modules** : `third_party/rexglue-sdk` doit être initialisé *avec les siens* :
-  `git -C third_party/rexglue-sdk submodule update --init --recursive --depth 1`. Sans eux, le
+- **Sous-modules** : `third_party/xenondash-sdk` doit être initialisé *avec les siens* :
+  `git -C third_party/xenondash-sdk submodule update --init --recursive --depth 1`. Sans eux, le
   configure échoue sur `install TARGETS given target "xxhash"`.
-- **SDK** : `cmake -S third_party/rexglue-sdk -B third_party/rexglue-sdk/out/build/linux-amd64 \
+- **SDK** : `cmake -S third_party/xenondash-sdk -B third_party/xenondash-sdk/out/build/linux-amd64 \
   -G "Ninja Multi-Config" -DCMAKE_INSTALL_PREFIX=$PWD/sdk`, puis
   `cmake --build … --config Release --target install` (≈ 10 min, 8 tâches). Après une modification
   du SDK : `cmake --build . --config Release` puis recopier `out/linux-amd64/Release/librexruntime.so`
@@ -112,7 +112,7 @@ EOF
 - `tools/dash_shaders.py` attend la sortie de `xxhsum` ≤ 0.8.1 ; xxhash ≥ 0.8.2 écrit autrement.
 - Glyphe `U+E00A` (Gamerscore) : absent des trois `.xtt` fournis — carré vide dans le bandeau.
   Voir `docs/technique.md`, « Non résolu ».
-- Le fork du SDK est le sous-module `third_party/rexglue-sdk` (branche `unified`) ; après
+- Le fork du SDK est le sous-module `third_party/xenondash-sdk` (branche `unified`) ; après
   modification : reconstruire, réinstaller dans `sdk/`, commiter le sous-module PUIS le dépôt.
 - Les instrumentations dans le code GÉNÉRÉ (`dashboards/*/generated/**`) sont non versionnées et
   perdues à la régénération — y mettre des sondes temporaires seulement ; le correctif durable va

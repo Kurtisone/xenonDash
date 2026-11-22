@@ -1140,7 +1140,7 @@ qui explique un arrêt net sans trace applicative. Le `SIGBUS` observé sous gdb
 
 ### Le vrai goulot : des milliers de fautes d'écriture invitées sur la même page
 
-Instrumentation de `Memory::AccessViolationCallback` (`third_party/rexglue-sdk/src/system/xmemory.cpp`).
+Instrumentation de `Memory::AccessViolationCallback` (`third_party/xenondash-sdk/src/system/xmemory.cpp`).
 Mesure en mode XAM, 15 s :
 
 ```
@@ -1960,7 +1960,7 @@ Diagnostic par énumération des périphériques (`VirtualFileSystem::DumpState`
 - au boot les chargements passaient encore, via Partition1 — vers les assets.
 
 Deux correctifs :
-1. **SDK** (third_party/rexglue-sdk, commit 766678d) : `ResolvePath` retente le chemin d'origine
+1. **SDK** (third_party/xenondash-sdk, commit 766678d) : `ResolvePath` retente le chemin d'origine
    quand la cible d'un lien symbolique ne correspond à aucun périphérique ; ajout de `DumpState()`.
 2. **hôte** (`common/src/dash_xam_runtime.cpp`) : `\Device\CdRom0` monté sur la racine des
    données (comme Partition1), pour que `game:\flash\<nom>` resolve quel que soit le lien gagnant.

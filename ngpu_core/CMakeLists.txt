@@ -41,7 +41,7 @@ file(WRITE "${NGPU_VOLK_RENAME}" "${_ngpu_rename}")
 
 # En-tete seul : XXH_INLINE_ALL. Pris dans le SDK du projet (sous-module) ou le prefixe installe.
 find_path(NGPU_XXHASH_DIR xxhash.h
-  HINTS ${CMAKE_CURRENT_SOURCE_DIR}/../third_party/rexglue-sdk/thirdparty/xxHash ${REXSDK_PREFIX}/include
+  HINTS ${CMAKE_CURRENT_SOURCE_DIR}/../third_party/xenondash-sdk/thirdparty/xxHash ${REXSDK_PREFIX}/include
   NO_DEFAULT_PATH)
 if(NOT NGPU_XXHASH_DIR)
   find_path(NGPU_XXHASH_DIR xxhash.h REQUIRED)

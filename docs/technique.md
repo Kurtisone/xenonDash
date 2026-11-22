@@ -5,7 +5,7 @@
 
 ## Présentation
 
-Recompilation statique de `dash.xex` en C++ natif avec [ReXGlue](https://github.com/rexglue/rexglue-sdk) (runtime dérivé de Xenia)
+Recompilation statique de `dash.xex` en C++ natif avec [ReXGlue](https://github.com/rexglue/xenondash-sdk) (runtime dérivé de Xenia)
 et des outils de [XenonRecomp](https://github.com/hedge-dev/XenonRecomp). Ce document a été écrit à partir du Dashboard Blades 2.0.6770.0 ; les sections
 suivantes couvrent les autres versions. **Version prioritaire aujourd'hui : Kinect 2.0.13604** (rendu natif, XAM et HUD recompilés, bibliothèque de jeux) : voir
 [xam_recompile.md](xam_recompile.md), [ngpu_core.md](ngpu_core.md) et [nxe_jeux.md](nxe_jeux.md). Les sections « Mise en place », « Contrôles » et « État actuel » ci-dessous décrivent surtout le 6770.
@@ -23,8 +23,8 @@ git clone --recursive https://github.com/hedge-dev/XenonRecomp.git third_party/X
 git -C third_party/XenonRecomp checkout ddd128bcca99fe8bfbb99bea583c972351fa6ace
 
 # Arch : sudo pacman -S --needed clang cmake ninja libxi gtk3 libxss libxtst libpulse alsa-lib libxkbcommon xorg-server-xvfb
-cmake -S third_party/rexglue-sdk --preset linux-amd64 -DCMAKE_INSTALL_PREFIX=$PWD/sdk
-cmake --build third_party/rexglue-sdk/out/build/linux-amd64 --config Release --target install
+cmake -S third_party/xenondash-sdk --preset linux-amd64 -DCMAKE_INSTALL_PREFIX=$PWD/sdk
+cmake --build third_party/xenondash-sdk/out/build/linux-amd64 --config Release --target install
 
 # Outil d'analyse XEX
 cmake -S tools/xexinfo -B tools/xexinfo/build -G Ninja -DCMAKE_BUILD_TYPE=Release \
@@ -63,7 +63,7 @@ python3 tools/xzp_alias.py work/shrdres_17559.xzp dashboards/2.0.6770.0/assets/f
 | `games.example.toml` | Modèle du registre de jeux `games.toml` (voir « Lancer des jeux ») |
 | `games/<TitleID>/` | **Recettes de jeux** (P8) : verrou sur le XEX, analyse, hooks et profil de rendu natif ; `tools/recipe_build.py` les recompile à la demande (voir « Recettes de jeux ») |
 | `ngpu_core/`, `native_gpu/` | Noyau de rendu natif Vulkan commun et sa façade D3D du Dashboard 6770 ([docs/ngpu_core.md](ngpu_core.md)) |
-| `sdk/` | SDK ReXGlue installé (compilé depuis `third_party/rexglue-sdk`, **patché**, voir plus bas) |
+| `sdk/` | SDK ReXGlue installé (compilé depuis `third_party/xenondash-sdk`, **patché**, voir plus bas) |
 | `tools/` | Outils d'analyse (Python/C++) |
 | `work/` | Sorties d'analyse (image PE décompressée, imports, candidates) |
 
@@ -691,9 +691,9 @@ celle de l'image : sans image, pas de Gamerscore.
   désenregistre la classe XUI `XuiSoundXAudio` et toutes ses scènes échouent (`0x80300004`).
 - `src/dash_app.h` : charge `dash.xex` au lieu de `default.xex`, monte `assets/flash` en `\SystemRoot`.
 
-### Patch du SDK (fork `rexglue-sdk`, branche `xenondash`)
-Ces correctifs sont 3 commits du fork (sous-module `third_party/rexglue-sdk`). Les fichiers
-`patches/rexglue-sdk-000*.patch` n'en sont que l'export, conservés comme référence (applicables
+### Patch du SDK (fork `xenondash-sdk`, branche `xenondash`)
+Ces correctifs sont 3 commits du fork (sous-module `third_party/xenondash-sdk`). Les fichiers
+`patches/xenondash-sdk-000*.patch` n'en sont que l'export, conservés comme référence (applicables
 avec `git apply` sur un clone du commit c94f5eb).
 - `src/system/xmemory.cpp` : la table des fonctions indirectes était toujours allouée dans le tas
   `0x8xxxxxxx` (jeux). `dash.xex` est chargé en `0x92000000` → on choisit le tas qui contient l'adresse.

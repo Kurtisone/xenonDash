@@ -1,4 +1,4 @@
-[submodule "third_party/rexglue-sdk"]
-	path = third_party/rexglue-sdk
-	url = forgejo:kurtisone/rexglue-sdk.git
+[submodule "third_party/xenondash-sdk"]
+	path = third_party/xenondash-sdk
+	url = forgejo:kurtisone/xenondash-sdk.git
 	branch = xenondash

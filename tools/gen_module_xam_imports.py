@@ -15,7 +15,7 @@ gen, out = sys.argv[1:3]
 
 def table(lib):
     d = {}
-    path = os.path.join(ROOT, f"third_party/rexglue-sdk/src/kernel/{lib}/export_table.inc")
+    path = os.path.join(ROOT, f"third_party/xenondash-sdk/src/kernel/{lib}/export_table.inc")
     for m in re.finditer(r"XE_EXPORT\(\s*(\w+),\s*(0x[0-9A-Fa-f]+),\s*(\w+),\s*(\w+)\)", open(path).read()):
         d[m.group(3)] = (int(m.group(2), 16), m.group(4))
     return d

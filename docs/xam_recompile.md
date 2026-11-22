@@ -32,7 +32,7 @@ le projet, sans toucher au SDK.
    la machine d'état du stockage de XAM le rappelait sans fin (8,3 millions de lignes en 90 s). Surcharge : `STATUS_SUCCESS`.
 4. **Enregistrement du module** (`dashboards/2.0.13604.0-xam/CMakeLists.txt`) : voir « Régression du SDK » ci-dessous.
 
-### Régression du SDK (fork `third_party/rexglue-sdk`)
+### Régression du SDK (fork `third_party/xenondash-sdk`)
 
 Le commit `e28335b` (8 novembre) a retiré `{{ project }}_register.cpp` du gabarit `resources/templates/codegen/sources_cmake.inja`
 pour **tous** les projets. Pour une DLL module, `generated/xam/dash_register.cpp` (qui définit `ReXModule_Register` et
@@ -183,7 +183,7 @@ du jeu) ; `game:\xam.xex` est lu depuis `assets/xam.xex`.
 
 Le recouvrement de la table de XAM avec dash.xex est corrigé. Le hub reste noir : voir « Résultat » ci-dessous.
 
-### Correctif (`third_party/rexglue-sdk`, non commité)
+### Correctif (`third_party/xenondash-sdk`, non commité)
 
 - **Codegen** : clé optionnelle `function_table_base` (TOML). Placée au niveau racine d'un fichier de configuration, ou dans
   l'entrée `[[modules]]` du manifeste (lue par `LoadFromTable`). Défaut : fin de l'image (`IMAGE_BASE + IMAGE_SIZE`).
@@ -250,7 +250,7 @@ Constats sur le run module (le journal est complet avec `DASH_ARGS=--log_flush_i
 ### Procédure (après modification du SDK)
 
 ```sh
-cd third_party/rexglue-sdk && cmake --build out/build/linux-amd64 --config Release --target install -j 6
+cd third_party/xenondash-sdk && cmake --build out/build/linux-amd64 --config Release --target install -j 6
 cd dashboards/2.0.13604.0-xam && ../../sdk/bin/rexglue codegen --ignore-stamp dash_manifest.toml
 python3 ../../tools/xam_unimpl_patch.py generated/xam
 cmake --preset linux-amd64-relwithdebinfo && cmake --build out/build/linux-amd64-relwithdebinfo -j 6
@@ -315,7 +315,7 @@ toujours, mais sans déréférencement fautif.
 | `dashboards/2.0.13604.0-xam` (module 2) | hub affiché à 60 s et 100 s (`f1.png`, `f2.png`) ; 9 threads système ; 0 FATAL |
 | `dashboards/2.0.13604.0` (HLE, même `common/`) | hub affiché à 40 s (`hle1.png`) |
 | Compilation | `2.0.13604.0` et `2.0.6770.0` : rc 0 ; `2.0.13604.0-xam` : rc 0 |
-| SDK | `third_party/rexglue-sdk` : aucun fichier modifié (instrumentation temporaire annulée par `git checkout`, `sdk/lib/librexruntime.so` md5 `769fc992…`, identique à l'état d'avant) |
+| SDK | `third_party/xenondash-sdk` : aucun fichier modifié (instrumentation temporaire annulée par `git checkout`, `sdk/lib/librexruntime.so` md5 `769fc992…`, identique à l'état d'avant) |
 
 ### Blocages restants
 
@@ -337,13 +337,13 @@ Ce palier ajoute un mécanisme de redirection configurable, sans modifier le SDK
 ### Étape 1 : mécanisme d'imports (constats)
 
 - **Codegen** : un import du Dashboard devient un appel direct `__imp__<Nom>(ctx, base)`
-  (`third_party/rexglue-sdk/src/codegen/builders/context.cpp`, `phase_register.cpp`). Le nom vient de la table d'exports du
+  (`third_party/xenondash-sdk/src/codegen/builders/context.cpp`, `phase_register.cpp`). Le nom vient de la table d'exports du
   SDK (ordinal → nom).
 - **Résolution à l'édition de liens** : `__imp__<Nom>` est fourni par le HLE du SDK (`REX_EXPORT` dans
   `src/kernel/xam/xam_ui.cpp` et voisins, dans `librexruntime.so`). Un `REX_HOOK_RAW(__imp__<Nom>)` dans l'exécutable
   l'emporte pour les appels de l'exécutable : c'est le mécanisme déjà utilisé par `common/`.
 - **Ordinaux du Dashboard** : `work/dash_imports.tsv` (43 entrées `xam.xex`, dont l'ordinal 96, non nommé). Noms :
-  `third_party/rexglue-sdk/src/kernel/xam/export_table.inc` (ex. ordinal 714 = `XamShowMessageBoxUI`).
+  `third_party/xenondash-sdk/src/kernel/xam/export_table.inc` (ex. ordinal 714 = `XamShowMessageBoxUI`).
 - **Exports de XAM recompilé à l'exécution** : `XexModule::GetProcAddress(ordinal)` (`src/system/xex_module.cpp`) lit la
   table d'exports du XEX ; `UserModule::GetProcAddressByOrdinal` la relaie. La fonction recompilée se trouve ensuite dans
   la table de fonctions du module (`FunctionDispatcher::GetFunction`). Testé : XGetVideoMode (977) → `0x818CAD18`,
@@ -432,7 +432,7 @@ Blocages classés (étape 4) :
 | `dashboards/2.0.13604.0-xam` (module, redirection et test) | compile (rc 0), hub affiché (`r5a`, `r8a`), aucun SIGSEGV ni FATAL pendant 90 s |
 | `dashboards/2.0.13604.0` (HLE) | compile (rc 0) : pas de symbole dupliqué avec les hooks de redirection |
 | `dashboards/2.0.6770.0` | compile (rc 0) |
-| SDK (`third_party/rexglue-sdk`) | aucun fichier modifié par ce palier |
+| SDK (`third_party/xenondash-sdk`) | aucun fichier modifié par ce palier |
 
 ### Fichiers
 
@@ -576,7 +576,7 @@ python3 tools/codegen_module.py work/hudproj hud_manifest.toml hud work/hud.pe 9
    appelle `VdRegisterXamGraphicsNotification` et le pipeline Vd* du noyau (`VdSwap`, `VdGetSystemCommandBuffer`), non examinés ;
    le Dashboard et le HUD partagent le même GPU émulé.
 4. **Entrées** (A/B pour la réponse) : non examinées.
-5. **Défauts du SDK contournés dans `common/`** (à corriger dans `third_party/rexglue-sdk`, puis retirer les hooks) :
+5. **Défauts du SDK contournés dans `common/`** (à corriger dans `third_party/xenondash-sdk`, puis retirer les hooks) :
    `UsbdBootEnumerationDoneEvent` de type 1 (`kernel_state.cpp:107`) ; `KeSetTimerEx`/`KeCancelTimer` stubs et
    `GetNativeObject` sans minuteries (`xobject.cpp`) ; `ObCreateObject`/`ObInsertObject` stubs ; `DrvGetContentStorageNotification`
    stub ; `AudioSystem::SubmitFrame` sans test de client nul ; `XAudioGetDucker*`/`XeKeys*` stubs ; `ObReferenceObjectByName`
@@ -592,7 +592,7 @@ python3 tools/codegen_module.py work/hudproj hud_manifest.toml hud work/hud.pe 9
 | `dashboards/2.0.13604.0-xam` | compile ; hub affiché à 45 s avec `DASH_XAM_REDIRECT=XGetVideoMode,XamShowMessageBoxUI` et le test à 30 s (`final1`) |
 | `dashboards/2.0.13604.0` (HLE, même `common/`) | compile (rc 0) ; hub affiché à 40 s (écran `:94`, `runs/hle_final.png`), aucun processus restant |
 | `dashboards/2.0.6770.0` | compile (rc 0) ; non lancé |
-| SDK (`third_party/rexglue-sdk`) | aucun fichier modifié par ce palier |
+| SDK (`third_party/xenondash-sdk`) | aucun fichier modifié par ce palier |
 
 ### Fichiers
 
@@ -671,7 +671,7 @@ mêmes arguments à chaque appel. Elle aboutit à `XeCryptRandom`, que le SDK im
   `dash_recomp.25.cpp:18792`), à l'ouverture de la boîte ; c'est la cause réelle du SIGFPE contourné au palier F par le ducker. Le
   fil `SystemHostThread` de `common/` reçoit le même appel.
 - Procédure SDK (sauvegarde de `sdk/lib/` et des 3 fichiers sources dans le scratchpad avant ; `librexruntime.so` d'avant : md5 `769fc992…`) :
-  `cd third_party/rexglue-sdk && cmake --build out/build/linux-amd64 --config Release --target install -j 6`.
+  `cd third_party/xenondash-sdk && cmake --build out/build/linux-amd64 --config Release --target install -j 6`.
 
 ### Étape 3 : imports `xam.xex` du HUD vers XAM recompilé (fait)
 
@@ -739,7 +739,7 @@ Classement, avec preuves :
 - Supprimé : `common/src/kernel_keys.cpp`.
 - Modifiés : `common/CMakeLists.txt`, `common/src/dash_xam_redirect.{h,cpp}` (`CallModuleImport`, trace), `common/src/dash_xam_runtime.cpp`
   (`XexLoadImage`, `KeBugCheck*`, `InitHost` du fil système), `dashboards/2.0.13604.0-xam/{CMakeLists.txt,dash_manifest.toml,xam_overrides.toml}`, ce document.
-- SDK (`third_party/rexglue-sdk`) : `include/rex/system/xex_module.h`, `src/system/xex_module.cpp`, `src/system/xthread.cpp`.
+- SDK (`third_party/xenondash-sdk`) : `include/rex/system/xex_module.h`, `src/system/xex_module.cpp`, `src/system/xthread.cpp`.
 
 ### Reproduire (projet XAM)
 
@@ -942,7 +942,7 @@ Captures regardées (scratchpad) : `k3_2.png`, `k5_5.png` (« Xenondashb i »), 
 - **Second conflit, réel et distinct** : `vk.xex` (`0x917D0000`, taille `0x17000`) recouvre l'image de XAM (`0x817E0000`) **par l'alias des tas 0x8/0x9 du
   SDK** (deux vues du même fichier). Preuve : le simple ajout de `vk` au manifeste faisait lire à zéro les tables de saut de XAM par le codegen (31 fichiers
   de `generated/xam` faux, SIGILL « switch case out of range » au démarrage, `sub_81896600`) ; au chargement, l'image de `vk` aurait écrasé le début de XAM.
-- **Correctifs SDK (volontaires, `third_party/rexglue-sdk`, non commités)**, sauvegarde dans le scratchpad (`n3_modules/sdkbak/` : `sdk/lib`, `sdk/bin`,
+- **Correctifs SDK (volontaires, `third_party/xenondash-sdk`, non commités)**, sauvegarde dans le scratchpad (`n3_modules/sdkbak/` : `sdk/lib`, `sdk/bin`,
   les sources d'origine ; md5 d'avant : `librexruntime.so` `7bcd7801…`, `rexglue` `65196276…`) :
   1. `include/rex/system/xmemory.h`, `src/system/xmemory.cpp` : **tas XEX 0x8 et 0x9 séparés par défaut** (la vue 0x90000000 pointe sur son propre décalage du
      fichier). `REX_ALIAS_XEX_HEAPS=1` rétablit l'ancien mode. `XexHeapsAliased()`, `GuestRangesOverlap` sans alias, pas de réservation d'alias de table.
@@ -953,7 +953,7 @@ Captures regardées (scratchpad) : `k3_2.png`, `k5_5.png` (« Xenondashb i »), 
      sans rien à faire réussit.
   4. `tests/unit/system/function_dispatcher_test.cpp` : tests d'alias ignorés en mode séparé (`SKIP`), nouveau test du mode séparé. **Non compilés ni exécutés**
      (`REXGLUE_BUILD_TESTS=OFF`).
-  Procédure : `cd third_party/rexglue-sdk && cmake --build out/build/linux-amd64 --config Release --target install -j 6` ; tous les projets qui incluent
+  Procédure : `cd third_party/xenondash-sdk && cmake --build out/build/linux-amd64 --config Release --target install -j 6` ; tous les projets qui incluent
   `kernel_state.h` doivent être recompilés (membre ajouté). Risque : le changement de défaut touche tous les projets (aucun code invité n'est censé
   s'appuyer sur l'alias, absent de la console) ; 6770 et 13604 HLE recompilés (voir Vérifications), non relancés.
 - Limites : `BaseHeap::Reset()` à chaque chargement de XEX efface la table de pages du tas (les images déjà chargées ne sont plus enregistrées) ; la fuite de
@@ -1089,7 +1089,7 @@ entrées (le HUD actif bloque le Dashboard) est inchangée. `DASH_TEST_SIGNIN=<s
 ### Reproduire
 
 ```sh
-cd third_party/rexglue-sdk && cmake --build out/build/linux-amd64 --config Release --target install -j 4        # SDK modifié (2 fichiers, voir plus bas)
+cd third_party/xenondash-sdk && cmake --build out/build/linux-amd64 --config Release --target install -j 4        # SDK modifié (2 fichiers, voir plus bas)
 cd dashboards/2.0.13604.0-xam && cmake --preset linux-amd64-relwithdebinfo -DDASH_NATIVE_GPU=ON && cmake --build out/build/linux-amd64-relwithdebinfo -j 4
 # racine de jeu de test (dash.xex copié, flash en lien, profiles/ vide) ; DASH_ROOT remplace --game_data_root=assets (input_test.sh, run_headless.sh)
 DASH_ROOT=<racine> DASH_PROFILE_MODE=xam DASH_XAM_STATE=<dossier> ... ./input_test.sh essai 25 "Up" "sleep:2" "Right" "sleep:2" "Return" ...
@@ -1114,7 +1114,7 @@ Nouveaux : `common/src/{kernel_rtl,kernel_stfs,kernel_obfuscate,kernel_localkey,
 `dashboards/2.0.13604.0-xam/src_xam_patch/xam_input_patch.cpp`.
 Modifiés : `common/CMakeLists.txt`, `common/src/{dash_app_base,dash_disc,dash_profile,dash_user,dash_xam_redirect,dash_xam_runtime,kernel_ob,kernel_stubs}.{cpp,h}`,
 `dashboards/2.0.13604.0-xam/{CMakeLists.txt,input_test.sh,run_headless.sh}` (variable `DASH_ROOT`), ce document.
-**SDK** (`third_party/rexglue-sdk`, non commité ; sauvegarde de `sdk/lib` et `sdk/bin` d'avant dans le scratchpad `n4_profile/sdkbak/`) : `include/rex/system/format.h`
+**SDK** (`third_party/xenondash-sdk`, non commité ; sauvegarde de `sdk/lib` et `sdk/bin` d'avant dans le scratchpad `n4_profile/sdkbak/`) : `include/rex/system/format.h`
 (conversions `%x/%u/%o` sur entier non signé), `src/filesystem/virtual_file_system.cpp` (`OpenFile` : création sous le parent résolu).
 
 ## Palier N5 — fenêtres du HUD appelées depuis l'hôte (progression de construction)
