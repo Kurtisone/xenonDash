@@ -678,52 +678,76 @@ bool CallerInModule(uint32_t address, std::string_view module_name) {
 //
 // Option 2 (ici) : l'écran de choix d'avatar (Guide.AvatarMiniCreator.xex, recompilé) s'ouvre à la place, par l'export
 // XamShowAvatarMiniCreatorUI (ordinal 1700) de XAM recompilé, mode 2 (celui de signin.xex). Aucun changement de titre.
-// Appelé depuis le MiniCreator (Y), l'ouverture est différée après son XamAppUnloadStack : sinon ce vidage de la pile
-// fermerait aussi le nouvel écran. Pas de boucle : le MiniCreator n'appelle XamLaunchAvatarEditor que sur Y.
+// Si XAM refuse l'ouverture (ERROR_ACCESS_DENIED : une interface système se ferme encore), elle est réessayée depuis un fil
+// invité de l'hôte (ReopenAvatarChooserLater). Depuis le MiniCreator (touche Y, suivie de son XamAppUnloadStack), elle
+// attend en plus que le module soit déchargé : ouvert avant, le nouvel écran serait vidé avec la pile (mesure du
+// 2026-11-23 : appel synchrone après XamAppUnloadStack -> 5). Pas de boucle : le MiniCreator n'appelle
+// XamLaunchAvatarEditor que sur Y.
 //
 // Option 1 (à venir, AvatarEditor.xex recompilé) : supprimer l'appel à AvatarEditorOption2 dans CallModuleImport ;
 // l'import retombe sur l'export 2011 de XAM recompilé (relance du titre AvatarEditor).
 // ---------------------------------------------------------------------------------------------------------------------
 constexpr std::string_view kAvatarMiniCreator = "Guide.AvatarMiniCreator.xex";
-std::atomic<int64_t> g_avatar_reopen_user{-1};  // utilisateur dont le choix d'avatar se rouvre après le vidage de la pile
+constexpr uint32_t kErrorAccessDenied = 5;
 
-// XamShowAvatarMiniCreatorUI(utilisateur, 2) ; code Win32 positif converti en HRESULT, comme le fait createprofile.xex
-// (sub_90106480) : les appelants de XamLaunchAvatarEditor testent r3 < 0.
-void ShowAvatarChooser(uint32_t user, PPCContext& ctx, uint8_t* base) {
+// XamShowAvatarMiniCreatorUI(utilisateur, 2) ; renvoie le code Win32 de XAM (0 : écran demandé).
+uint32_t ShowAvatarChooser(uint32_t user, PPCContext& ctx, uint8_t* base) {
   static ModuleImport show{"XamShowAvatarMiniCreatorUI", 1700};
   ctx.r3.u64 = user;
   ctx.r4.u64 = 2;
   CallModuleImport(show, ctx, base);
-  REXLOG_INFO("[avatar] option 2 : XamShowAvatarMiniCreatorUI(utilisateur {}, 2) -> 0x{:08X}", user, ctx.r3.u32);
-  if (ctx.r3.s32 > 0) ctx.r3.u64 = 0x80070000u | (ctx.r3.u32 & 0xFFFFu);
+  REXLOG_INFO("[avatar] option 2 : XamShowAvatarMiniCreatorUI(utilisateur {}, 2) -> {}", user, ctx.r3.u32);
+  return ctx.r3.u32;
 }
 
-// Vrai si l'import a été servi ici (XamLaunchAvatarEditor, ou XamAppUnloadStack du MiniCreator après Y).
-bool AvatarEditorOption2(ModuleImport& imp, PPCFunc* fn, PPCContext& ctx, uint8_t* base) {
-  const std::string_view name = imp.name;
-  const uint32_t lr = static_cast<uint32_t>(ctx.lr);
-  if (name == "XamLaunchAvatarEditor") {
-    const uint32_t user = ctx.r3.u32;
-    if (CallerInModule(lr, kAvatarMiniCreator)) {
-      g_avatar_reopen_user.store(user);
-      REXLOG_INFO("[avatar] XamLaunchAvatarEditor(utilisateur {}) depuis le MiniCreator lr={:08X} : choix rouvert après "
-                  "XamAppUnloadStack (option 2)", user, lr);
-      ctx.r3.u64 = 0;
-      return true;
+// Ouverture différée, depuis un fil invité de l'hôte : attend que le MiniCreator soit déchargé, puis réessaie tant que XAM
+// répond ERROR_ACCESS_DENIED (borne : 5 s).
+void ReopenAvatarChooserLater(uint32_t user) {
+  rex::system::KernelState* ks = g_ks.load();
+  if (!ks) return;
+  static std::mutex mu;
+  static std::vector<rex::system::object_ref<rex::system::XHostThread>> hosts;  // un fil par demande (rare), gardé
+  std::lock_guard<std::mutex> lock(mu);
+  hosts.emplace_back(new rex::system::XHostThread(ks, 256 * 1024, 0, [ks, user] {
+    auto* ts = rex::runtime::ThreadState::Get();
+    if (!ts) return 0;
+    uint8_t* base = ks->memory()->virtual_membase();
+    for (int i = 0; i < 50; ++i) {
+      std::this_thread::sleep_for(std::chrono::milliseconds(100));
+      if (ks->GetModule(kAvatarMiniCreator, true)) continue;  // MiniCreator encore chargé : la pile se vide
+      PPCContext ctx = *ts->context();
+      ctx.r1.u64 = static_cast<uint32_t>(ctx.r1.u64) - 0x100;
+      if (ShowAvatarChooser(user, ctx, base) != kErrorAccessDenied) return 0;
     }
-    REXLOG_INFO("[avatar] XamLaunchAvatarEditor(utilisateur {}) lr={:08X} -> choix d'avatar (option 2)", user, lr);
-    ShowAvatarChooser(user, ctx, base);
+    REXLOG_WARN("[avatar] option 2 : choix d'avatar non rouvert (XAM occupé après 5 s)");
+    return 0;
+  }));
+  hosts.back()->set_name("XAM choix d'avatar");
+  hosts.back()->Create();
+}
+
+// Vrai si l'import a été servi ici (XamLaunchAvatarEditor).
+bool AvatarEditorOption2(ModuleImport& imp, PPCContext& ctx, uint8_t* base) {
+  if (std::string_view(imp.name) != "XamLaunchAvatarEditor") return false;
+  const uint32_t user = ctx.r3.u32;
+  const uint32_t lr = static_cast<uint32_t>(ctx.lr);
+  if (CallerInModule(lr, kAvatarMiniCreator)) {
+    REXLOG_INFO("[avatar] XamLaunchAvatarEditor(utilisateur {}) depuis le MiniCreator lr={:08X} : choix rouvert après "
+                "son déchargement (option 2)", user, lr);
+    ReopenAvatarChooserLater(user);
+    ctx.r3.u64 = 0;
     return true;
   }
-  if (name == "XamAppUnloadStack" && g_avatar_reopen_user.load() >= 0 && CallerInModule(lr, kAvatarMiniCreator)) {
-    const int64_t user = g_avatar_reopen_user.exchange(-1);
-    fn(ctx, base);
-    const uint64_t result = ctx.r3.u64;
-    if (user >= 0) ShowAvatarChooser(static_cast<uint32_t>(user), ctx, base);
-    ctx.r3.u64 = result;
+  REXLOG_INFO("[avatar] XamLaunchAvatarEditor(utilisateur {}) lr={:08X} -> choix d'avatar (option 2)", user, lr);
+  const uint32_t err = ShowAvatarChooser(user, ctx, base);
+  if (err == kErrorAccessDenied) {
+    ReopenAvatarChooserLater(user);
+    ctx.r3.u64 = 0;
     return true;
   }
-  return false;
+  // Code Win32 positif converti en HRESULT, comme createprofile.xex (sub_90106480) : les appelants testent r3 < 0.
+  if (ctx.r3.s32 > 0) ctx.r3.u64 = 0x80070000u | (err & 0xFFFFu);
+  return true;
 }
 
 void CallModuleImport(ModuleImport& imp, PPCContext& ctx, uint8_t* base) {
@@ -759,7 +783,7 @@ void CallModuleImport(ModuleImport& imp, PPCContext& ctx, uint8_t* base) {
     REXLOG_INFO("[xamredir] module : {} (ordinal {}) : appel 1 par {}", imp.name, imp.ordinal,
                 imp.guest.load() ? "XAM recompilé" : "HLE");
   }
-  if (AvatarEditorOption2(imp, fn, ctx, base)) return;  // personnalisation de l'avatar : option 2 (voir plus haut)
+  if (AvatarEditorOption2(imp, ctx, base)) return;  // personnalisation de l'avatar : option 2 (voir plus haut)
   // Boîte de message du HUD au démarrage (« disque illisible » : ERROR_WRONG_DISK, lecteur vide) : supprimée. Renvoyer une
   // erreur (ERROR_CANCELLED) faisait arrêter la boucle d'images du HUD (vtable+44, docs : mesure du 21/11) ; on renvoie donc
   // le chemin de succès (r3 = 0). DASH_HUD_MSGBOX_KEEP=1 conserve la boîte (diagnostic).
