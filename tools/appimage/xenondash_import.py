@@ -120,6 +120,22 @@ def generate_native_shaders(root, force=False):
     return failed
 
 
+def import_system_ext(root, src):
+    """Copie la partition système étendue (system.manifest, 20352400/, 32000100/, Content/) sous <root>/SystemExtPartition.
+
+    XAM lit son index des paquets (Guide.AvatarMiniCreator.xex, etc.) dans system.manifest de cette partition ; sans elle,
+    la création d'avatar est sautée après la connexion. Sans system.manifest dans src, rien n'est copié (avertissement).
+    """
+    dst = os.path.join(root, "SystemExtPartition")
+    if not os.path.isfile(os.path.join(src, "system.manifest")):
+        pd.log(f"avertissement : pas de system.manifest dans {src} : partition système étendue non importée")
+        shutil.rmtree(dst, ignore_errors=True)
+        return
+    shutil.rmtree(dst, ignore_errors=True)
+    shutil.copytree(src, dst)
+    pd.log(f"partition système étendue importée : {dst}")
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("root", help="game_data_root à remplir (~/.local/share/xenondash/<version>)")
@@ -128,6 +144,8 @@ def main():
     ap.add_argument("--fonts-dir", help="dossier de polices XenonCLatin/XenonJKLatin/XenonSCLatin.xtt "
                                        "(sans les modules .xex d'une archive XeBuilds)")
     ap.add_argument("--shrdres-xam", help="xam.xex complet (mise à jour récente, ex. 17559) d'où tirer shrdres.xzp")
+    ap.add_argument("--system-ext", help="partition système étendue (dossier avec system.manifest, 20352400/, 32000100/, "
+                                         "Content/) ; par défaut <mise à jour>/SystemExtPartition si présent")
     ap.add_argument("--games-example", help="modèle de games.toml")
     ap.add_argument("--native-shaders", action="store_true", help="générer les shaders SPIR-V du rendu natif (si nécessaire)")
     ap.add_argument("--regen-shaders", action="store_true", help="régénérer les shaders SPIR-V du rendu natif (sans import)")
@@ -186,6 +204,11 @@ def main():
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
 
+    sys_ext = a.system_ext or (os.path.join(a.update, "SystemExtPartition") if os.path.isdir(a.update) else None)
+    if sys_ext and os.path.isdir(sys_ext):
+        import_system_ext(root, sys_ext)
+    else:
+        pd.log("avertissement : pas de partition système étendue (--system-ext) : création d'avatar indisponible")
     os.makedirs(os.path.join(root, "profiles"), exist_ok=True)  # profil par défaut : créé vierge par le Dashboard
     games = os.path.join(root, "games.toml")
     if not os.path.exists(games):
