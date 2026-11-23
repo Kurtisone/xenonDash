@@ -9,14 +9,19 @@
 //
 // Dossier du volume :
 //   Content\<XUID>\FFFE07D1\00010000\<XUID>  (paquet de profil) -> <game_data_root>/profiles/<XUID>/ (dossier du profil du Dashboard)
+//   paquet STFS existant (fichier hôte lisible, ex. les paquets système d'avatar FFFE07DF0000000x de la mise à jour, sous
+//   SystemExtPartition\Content\0000000000000000\FFFE07DF\00008000)  -> volume en lecture seule lu DANS le paquet
+//                                                                   (StfsContainerDevice du SDK : table de fichiers, blocs)
 //   autre paquet                                                -> <game_data_root>/.stfs/<chemin relatif du paquet>/
-// Ce n'est PAS un volume STFS : aucune structure STFS n'est écrite dans le paquet (seul l'en-tête l'est, par XAM), aucun
-// hachage, aucune clé de console. Un paquet créé ici n'est lisible que par ce noyau natif.
+// Hors paquets existants, ce n'est PAS un volume STFS : aucune structure STFS n'est écrite dans le paquet (seul l'en-tête l'est,
+// par XAM), aucun hachage, aucune clé de console. Un paquet créé ici n'est lisible que par ce noyau natif.
 //
 // Codes de StfsControlDevice (déduits des appelants de XAM, sub_8185EF28 / sub_8185A5B0 / sub_8185A290) :
 //   0 début d'écriture, 1 fin, 2 vérification, 3 lecture de 36 octets (empreinte du volume, comparée à l'en-tête),
 //   4 validation (36 octets), 5 interrogation d'état. Tous réussissent ; le 3 renvoie l'empreinte du dossier du volume : quand le
 //   contenu change, XAM réécrit l'en-tête et le signe avec XeKeysConsolePrivateKeySign (clé locale, kernel_localkey.cpp).
+//   Pour un paquet STFS existant, le 3 renvoie le descripteur de volume de son propre en-tête (0x379, 36 octets) : identique à
+//   celui de l'en-tête, XAM ne tente pas de le réécrire.
 
 #include <array>
 #include <atomic>
@@ -37,6 +42,8 @@
 
 #include <rex/cvar.h>
 #include <rex/filesystem/devices/host_path_device.h>
+#include <rex/filesystem/devices/host_path_entry.h>
+#include <rex/filesystem/devices/stfs_container_device.h>
 #include <rex/filesystem/entry.h>
 #include <rex/filesystem/vfs.h>
 #include <rex/hook.h>
@@ -52,6 +59,29 @@ namespace fs = std::filesystem;
 std::mutex g_mutex;
 std::unordered_map<std::string, std::string> g_registered;  // nom de périphérique -> dossier du volume
 std::unordered_map<uint32_t, std::string> g_devices;    // objet de périphérique invité -> nom
+std::unordered_map<std::string, std::array<uint8_t, 36>> g_stfs_descriptor;  // nom -> descripteur de volume (paquet STFS existant)
+
+constexpr size_t kVolumeDescriptorOffset = 0x379;  // XCONTENT_HEADER : descripteur de volume (36 octets)
+
+// Paquet STFS existant : le fichier hôte porte un en-tête signé (CON / LIVE / PIRS) ET une table de fichiers non vide. Un paquet
+// que XAM vient de créer (en-tête seul, profil neuf) n'en a pas : il garde le dossier hôte. nullptr sinon.
+std::unique_ptr<rex::filesystem::StfsContainerDevice> OpenExistingStfs(const std::string& name, const fs::path& host,
+                                                                       std::array<uint8_t, 36>* descriptor) {
+  std::error_code ec;
+  if (host.empty() || !fs::is_regular_file(host, ec) || fs::file_size(host, ec) <= kVolumeDescriptorOffset + 36) return nullptr;
+  char magic[4] = {};
+  std::ifstream in(host, std::ios::binary);
+  in.read(magic, 4);
+  if (std::memcmp(magic, "CON ", 4) && std::memcmp(magic, "LIVE", 4) && std::memcmp(magic, "PIRS", 4)) return nullptr;
+  in.seekg(kVolumeDescriptorOffset);
+  in.read(reinterpret_cast<char*>(descriptor->data()), descriptor->size());
+  if (!in) return nullptr;
+  auto dev = std::make_unique<rex::filesystem::StfsContainerDevice>(name, host);
+  if (!dev->Initialize()) return nullptr;
+  auto* root = dev->ResolvePath("");
+  if (!root || root->children().empty()) return nullptr;
+  return dev;
+}
 
 uint32_t Be32(const uint8_t* base, uint32_t ea) { return __builtin_bswap32(*reinterpret_cast<const uint32_t*>(base + ea)); }
 void PutBe32(uint8_t* base, uint32_t ea, uint32_t v) { *reinterpret_cast<uint32_t*>(base + ea) = __builtin_bswap32(v); }
@@ -130,8 +160,13 @@ REX_HOOK_RAW(__imp__StfsCreateDevice) {
   const std::string name(reinterpret_cast<const char*>(base + name_ptr), name_len);
 
   std::string package;
-  if (auto file = REX_KERNEL_OBJECTS()->LookupObject<rex::system::XFile>(handle)) package = file->entry()->absolute_path();
+  fs::path host;
+  if (auto file = REX_KERNEL_OBJECTS()->LookupObject<rex::system::XFile>(handle)) {
+    package = file->entry()->absolute_path();
+    if (auto* he = dynamic_cast<rex::filesystem::HostPathEntry*>(file->entry())) host = he->host_path();
+  }
   const fs::path dir = package.empty() ? fs::path() : VolumeDir(package);
+  const bool profile = dir.parent_path().filename() == "profiles";
   REXLOG_INFO("[stfs] StfsCreateDevice : périphérique '{}' (paquet '{}', extension {} octets) -> volume {}", name, package, ext_size,
               dir.string());
   if (name.empty() || dir.empty()) {
@@ -147,6 +182,22 @@ REX_HOOK_RAW(__imp__StfsCreateDevice) {
     if (it != g_registered.end() && it->second != dir.string()) {
       REX_KERNEL_FS()->UnregisterDevice(name);
       g_registered.erase(it);
+      g_stfs_descriptor.erase(name);
+    }
+    std::array<uint8_t, 36> descriptor{};
+    if (!g_registered.count(name) && !profile) {
+      if (auto stfs = OpenExistingStfs(name, host, &descriptor)) {
+        const size_t files = stfs->ResolvePath("")->children().size();
+        if (!REX_KERNEL_FS()->RegisterDevice(std::move(stfs))) {
+          REXLOG_ERROR("[stfs] impossible de monter le paquet '{}' sur {}", name, host.string());
+          ctx.r3.u64 = 0xC0000001u;
+          return;
+        }
+        REXLOG_INFO("[stfs] paquet STFS existant {} : volume en lecture seule lu dans le paquet ({} entrées à la racine)",
+                    host.string(), files);
+        g_registered[name] = dir.string();
+        g_stfs_descriptor[name] = descriptor;
+      }
     }
     if (!g_registered.count(name)) {
       std::error_code ec;
@@ -183,15 +234,19 @@ REX_HOOK_RAW(__imp__StfsControlDevice) {
   if (n.fetch_add(1) < 12) REXLOG_INFO("[stfs] StfsControlDevice(0x{:08X}, {}, 0x{:08X})", device, code, buffer);
   if (code == 3 && buffer) {
     std::string dir;
+    std::array<uint8_t, 36> h{};
+    bool stfs = false;
     {
       std::lock_guard lock(g_mutex);
       auto it = g_devices.find(device);
       if (it != g_devices.end()) {
+        auto d = g_stfs_descriptor.find(it->second);
+        if (d != g_stfs_descriptor.end()) h = d->second, stfs = true;
         auto reg = g_registered.find(it->second);
         if (reg != g_registered.end()) dir = reg->second;
       }
     }
-    const auto h = dir.empty() ? std::array<uint8_t, 36>{} : VolumeDigest(dir);
+    if (!stfs && !dir.empty()) h = VolumeDigest(dir);
     std::memcpy(base + buffer, h.data(), h.size());
   }
   ctx.r3.u64 = 0;
