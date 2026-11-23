@@ -459,6 +459,8 @@ void PublishOverlay() {
   std::vector<uint8_t> rgba;
   uint32_t w = 0, h = 0;
   if (!g.dest || !g.core->renderer().ReadResolved(g.dest, rgba, w, h)) return;
+  // La cible resolue est en ordre memoire BGRA : on la remet en RGBA une fois ici.
+  for (size_t i = 0; i < size_t(w) * h; ++i) std::swap(rgba[4 * i], rgba[4 * i + 2]);
   bool visible = false;
   {
     size_t pixels = 0;
