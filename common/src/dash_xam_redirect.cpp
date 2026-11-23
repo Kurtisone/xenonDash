@@ -19,6 +19,8 @@
 #include <thread>
 #include <vector>
 
+#include <fmt/format.h>
+
 #include <rex/hook.h>
 #include <rex/logging.h>
 #include <rex/ppc/context.h>
@@ -189,13 +191,20 @@ void Dispatch(Slot& s, PPCContext& ctx, uint8_t* base) {
   // On aligne donc l'identité du profil HLE sur le compte connecté (XUID et gamertag lus dans XAM) avant de servir la requête.
   if (ProfileModeXam() && !s.guest.load() &&
       (std::string_view(s.name) == "XamUserReadProfileSettings" || std::string_view(s.name) == "XamUserReadProfileSettingsEx")) {
-    const uint32_t xuid_count = ctx.r5.u32, xuids = ctx.r6.u32;
+    const uint32_t xuid_count = ctx.r5.u32, xuids = ctx.r6.u32, count = ctx.r7.u32, ids = ctx.r8.u32;
     const uint64_t wanted = (xuid_count && xuids) ? __builtin_bswap64(*reinterpret_cast<const uint64_t*>(base + xuids)) : 0;
     SyncHleProfileWithXam(ctx, base, wanted);
     DispatchImpl(s, ctx, base);
     static std::atomic<int> logged{0};
     if (logged.fetch_add(1) < 4)
       REXLOG_INFO("[xamredir] {}(xuid {:016X}) par HLE -> 0x{:08X}", s.name, wanted, ctx.r3.u32);
+    // DASH_TRACE_SETTINGS=1 : identifiants des réglages demandés (ex. 0x63E80044, manifeste d'avatar du profil).
+    if (std::getenv("DASH_TRACE_SETTINGS") && ids && count && count < 64) {
+      std::string list;
+      for (uint32_t i = 0; i < count; ++i)
+        list += fmt::format(" {:08X}", __builtin_bswap32(*reinterpret_cast<const uint32_t*>(base + ids + 4 * i)));
+      REXLOG_INFO("[xamredir] {} : réglages{}", s.name, list);
+    }
     return;
   }
   DispatchImpl(s, ctx, base);
@@ -263,6 +272,7 @@ void DispatchImpl(Slot& s, PPCContext& ctx, uint8_t* base) {
 
 // XAM recompilé (Configure) : sert aux imports des modules recompilés (CallModuleImport).
 std::atomic<rex::system::UserModule*> g_xam{nullptr};
+std::atomic<bool> g_configured{false};  // Configure a lié les imports redirigés (XAM recompilé chargé de façon asynchrone)
 std::atomic<rex::runtime::ExportResolver*> g_resolver{nullptr};
 
 // Ordinal d'un export de XAM (table « xam.xex » du SDK, mêmes ordinaux que la console). 0 si absent.
@@ -629,15 +639,58 @@ void IsUIActive(Slot& s, PPCContext& ctx, uint8_t* base) {
 // Avatar du hub : dash.xex lie sa propre bibliothèque d'avatar (rendu 3D par le Dashboard) et ne demande à XAM que l'état
 // (XamAvatarInitialize, sub_923C4A4C) puis manifeste, assets et animations. Le HLE du SDK fait échouer XamAvatarInitialize
 // (~0, xam_avatar.cpp) : l'octet « avatar prêt » 0x929BBAE4 reste nul, XAvatarGetManifestLocalUser (sub_923C5890) renvoie
-// 0x8000FFFF sans appeler XAM, et le hub affiche l'avatar gris par défaut au lieu de l'avatar du profil. Servis par le HLE
-// (inchangé) ; DASH_XAM_REDIRECT=XamAvatarInitialize,... les envoie à XAM recompilé (essai). Journal des 64 premiers appels.
+// 0x8000FFFF sans appeler XAM, et le hub affiche l'avatar gris par défaut au lieu de l'avatar du profil. En mode profil XAM, ces
+// imports sont servis par XAM recompilé (kAvatarImports, liste de base de Configure) : XAM lit les paquets système d'avatar
+// (FFFE07DF0000000x, kernel_stfs.cpp) et le manifeste du profil (réglage 0x63E80044 du GPD). Hors mode profil XAM : HLE.
+// Journal borné des appels, avec l'octet « avatar prêt » et, pour un manifeste, ses 16 premiers octets.
+constexpr const char* kAvatarImports =
+    "XamAvatarInitialize,XamAvatarShutdown,XamAvatarGetManifestLocalUser,XamAvatarGetManifestsByXuid,"
+    "XamAvatarGetAssetsResultSize,XamAvatarGetAssets,XamAvatarGenerateMipMaps,XamAvatarSetCustomAsset,"
+    "XamAvatarLoadAnimation,XamAvatarManifestGetBodyType,XamAvatarGetMetadataRandom";
+bool ProfileModeXam();
 void AvatarCall(Slot& s, PPCContext& ctx, uint8_t* base) {
   const uint32_t a3 = ctx.r3.u32, a4 = ctx.r4.u32, a5 = ctx.r5.u32;
+  // XAM recompilé se charge en parallèle du Dashboard (dash_app_base.cpp) : un XamAvatarInitialize appelé avant Configure partait
+  // au HLE (échec, puis XamAvatarShutdown ; mesuré au redémarrage, 2026-11-23). En mode profil XAM, on attend la liaison (15 s au plus,
+  // une seule fois : si XAM n'est toujours pas lié, les appels suivants partent au HLE sans attendre).
+  static std::atomic<bool> gave_up{false};
+  if (!g_configured.load() && !gave_up.load() && ProfileModeXam()) {
+    const auto t0 = std::chrono::steady_clock::now();
+    while (!g_configured.load() && std::chrono::steady_clock::now() - t0 < std::chrono::seconds(15))
+      std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    if (!g_configured.load()) gave_up.store(true);
+    REXLOG_INFO("[avatar] {} : attente du chargement de XAM recompilé ({} ms)", s.name,
+                std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - t0).count());
+  }
+  const PPCContext in = ctx;
   Dispatch(s, ctx, base);
-  static std::atomic<int> logged{0};
-  if (logged.fetch_add(1) < 64)
-    REXLOG_INFO("[avatar] {}({:08X}, {:08X}, {:08X}) -> 0x{:08X} par {}", s.name, a3, a4, a5, ctx.r3.u32,
-                s.guest.load() ? "XAM recompilé" : "HLE");
+  // XamAvatarInitialize de XAM recompilé envoie le message 0x600001 à l'application système d'avatar (242, sub_8187B648) ; tant que
+  // XAM n'a pas fini d'installer cette application, il renvoie E_INVALIDARG (0x80070057) et libère l'application (sub_81894AC8) : le
+  // Dashboard appelle alors XamAvatarShutdown et garde l'avatar gris (2 démarrages sur 6, 2026-11-23). On redemande, 5 s au plus.
+  if (std::string_view(s.name) == "XamAvatarInitialize" && s.guest.load() && ctx.r3.u32 == 0x80070057u) {
+    const auto t0 = std::chrono::steady_clock::now();
+    int tries = 1;
+    while (ctx.r3.u32 == 0x80070057u && std::chrono::steady_clock::now() - t0 < std::chrono::seconds(5)) {
+      std::this_thread::sleep_for(std::chrono::milliseconds(50));
+      ctx = in;
+      Dispatch(s, ctx, base);
+      ++tries;
+    }
+    REXLOG_INFO("[avatar] XamAvatarInitialize : E_INVALIDARG (application d'avatar de XAM pas prête), {} essais en {} ms -> 0x{:08X}",
+                tries,
+                std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - t0).count(), ctx.r3.u32);
+  }
+  // Journal borné : 8 XamAvatarLoadAnimation (une trentaine au démarrage), 128 appels des autres imports.
+  static std::atomic<int> logged_anim{0}, logged{0};
+  const bool anim = std::string_view(s.name) == "XamAvatarLoadAnimation";
+  if (anim ? logged_anim.fetch_add(1) < 8 : logged.fetch_add(1) < 128) {
+    std::string manifest;
+    if (std::string_view(s.name) == "XamAvatarGetManifestLocalUser" && a4)
+      for (int i = 0; i < 16; ++i) manifest += fmt::format("{:02X}", base[a4 + i]);
+    REXLOG_INFO("[avatar] {}({:08X}, {:08X}, {:08X}) -> 0x{:08X} par {} ; avatar prêt (0x929BBAE4) = {}{}{}", s.name, a3, a4, a5,
+                ctx.r3.u32, s.guest.load() ? "XAM recompilé" : "HLE", base[0x929BBAE4u], manifest.empty() ? "" : " ; manifeste ",
+                manifest);
+  }
 }
 
 bool ProfileModeXam() {
@@ -852,7 +905,8 @@ void Configure(rex::system::KernelState* ks, rex::runtime::ExportResolver* resol
     redirect_list = "XGetVideoMode,XamUserGetXUID,XamUserGetSigninState,XamUserLogon,XamUserLogonEx,XamUserCheckPrivilege,XamUserIsOnlineEnabled,"
                     "XamShowMessageBoxUI,XamShowMessageBoxUIEx,"
                     "XamShowKeyboardUI,XamShowSigninUI,XamShowSigninUIp,XamShowCreateProfileUI,XamShowDeviceSelectorUI,"
-                    "XamShowGamerCardUIForXUID,XamShowGuideUI";
+                    "XamShowGamerCardUIForXUID,XamShowGuideUI,";
+    redirect_list += kAvatarImports;
     if (const char* e = std::getenv("DASH_XAM_REDIRECT"); e && *e) redirect_list += std::string(",") + e;
     REXLOG_INFO("[xamredir] DASH_PROFILE_MODE=xam : redirections {}", redirect_list);
   } else {
@@ -900,6 +954,7 @@ void Configure(rex::system::KernelState* ks, rex::runtime::ExportResolver* resol
       REXLOG_INFO("[xamredir] {} (ordinal {}) -> XAM recompilé 0x{:08X}", name, ordinal, addr);
     }
   }
+  g_configured.store(true);
 
   // DASH_XAM_EXPORTS=<ordinal,...> : journalise l'adresse invitée de ces exports de XAM recompilé (diagnostic, désassemblage).
   if (const char* e = std::getenv("DASH_XAM_EXPORTS"); e && *e && xam) {
