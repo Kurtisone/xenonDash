@@ -130,9 +130,11 @@ EOF
 - Plusieurs instances de dash simultanées : les touches xdotool vont à la mauvaise fenêtre (vérifier
   `pgrep -c -x dash` avant d'interagir) et N instances × ~2 Go d'arène invité déclenchent l'OOM
   killer (le run gdb meurt en SIGKILL). Purger avant chaque lancement.
-- **Touches : le mappage réel (`mnk_input_driver.cpp` du SDK)** est `A = Espace ou ';'`,
-  `B = Backspace ou apostrophe`, `LB/RB = 1 / 3`, `Back = Z ou Tab`, `Start = Entrée ou X`,
-  stick droit = flèches, D-pad = `Shift`+flèches. `Entrée` est **Start** et `Échap` n'est lié à rien.
+- **Touches : le mappage réel est celui du Dashboard (`common/src/dash_input.h`,
+  `ApplyDashKeyboardLayout`), qui remplace les touches par défaut du SDK** : `A = Entrée ou Espace`,
+  `B = Échap ou Backspace`, `Start = P`, `Back = Tab`, `LB/RB = 1 / 3`, `LT/RT = ...` (voir le
+  commentaire de `dash_input.h`), flèches = croix. `Entrée` envoie donc **A**, pas Start.
+  Sur le clavier virtuel, Start valide « Done » (`P`) : vérifié sur `s2_create` (touche `p`).
   Avant de conclure à un gel, vérifier qu'une autre touche change l'image.
 - `tools/dash_shaders.py` attend la sortie de `xxhsum` ≤ 0.8.1 ; xxhash ≥ 0.8.2 écrit autrement.
 - Glyphe `U+E00A` (Gamerscore) : absent des trois `.xtt` fournis — carré vide dans le bandeau.
