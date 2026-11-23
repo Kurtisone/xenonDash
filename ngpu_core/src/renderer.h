@@ -248,6 +248,7 @@ class Renderer {
     std::unique_ptr<plume::RenderCommandList> commands;
     std::unique_ptr<plume::RenderCommandFence> fence;
     std::unique_ptr<plume::RenderBuffer> upload;  // per-frame uploads
+    uint8_t* upload_memory = nullptr;             // mapped once, at creation
     bool pending = false;
     // Released once the frame has completed.
     std::vector<std::unique_ptr<plume::RenderBuffer>> retired_buffers;
@@ -263,7 +264,7 @@ class Renderer {
   };
   static constexpr uint32_t kFramesInFlight = 2;
   void WaitFrame(Frame& frame);
-  void UseUploadBuffer(plume::RenderBuffer* buffer, uint64_t size);
+  void UseUploadBuffer(plume::RenderBuffer* buffer, uint8_t* memory, uint64_t size);
 
   std::unique_ptr<plume::RenderCommandQueue> queue_;
   Frame frames_[kFramesInFlight];

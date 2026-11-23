@@ -237,9 +237,11 @@ bool Renderer::Initialize(RenderDevice* device, const uint8_t* physical,
     frame.fence = device_->createCommandFence();
     frame.upload = device_->createBuffer(RenderBufferDesc::UploadBuffer(
         kUploadSize, RenderBufferFlag::CONSTANT | RenderBufferFlag::VERTEX | RenderBufferFlag::INDEX));
+    // Persistently mapped: VMA counts maps on 8 bits, so never map again.
+    frame.upload_memory = static_cast<uint8_t*>(frame.upload->map());
   }
   commands_ = frames_[0].commands.get();
-  UseUploadBuffer(frames_[0].upload.get(), kUploadSize);
+  UseUploadBuffer(frames_[0].upload.get(), frames_[0].upload_memory, kUploadSize);
 
   // Bindless heaps and pipeline layout as Unleashed sets them up: 2D, 3D and
   // cube texture heaps, a sampler heap, and 24 bytes of push constants (the
@@ -313,9 +315,9 @@ bool Renderer::Initialize(RenderDevice* device, const uint8_t* physical,
   return true;
 }
 
-void Renderer::UseUploadBuffer(RenderBuffer* buffer, uint64_t size) {
+void Renderer::UseUploadBuffer(RenderBuffer* buffer, uint8_t* memory, uint64_t size) {
   upload_ = buffer;
-  upload_memory_ = static_cast<uint8_t*>(buffer->map());  // persistently mapped
+  upload_memory_ = memory;
   upload_address_ = buffer->getDeviceAddress();
   upload_size_ = size;
   upload_offset_ = 0;
@@ -364,7 +366,7 @@ uint64_t Renderer::Allocate(const void* data, uint64_t size, uint64_t alignment)
     const uint64_t overflowSize = std::max<uint64_t>(kUploadSize, size + alignment);
     auto overflow = device_->createBuffer(RenderBufferDesc::UploadBuffer(
         overflowSize, RenderBufferFlag::CONSTANT | RenderBufferFlag::VERTEX | RenderBufferFlag::INDEX));
-    UseUploadBuffer(overflow.get(), overflowSize);
+    UseUploadBuffer(overflow.get(), static_cast<uint8_t*>(overflow->map()), overflowSize);
     retired_buffers_.push_back(std::move(overflow));
   }
   const uint64_t at = upload_offset_;
@@ -420,7 +422,7 @@ void Renderer::BeginFrame() {
   Frame& frame = frames_[frame_];
   WaitFrame(frame);
   commands_ = frame.commands.get();
-  UseUploadBuffer(frame.upload.get(), kUploadSize);
+  UseUploadBuffer(frame.upload.get(), frame.upload_memory, kUploadSize);
   commands_->begin();
   current_targets_ = {};
   main_layout_bound_ = false;
