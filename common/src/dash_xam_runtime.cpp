@@ -10,6 +10,7 @@
 #include <functional>
 #include <map>
 #include <mutex>
+#include <optional>
 #include <vector>
 #include <memory>
 #include <string>
@@ -25,6 +26,7 @@
 #include <rex/filesystem/vfs.h>
 #include <rex/logging.h>
 #include <rex/system/export_resolver.h>
+#include <rex/system/guest_path.h>
 #include <rex/system/kernel_state.h>
 #include <rex/system/user_module.h>
 #include <rex/system/xex_module.h>
@@ -127,6 +129,26 @@ void MountXamDevices(rex::filesystem::VirtualFileSystem* vfs) {
   const fs::path root = StateDir();
   Mount(vfs, "\\Device\\Harddisk0\\Partition1", root / "hdd", false);
   Mount(vfs, "\\Device\\MU0", root / "mu0", false);
+}
+
+// Chemin sous lequel le module de la partition système étendue `name` (résolu par le VFS en `resolved`, sous
+// kSystemExtHostDevice) est enregistré comme recompilé ; nullopt s'il ne l'est pas. FindRecompiledModule compare le chemin
+// normalisé à l'égalité stricte, et le chargeur du SDK (LoadUserModule) refait la même recherche avec le chemin reçu : le
+// guest_path du manifeste emploie l'alias de XAM (\sep\20352400\...) ; un appel par un autre alias de la même partition
+// (\Device\Harddisk0\SystemExtPartition\...) serait refusé à tort, ou chargé sans son code recompilé. On essaie donc aussi
+// le chemin relatif à la partition sous chacun des alias connus, en vérifiant que l'alias résout vers le même fichier ;
+// l'appelant passe alors ce chemin-là au SDK.
+std::optional<std::string> RecompiledSystemExtPath(rex::system::KernelState* ks, const char* name,
+                                                   const std::string& resolved) {
+  if (ks->FindRecompiledModule(name)) return std::string(name);
+  const std::string rel = resolved.substr(kSystemExtHostDevice.size());  // "\20352400\Guide.AvatarMiniCreator.xex"
+  for (const char* alias : {"\\sep", "\\Device\\Harddisk0\\SystemExtPartition"}) {
+    std::string cand = alias + rel;
+    if (!ks->FindRecompiledModule(cand)) continue;
+    auto* e = REX_KERNEL_FS()->ResolvePath(cand);
+    if (!e || rex::system::NormalizeGuestPath(e->absolute_path()) == rex::system::NormalizeGuestPath(resolved)) return cand;
+  }
+  return std::nullopt;
 }
 
 void MountSystemExtPartition(rex::filesystem::VirtualFileSystem* vfs, const fs::path& dir) {
@@ -256,7 +278,23 @@ REX_HOOK_RAW(__imp__XexLoadImage) {
     auto* entry = std::strpbrk(name, "\\/:") ? REX_KERNEL_FS()->ResolvePath(name) : nullptr;
     if (entry && entry->absolute_path().starts_with(dash::xamrt::kSystemExtHostDevice)) {
       auto* ks = REX_KERNEL_STATE();
-      if (!ks->GetModule(name) && !ks->FindRecompiledModule(name)) {
+      auto recomp = ks->GetModule(name) ? std::optional<std::string>(name)
+                                        : dash::xamrt::RecompiledSystemExtPath(ks, name, entry->absolute_path());
+      if (recomp && *recomp != name) {
+        // Même module, autre alias : le SDK doit recevoir le chemin enregistré pour câbler le code recompilé.
+        static std::mutex amu;
+        static std::map<std::string, uint32_t> alias_cache;  // chemin enregistré -> chaîne invitée
+        std::lock_guard<std::mutex> lock(amu);
+        uint32_t& g = alias_cache[*recomp];
+        if (!g) {
+          g = REX_KERNEL_MEMORY()->SystemHeapAlloc(static_cast<uint32_t>(recomp->size() + 1));
+          std::memcpy(base + g, recomp->c_str(), recomp->size() + 1);
+        }
+        REXLOG_INFO("[xam] XexLoadImage(\"{}\") -> {} (chemin du module recompilé)", name, *recomp);
+        ctx.r3.u64 = g;
+        name = reinterpret_cast<const char*>(base + g);
+      }
+      if (!recomp) {
         REXLOG_WARN("[xam] XexLoadImage(\"{}\") refusé : module non recompilé", name);
         if (ctx.r6.u32) {
           uint8_t* h = base + ctx.r6.u32;
@@ -286,15 +324,6 @@ REX_HOOK_RAW(__imp__XexLoadImage) {
       }
       if (guest) {
         REXLOG_INFO("[xam] XexLoadImage(\"{}\") -> game:\\flash\\{}", name, name);
-        // Sonde : le peripherique game: est-il visible du VFS noyau au moment de l'appel ?
-        static int probe = 0;
-        if (probe++ < 3) {
-          auto* e1 = REX_KERNEL_FS()->ResolvePath("game:\\flash\\" + std::string(name));
-          auto* e2 = REX_KERNEL_FS()->ResolvePath(std::string("\\SystemRoot\\") + name);
-          REXLOG_INFO("[xam] sonde VFS : game:\\flash\\{} = {}, \\SystemRoot\\{} = {}",
-                      name, e1 ? "OK" : "ECHEC", name, e2 ? "OK" : "ECHEC");
-          if (e1) REXLOG_INFO("[xam] sonde : resolu via {}", e1->absolute_path());
-        }
         ctx.r3.u64 = guest;
       }
     }
