@@ -2,6 +2,7 @@
 
 #include "dash_xam_redirect.h"
 
+#include <algorithm>
 #include <atomic>
 #include <chrono>
 #if !defined(_WIN32)
@@ -94,6 +95,7 @@ PPCFunc* FindHle(const std::string& sym) {
 
 void DispatchImpl(Slot& s, PPCContext& ctx, uint8_t* base);
 void SyncHleProfileWithXam(const PPCContext& ctx, uint8_t* base, uint64_t wanted);
+void SyncHleAvatarManifest(const PPCContext& ctx, uint8_t* base);
 std::atomic<rex::system::KernelState*> g_ks{nullptr};
 
 // Exécute l'import : XAM recompilé si redirigé, sinon le HLE du SDK (même fonction que sans ce fichier).
@@ -194,6 +196,13 @@ void Dispatch(Slot& s, PPCContext& ctx, uint8_t* base) {
     const uint32_t xuid_count = ctx.r5.u32, xuids = ctx.r6.u32, count = ctx.r7.u32, ids = ctx.r8.u32;
     const uint64_t wanted = (xuid_count && xuids) ? __builtin_bswap64(*reinterpret_cast<const uint64_t*>(base + xuids)) : 0;
     SyncHleProfileWithXam(ctx, base, wanted);
+    // Le hub lit le manifeste d'avatar du profil par ce réglage (0x63E80044, avec la carte joueur) : on le donne au HLE depuis XAM.
+    if (ids && count < 64)
+      for (uint32_t i = 0; i < count; ++i)
+        if (__builtin_bswap32(*reinterpret_cast<const uint32_t*>(base + ids + 4 * i)) == 0x63E80044u) {
+          SyncHleAvatarManifest(ctx, base);
+          break;
+        }
     DispatchImpl(s, ctx, base);
     static std::atomic<int> logged{0};
     if (logged.fetch_add(1) < 4)
@@ -244,6 +253,41 @@ void SyncHleProfileWithXam(const PPCContext& ctx, uint8_t* base, uint64_t wanted
   REXLOG_INFO("[xamredir] profil HLE aligné sur le compte XAM connecté : XUID {:016X} -> {:016X}, gamertag '{}'", profile->xuid(),
               xuid, gamertag);
   profile->SetIdentity(xuid, gamertag);
+}
+
+// Manifeste d'avatar (réglage 0x63E80044, 1000 octets) du compte connecté dans XAM recompilé, lu par XamAvatarGetManifestLocalUser
+// (XAM le lit dans le GPD du profil, écrit par XamAvatarSetManifest) et donné au profil HLE. Sans lui, le HLE ne connaît pas ce
+// réglage et le hub dessine la silhouette grise par défaut. Une fois par XUID ; rien n'est donné si XAM échoue ou si le manifeste
+// est vide (profil sans avatar : le Dashboard ouvre alors le choix d'avatar).
+void SyncHleAvatarManifest(const PPCContext& ctx, uint8_t* base) {
+  constexpr uint32_t kSetting = 0x63E80044u, kSize = 1000;
+  rex::system::KernelState* ks = g_ks.load();
+  auto* profile = ks ? ks->user_profile() : nullptr;
+  if (!profile || !profile->xuid()) return;
+  static std::mutex mu;
+  static uint64_t synced = 0;
+  std::lock_guard<std::mutex> lock(mu);
+  if (synced == profile->xuid()) return;
+  const uint32_t buf = REX_KERNEL_MEMORY()->SystemHeapAlloc(kSize);
+  if (!buf) return;
+  std::memset(base + buf, 0, kSize);
+  PPCContext tmp = ctx;
+  tmp.r1.u64 = ctx.r1.u32 - 0x400;
+  tmp.r3.u64 = 0;  // utilisateur 0 (celui dont SyncHleProfileWithXam a adopté le XUID)
+  tmp.r4.u64 = buf;
+  tmp.r5.u64 = 0;  // sans OVERLAPPED : appel synchrone
+  const bool called = CallXamExport("XamAvatarGetManifestLocalUser", tmp, base);
+  const uint32_t hr = tmp.r3.u32;
+  std::vector<uint8_t> manifest(base + buf, base + buf + kSize);
+  REX_KERNEL_MEMORY()->SystemHeapFree(buf);
+  const bool empty = std::all_of(manifest.begin(), manifest.end(), [](uint8_t b) { return b == 0; });
+  std::string head;
+  for (int i = 0; i < 16; ++i) head += fmt::format("{:02X}", manifest[i]);
+  REXLOG_INFO("[avatar] manifeste du profil {:016X} : XamAvatarGetManifestLocalUser -> 0x{:08X}{} ; {} ; début {}", profile->xuid(),
+              hr, called ? "" : " (export absent)", empty ? "vide" : "donné au HLE (réglage 0x63E80044)", head);
+  synced = profile->xuid();
+  if (!called || hr != 0 || empty) return;
+  profile->AddSetting(std::make_unique<rex::system::xam::UserProfile::BinarySetting>(kSetting, manifest));
 }
 
 void DispatchImpl(Slot& s, PPCContext& ctx, uint8_t* base) {
