@@ -40,6 +40,7 @@
 #include "ngpu.h"
 #include "write_watcher.h"
 #include "hud_xam13604.h"
+#include "dash_xam_redirect.h"
 
 namespace {
 
@@ -481,14 +482,19 @@ void PublishOverlay() {
     // (dash_xam_redirect.cpp, Dispatch). DASH_HUD_CHROME=1 : ancien comportement (overlay affiche des qu'il a des pixels).
     // Signal retenu : +36 = profondeur de la pile de scènes de XAM (1 au repos = scène de boot de l'app 252 ; 2 quand le Guide ou une
     // boîte est empilé dessus, mesure du 2026-11-22). Le masque +0 ne vaut non nul que pendant l'ouverture et retombe à 0 Guide affiché.
+    // Le repos n'est pas toujours 1 : après XamAppUnloadStack (Sign In d'un profil sans avatar), la scène de boot est retirée et le
+    // Guide n'empile plus qu'un niveau (XamSceneAboveRest, dash_xam_redirect.cpp).
     uint32_t ui_mask = 0, depth = 0;
+    bool above_rest = false;
     if (auto* ks = rex::system::kernel_state()) {
-      const auto* st = reinterpret_cast<const volatile uint32_t*>(ks->memory()->virtual_membase() + 0x81BFCAE8u);
+      const uint8_t* membase = ks->memory()->virtual_membase();
+      const auto* st = reinterpret_cast<const volatile uint32_t*>(membase + 0x81BFCAE8u);
       ui_mask = __builtin_bswap32(st[0]);
       depth = __builtin_bswap32(st[9]);  // +36
+      above_rest = dash::xamredir::XamSceneAboveRest(membase);
     }
     static const bool keep_chrome = std::getenv("DASH_HUD_CHROME") != nullptr;
-    if (!keep_chrome && ui_mask == 0 && depth < 2) visible = false;
+    if (!keep_chrome && ui_mask == 0 && !above_rest) visible = false;
     if (std::getenv("DASH_HUD_STATS") && (g.frames % 60 == 1 || Evlog()))
       std::fprintf(stderr, "[hud] overlay image %llu : %zu pixels non transparents, alpha max %u, boite %u,%u - %u,%u, masque UI %08X pile %u -> %s\n",
                    (unsigned long long)g.frames, pixels, amax, x0, y0, x1, y1, ui_mask, depth, visible ? "visible" : "masque");

@@ -49,6 +49,12 @@ void CallModuleImport(ModuleImport& imp, PPCContext& ctx, uint8_t* base);
 // aucun profil n'existe au démarrage. Les accroches de profil de common/ passent alors la main à l'export de même nom de XAM.
 bool ProfileModeXam();
 
+// Vrai si une scène de XAM est empilée au-dessus du niveau de repos (Guide, boîte, signin...) : pile de scènes de l'état UI
+// (0x81BFCAE8 +36) > repos. Repos = 1 au démarrage (la scène de boot de l'app 252 reste empilée, chrome du HUD) ; il tombe à 0
+// dès que la pile est vue vide après avoir été non vide : XamAppUnloadStack (signin.xex, sub_901047C0) vide toute la pile,
+// scène de boot comprise. Partagé par le compositeur du HUD, le portier des entrées et XamIsUIActive.
+bool XamSceneAboveRest(const uint8_t* base);
+
 // Exécute l'export `name` de XAM recompilé avec le contexte `ctx`. Faux (rien d'exécuté) si XAM n'est pas chargé ou n'a pas cet export.
 bool CallXamExport(const char* name, PPCContext& ctx, uint8_t* base);
 

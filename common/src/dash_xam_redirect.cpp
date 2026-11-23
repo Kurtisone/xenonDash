@@ -106,12 +106,11 @@ void Dispatch(Slot& s, PPCContext& ctx, uint8_t* base) {
     // Scene XAM ouverte = overlay visible ET masque « interfaces systeme actives » de XAM non nul (0x81BFCAE8 +0 : le portier
     // sub_8189F0D0 refuse toute ouverture tant qu'il est non nul, cf. ShowXamGuide). Le chrome permanent du HUD rend l'overlay
     // visible au repos : la visibilite seule ne suffit pas (mesure du 2026-11-22).
-    // Même critère que le compositeur (hud_front.cpp, PublishOverlay) : masque +0 non nul (ouverture) ou pile de scènes +36 >= 2
-    // (Guide ou boîte empilé sur la scène de boot ; le masque retombe à 0 Guide affiché).
+    // Même critère que le compositeur (hud_front.cpp, PublishOverlay) : masque +0 non nul (ouverture) ou pile de scènes +36
+    // au-dessus du repos (XamSceneAboveRest : Guide ou boîte empilé sur la scène de boot ; le masque retombe à 0 Guide affiché).
     const uint32_t ui_mask = __builtin_bswap32(*reinterpret_cast<const volatile uint32_t*>(base + 0x81BFCAE8u));
-    const uint32_t depth = __builtin_bswap32(*reinterpret_cast<const volatile uint32_t*>(base + 0x81BFCAE8u + 36));
     const bool visible = ngpu::HudActive();
-    const bool hud = visible && (ui_mask != 0 || depth >= 2);
+    const bool hud = visible && (ui_mask != 0 || XamSceneAboveRest(base));
     if (hud) wait_release.store(true);
     if (std::getenv("DASH_HUD_INPUT_LOG")) {
       static std::atomic<int> prev{-1};
@@ -606,6 +605,27 @@ bool ShowXamGuide(uint32_t user_index, int wait_ms) {
   return true;
 }
 
+// Mesure du 2026-11-23 (profil sans avatar, Sign In depuis le XMB) : avant XamAppUnloadStack la pile vaut 2 (boot + signin) ;
+// juste après, 0 ; le Guide ouvert ensuite n'en fait que 1. Avec un repos figé à 1, le Guide restait masqué par le compositeur.
+bool XamSceneAboveRest(const uint8_t* base) {
+  static std::atomic<bool> seen_scene{false};
+  static std::atomic<uint32_t> rest{1};
+  const uint32_t depth = __builtin_bswap32(*reinterpret_cast<const volatile uint32_t*>(base + 0x81BFCAE8u + 36));
+  if (depth) seen_scene.store(true);
+  else if (seen_scene.load()) rest.store(0);
+  return depth > rest.load();
+}
+
+// XamIsUIActive du Dashboard : le HLE ne compte que ses propres boîtes (xam_dialogs_shown_), jamais les scènes de XAM recompilé.
+// Après XamShowSigninUIp, dash.xex attend « interface active » puis « interface fermée » (boucles sur XamIsUIActive en
+// 0x923165D4 et 0x923165F0, puis XNotifyBroadcast) : avec 0 en permanence, il tournait sans fin dans la première boucle — plus de
+// lecture des touches, image figée sur « Sign In » (mesure du 2026-11-23). On ajoute donc l'état de XAM : scène au-dessus du
+// repos. L'export de XAM (+164 de l'état UI) ne convient pas tel quel : il vaut 1 au repos à cause de la scène de boot.
+void IsUIActive(Slot& s, PPCContext& ctx, uint8_t* base) {
+  Dispatch(s, ctx, base);
+  if (ctx.r3.u32 == 0 && g_xam.load() && XamSceneAboveRest(base)) ctx.r3.u64 = 1;
+}
+
 bool ProfileModeXam() {
   static const bool on = [] {
     const char* m = std::getenv("DASH_PROFILE_MODE");
@@ -934,6 +954,10 @@ DASH_XAM_REDIRECT_HOOK(XamShowCreateProfileUI)
 DASH_XAM_REDIRECT_HOOK(XamShowGamerCardUIForXUID)
 DASH_XAM_REDIRECT_HOOK(XamShowMessageBoxUIEx)
 DASH_XAM_REDIRECT_HOOK(XamShowGuideUI)
+static dash::xamredir::Slot g_slot_XamIsUIActive{"XamIsUIActive"};
+REX_HOOK_RAW(__imp__XamIsUIActive) {
+  dash::xamredir::IsUIActive(g_slot_XamIsUIActive, ctx, base);
+}
 DASH_XAM_REDIRECT_HOOK(XamVoiceCreate)
 DASH_XAM_REDIRECT_HOOK(XamVoiceHeadsetPresent)
 DASH_XAM_REDIRECT_HOOK(XamVoiceSubmitPacket)
