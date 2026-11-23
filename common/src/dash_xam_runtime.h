@@ -34,6 +34,12 @@ std::filesystem::path StateDir();
 // DASH_XAM_STATE, sinon ${XDG_DATA_HOME:-~/.local/share}/xenondash/xam. Appelée seulement quand XAM est un module.
 void MountXamDevices(rex::filesystem::VirtualFileSystem* vfs);
 
+// Monte \Device\Harddisk0\SystemExtPartition (lecture seule) sur `dir` s'il contient system.manifest : partition système
+// étendue du disque dur (contenu de la mise à jour système : AvatarEditor.xex, Guide.AvatarMiniCreator.xex...). Le
+// gestionnaire de paquets de XAM (objet 0x81C06280, sub_818BE8B8) y lit system.manifest, manifeste signé qui devient son
+// index (+164) : XamPackageManagerGetFileSize/GetFilePathW y cherchent les fichiers. Sans elle l'index reste vide.
+void MountSystemExtPartition(rex::filesystem::VirtualFileSystem* vfs, const std::filesystem::path& dir);
+
 // Exécute `fn` sur un thread hôte du processus SYSTÈME (X_PROCTYPE_SYSTEM) et attend sa fin. XAM choisit son état
 // d'après KeGetCurrentProcessType() (== 2) : rex::system::XHostThread le place dans le processus titre (type 1), où
 // les objets de XAM ne sont jamais créés. Les threads créés par XAM (ExCreateThread, drapeau 2) sont déjà système.

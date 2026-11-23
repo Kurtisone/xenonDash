@@ -18,6 +18,7 @@
 #include <utility>
 
 #include <rex/filesystem/devices/host_path_device.h>
+#include <rex/filesystem/entry.h>
 #include <rex/hook.h>
 #include <rex/ppc/context.h>
 #include <rex/ppc/function.h>
@@ -25,6 +26,8 @@
 #include <rex/logging.h>
 #include <rex/system/export_resolver.h>
 #include <rex/system/kernel_state.h>
+#include <rex/system/user_module.h>
+#include <rex/system/xex_module.h>
 #include <rex/system/xthread.h>
 
 namespace dash::xamrt {
@@ -40,6 +43,9 @@ fs::path StateDir() {
 }
 
 namespace {
+
+// Périphérique hôte de la partition système étendue (voir MountSystemExtPartition).
+constexpr std::string_view kSystemExtHostDevice = "\\Device\\HostSystemExtPartition";
 
 // Monte `dir` sous `device` (ex. \Device\MU0). Un échec est journalisé sans interrompre le démarrage.
 void Mount(rex::filesystem::VirtualFileSystem* vfs, const std::string& device, const fs::path& dir, bool read_only) {
@@ -123,6 +129,21 @@ void MountXamDevices(rex::filesystem::VirtualFileSystem* vfs) {
   Mount(vfs, "\\Device\\MU0", root / "mu0", false);
 }
 
+void MountSystemExtPartition(rex::filesystem::VirtualFileSystem* vfs, const fs::path& dir) {
+  if (!fs::is_regular_file(dir / "system.manifest")) {
+    REXLOG_WARN("[dash] {} sans system.manifest : partition système étendue absente (index des paquets de XAM vide)",
+                dir.string());
+    return;
+  }
+  // Le SDK enregistre avant nous un NullDevice sur \Device\Harddisk0 (accès bruts aux partitions) et le VFS prend le premier
+  // périphérique dont le préfixe correspond : un montage direct sous \Device\Harddisk0\SystemExtPartition serait masqué
+  // (« entry not found ... on device '\Device\Harddisk0' »). Le chemin de la console est donc un lien symbolique (résolu
+  // avant la recherche du périphérique) vers un périphérique hôte de nom propre.
+  const std::string host(kSystemExtHostDevice);
+  Mount(vfs, host, dir, true);
+  vfs->RegisterSymbolicLink("\\Device\\Harddisk0\\SystemExtPartition", host);
+}
+
 // UsbdBootEnumerationDoneEvent (xboxkrnl 0x2DB) : le SDK l'initialise signalé avec type = 1, soit
 // EventSynchronizationObject (réarmement automatique) : le premier KeWaitForSingleObject consomme le signal, les suivants
 // bloquent pour toujours (le fil d'initialisation de XAM, sub_81878E10, attend cet événement après un autre fil).
@@ -134,6 +155,25 @@ void FixKernelVariables(rex::system::KernelState* ks, rex::runtime::ExportResolv
     auto* flags = reinterpret_cast<uint32_t*>(ks->memory()->virtual_membase() + hw->variable_ptr);
     *flags = __builtin_bswap32(__builtin_bswap32(*flags) | 0x200u);
     REXLOG_INFO("[dash] XboxHardwareInfo.Flags = 0x{:08X}", __builtin_bswap32(*flags));
+  }
+  // XboxKrnlVersion (xboxkrnl 0x158) : le SDK annonce 2.15.65535.0. Sur la console le noyau et le Dashboard sont de la même
+  // version système ; XAM compare la version de system.manifest (partition système étendue) à celle du noyau
+  // (sub_818BE8B8 : sub_818BF860 contre sub_818B4E80) et ignore un manifeste d'une autre version : l'index de son
+  // gestionnaire de paquets restait vide. On reprend la version du Dashboard (en-tête d'exécution de l'exécutable).
+  if (auto* kv = resolver ? resolver->GetExportByOrdinal("xboxkrnl.exe", 0x0158) : nullptr; kv && kv->variable_ptr) {
+    auto mod = ks->GetExecutableModule();
+    const auto* info = mod && mod->xex_module() ? mod->xex_module()->opt_execution_info() : nullptr;
+    if (info) {
+      const uint32_t v = info->version_value;  // majeur:4 mineur:4 build:16 qfe:8
+      uint8_t* p = ks->memory()->virtual_membase() + kv->variable_ptr;
+      const uint16_t major = v >> 28, minor = (v >> 24) & 0xF, build = (v >> 8) & 0xFFFF;
+      const uint8_t qfe = v & 0xFF;
+      p[0] = major >> 8; p[1] = major & 0xFF;
+      p[2] = minor >> 8; p[3] = minor & 0xFF;
+      p[4] = build >> 8; p[5] = build & 0xFF;
+      p[7] = qfe;
+      REXLOG_INFO("[dash] XboxKrnlVersion = {}.{}.{}.{} (version du Dashboard)", major, minor, build, qfe);
+    }
   }
   // NOTE (2026-11-20) : le compteur d'interfaces systeme de XAM (0x81BFCAE8) vaut 4 plus tard dans
   // l'execution, et le remettre a zero au demarrage ne change rien (il vaut deja 0 ici). Ce n'est
@@ -199,10 +239,33 @@ REX_HOOK_RAW(__imp__KeBugCheck) {
 // le périphérique d'état de XAM) : le fichier n'y est pas. Pour les appels venant de XAM, un nom nu présent dans la
 // flash (\SystemRoot) est remplacé par game:\flash\<nom> (même fichier ; ce chemin est celui que le manifeste donne aux
 // modules recompilés, ex. game:\flash\hud.xex) ; les autres noms passent tels quels au SDK.
+//
+// Un module de la partition système étendue (MountSystemExtPartition) qui n'est pas recompilé est
+// refusé (STATUS_OBJECT_NAME_NOT_FOUND, *hmodule = 0) : son code n'existe pas ici, le SDK chargerait une image dont le
+// point d'entrée n'est pas dans la table des fonctions. Cas observé : après connexion d'un profil sans avatar, signin.xex
+// trouve Guide.AvatarMiniCreator.xex dans l'index des paquets (XamPackageManagerGetFileSize) et appelle
+// XamShowAvatarMiniCreatorUI ; XAM chargeait alors ce module non recompilé et le Guide restait un panneau vide. Refusé,
+// XAM revient au HUD. Limité à cette partition : les modules de ressources de la flash (huduiskin.xex...) se chargent
+// sans code recompilé et doivent passer.
 REX_HOOK_RAW(__imp__XexLoadImage) {
   static PPCFunc* fn = dash::SdkFunction("__imp__XexLoadImage");
   if (dash::xamrt::InXamImage(static_cast<uint32_t>(ctx.lr)) && ctx.r3.u32) {
     const char* name = reinterpret_cast<const char*>(base + ctx.r3.u32);
+    // XAM passe par ses propres liens symboliques (ex. \sep\20352400\Guide.AvatarMiniCreator.xex) : le chemin est résolu
+    // par le VFS et c'est le périphérique hôte de la partition qui est reconnu.
+    auto* entry = std::strpbrk(name, "\\/:") ? REX_KERNEL_FS()->ResolvePath(name) : nullptr;
+    if (entry && entry->absolute_path().starts_with(dash::xamrt::kSystemExtHostDevice)) {
+      auto* ks = REX_KERNEL_STATE();
+      if (!ks->GetModule(name) && !ks->FindRecompiledModule(name)) {
+        REXLOG_WARN("[xam] XexLoadImage(\"{}\") refusé : module non recompilé", name);
+        if (ctx.r6.u32) {
+          uint8_t* h = base + ctx.r6.u32;
+          h[0] = h[1] = h[2] = h[3] = 0;
+        }
+        ctx.r3.u64 = 0xC0000034;  // STATUS_OBJECT_NAME_NOT_FOUND
+        return;
+      }
+    }
     if (*name && !std::strpbrk(name, "\\/:")) {
       static std::mutex mu;
       static std::map<std::string, uint32_t> cache;  // nom nu -> chaîne invitée "\SystemRoot\<nom>" (0 : absent de la flash)

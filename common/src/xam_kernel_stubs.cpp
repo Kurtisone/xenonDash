@@ -18,6 +18,11 @@
 #include <cstdlib>
 #include <cstring>
 
+#include <string>
+
+#include <rex/filesystem/entry.h>
+#include <rex/filesystem/file.h>
+#include <rex/filesystem/vfs.h>
 #include <rex/hook.h>
 #include <rex/logging.h>
 #include <rex/ppc/context.h>
@@ -82,6 +87,68 @@ REX_HOOK_RAW(__imp__XeKeysGetStatus) {
   if (++g_keystatus_calls == 1)
     REXLOG_INFO("[xekeys] XeKeysGetStatus : cles locales pretes (aucune cle de console), status=0x{:X}", status);
   ctx.r3.u64 = 0;
+}
+
+// XeKeysVerifyRSASignature(r3 = indice de clé publique Microsoft, r4 = condensat SHA-1 de 20 octets, r5 = signature de
+// 256 octets) : BOOL. Le stub du SDK renvoyait r3 inchangé (l'indice 0 = FALSE). Appelants observés (mesure du 23/11) :
+// la validation de system.manifest par le gestionnaire de paquets de XAM (sub_818BEF98, lr 0x818BF0C0, après sa propre
+// comparaison SHA-1 du contenu, 0x8B050015 sinon) et celle des en-têtes des paquets FFFE07DF de la partition système
+// étendue (sub_8185A438, lr 0x8185A4C4). Avec FALSE le manifeste est rejeté (0x8B050012) et l'index (0x81C06280 +164)
+// reste vide.
+// Les clés publiques de Microsoft sont dans l'hyperviseur, absentes ici : la signature n'est pas recalculée, elle est
+// acceptée comme le fait déjà le SDK pour ses vérifications sœurs (XeCryptBnDwLePkcs1Verify,
+// XeKeysConsoleSignatureVerification). L'intégrité du contenu reste vérifiée par XAM (SHA-1).
+REX_HOOK_RAW(__imp__XeKeysVerifyRSASignature) {
+  (void)base;
+  REXLOG_INFO("[xekeys] XeKeysVerifyRSASignature(cle {}) lr={:08X} : signature acceptee (cle publique absente)",
+              ctx.r3.u32, static_cast<uint32_t>(ctx.lr));
+  ctx.r3.u64 = 1;
+}
+
+// XexLoadImageHeaders(r3 = ANSI_STRING* chemin, r4 = tampon, r5 = taille) : charge l'en-tête XEX2 d'un fichier dans le
+// tampon. Le SDK renvoie STATUS_NOT_IMPLEMENTED. Appelant observé : la validation de system.manifest par XAM (sub_81868700,
+// pour chaque .xex de \Device\Harddisk0\SystemExtPartition\20352400) ; il retente avec 64 Kio sur STATUS_BUFFER_TOO_SMALL,
+// puis compare le SHA-1 des 256 octets de signature (*(tampon+0x10) + 8 : le champ « security_offset » devenu pointeur)
+// au condensat du manifeste. Le noyau rend donc l'en-tête avec ce champ relogé ; les autres champs restent des décalages.
+// La signature RSA de l'en-tête n'est pas vérifiée (clés publiques absentes, voir XeKeysVerifyRSASignature).
+REX_HOOK_RAW(__imp__XexLoadImageHeaders) {
+  auto rd32 = [](const uint8_t* p) { return uint32_t(p[0]) << 24 | uint32_t(p[1]) << 16 | uint32_t(p[2]) << 8 | p[3]; };
+  const uint32_t str = ctx.r3.u32, out = ctx.r4.u32, size = ctx.r5.u32;
+  if (!str || !out) {
+    ctx.r3.u64 = 0xC000000D;  // STATUS_INVALID_PARAMETER
+    return;
+  }
+  const uint16_t len = uint16_t(base[str] << 8 | base[str + 1]);
+  const uint32_t buf = rd32(base + str + 4);
+  const std::string path(reinterpret_cast<const char*>(base + buf), len);
+  rex::filesystem::Entry* entry = REX_KERNEL_FS()->ResolvePath(path);
+  rex::filesystem::File* file = nullptr;
+  if (!entry || entry->Open(0x80000000u /*GENERIC_READ*/, &file) != 0 || !file) {
+    REXLOG_INFO("[xex] XexLoadImageHeaders({}) : introuvable", path);
+    ctx.r3.u64 = 0xC0000034;  // STATUS_OBJECT_NAME_NOT_FOUND
+    return;
+  }
+  uint8_t head[24] = {};
+  size_t got = 0;
+  uint32_t status = 0;
+  if (file->ReadSync({head, sizeof(head)}, 0, &got) != 0 || got != sizeof(head) || std::memcmp(head, "XEX2", 4) != 0) {
+    status = 0xC000007B;  // STATUS_INVALID_IMAGE_FORMAT
+  } else {
+    const uint32_t header_size = rd32(head + 8), security_offset = rd32(head + 16);
+    if (header_size > size) {
+      status = 0xC0000023;  // STATUS_BUFFER_TOO_SMALL
+    } else if (security_offset + 8 + 256 > header_size ||
+               file->ReadSync({base + out, header_size}, 0, &got) != 0 || got != header_size) {
+      status = 0xC000007B;
+    } else {
+      const uint32_t ptr = out + security_offset;
+      uint8_t* f = base + out + 16;
+      f[0] = ptr >> 24; f[1] = ptr >> 16; f[2] = ptr >> 8; f[3] = ptr;
+    }
+  }
+  file->Destroy();
+  REXLOG_INFO("[xex] XexLoadImageHeaders({}, taille {}) -> 0x{:08X}", path, size, status);
+  ctx.r3.u64 = status;
 }
 
 // KeSetPriorityClassThread(thread, classe) : priorite d'un thread. Sans objet ici (l'ordonnanceur
