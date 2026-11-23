@@ -21,6 +21,7 @@ usage: xenondash_import.py <game_data_root> <mise_à_jour> [--modules <dossier X
 import argparse
 import hashlib
 import os
+import re
 import shutil
 import sys
 import tempfile
@@ -120,20 +121,57 @@ def generate_native_shaders(root, force=False):
     return failed
 
 
-def import_system_ext(root, src):
-    """Copie la partition système étendue (system.manifest, 20352400/, 32000100/, Content/) sous <root>/SystemExtPartition.
+def build_system_ext(update, dst):
+    """Reconstruit la partition système étendue de XAM à partir d'un dossier $SystemUpdate à plat (mise à jour dézippée).
+
+    Disposition (relevée dans les accès de XAM et vérifiée à l'exécution : index des paquets rempli, création d'avatar) :
+      system.manifest                            -> <dst>/system.manifest
+      FFFE07DF0000000{1,2,6,8}                   -> <dst>/Content/0000000000000000/FFFE07DF/00008000/
+      Xna_TitleLauncher.xex                      -> <dst>/32000100/
+      autres .xex / .lex / .xzp, su20076000_*    -> <dst>/20352400/
+    Renvoie le nombre de fichiers copiés (0 si system.manifest est absent : l'index des paquets reste vide).
+    """
+    manifest = os.path.join(update, "system.manifest")
+    shutil.rmtree(dst, ignore_errors=True)
+    if not os.path.isfile(manifest):
+        pd.log(f"avertissement : pas de system.manifest dans {update} : partition système étendue non construite")
+        return 0
+    os.makedirs(dst)
+    shutil.copy2(manifest, os.path.join(dst, "system.manifest"))
+    n = 1
+    for name in sorted(os.listdir(update)):
+        src = os.path.join(update, name)
+        if name == "system.manifest" or not os.path.isfile(src):
+            continue
+        if re.fullmatch(r"FFFE07DF0000000[1268]", name):
+            sub = os.path.join("Content", "0000000000000000", "FFFE07DF", "00008000")
+        elif name == "Xna_TitleLauncher.xex":
+            sub = "32000100"
+        elif name.lower().endswith((".xex", ".lex", ".xzp")) or name.startswith("su20076000_"):
+            sub = "20352400"
+        else:
+            continue
+        os.makedirs(os.path.join(dst, sub), exist_ok=True)
+        shutil.copy2(src, os.path.join(dst, sub, name))
+        n += 1
+    return n
+
+
+def import_system_ext(root, update, system_ext=None):
+    """Installe <root>/SystemExtPartition : copie d'un dossier fourni (--system-ext), sinon construit depuis la mise à jour.
 
     XAM lit son index des paquets (Guide.AvatarMiniCreator.xex, etc.) dans system.manifest de cette partition ; sans elle,
-    la création d'avatar est sautée après la connexion. Sans system.manifest dans src, rien n'est copié (avertissement).
+    la création d'avatar est sautée après la connexion.
     """
     dst = os.path.join(root, "SystemExtPartition")
-    if not os.path.isfile(os.path.join(src, "system.manifest")):
-        pd.log(f"avertissement : pas de system.manifest dans {src} : partition système étendue non importée")
+    if system_ext and os.path.isdir(system_ext):
         shutil.rmtree(dst, ignore_errors=True)
+        shutil.copytree(system_ext, dst)
+        pd.log(f"partition système étendue copiée depuis {system_ext}")
         return
-    shutil.rmtree(dst, ignore_errors=True)
-    shutil.copytree(src, dst)
-    pd.log(f"partition système étendue importée : {dst}")
+    n = build_system_ext(update, dst)
+    if n:
+        pd.log(f"partition système étendue construite depuis la mise à jour : {n} fichiers dans {dst}")
 
 
 def main():
@@ -204,11 +242,8 @@ def main():
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
 
-    sys_ext = a.system_ext or (os.path.join(a.update, "SystemExtPartition") if os.path.isdir(a.update) else None)
-    if sys_ext and os.path.isdir(sys_ext):
-        import_system_ext(root, sys_ext)
-    else:
-        pd.log("avertissement : pas de partition système étendue (--system-ext) : création d'avatar indisponible")
+    if os.path.isdir(a.update):
+        import_system_ext(root, a.update, a.system_ext or os.path.join(a.update, "SystemExtPartition"))
     os.makedirs(os.path.join(root, "profiles"), exist_ok=True)  # profil par défaut : créé vierge par le Dashboard
     games = os.path.join(root, "games.toml")
     if not os.path.exists(games):
