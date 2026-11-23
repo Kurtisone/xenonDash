@@ -549,6 +549,9 @@ bool ShowXamGuide(uint32_t user_index, int wait_ms) {
   const uint32_t counter_addr = 0x81BFCAE8u;
   auto* counter = reinterpret_cast<uint32_t*>(base + counter_addr);
   const uint32_t counter_before = __builtin_bswap32(*counter);
+  // Toujours nécessaire (mesure du 2026-11-23, banc Xvfb, DASH_TEST_GUIDE=65) : compteur à 4 au moment de l'appel ;
+  // remis à 0, XamShowGuideUI renvoie 0 et le Guide s'affiche sur le XMB ; laissé à 4, le portier refuse (r3=5) et le
+  // XMB reste seul à l'écran.
   *counter = 0;
   REXLOG_INFO("[guide] compteur « interfaces systeme actives » (0x{:08X}) : {} -> 0 le temps de l'appel",
               counter_addr, counter_before);
@@ -571,11 +574,15 @@ bool ShowXamGuide(uint32_t user_index, int wait_ms) {
     return false;
   }
   REXLOG_INFO("[guide] XamShowGuideUI : accepté (r3=0x{:08X})", r);
-  // Diagnostic table des apps système (sub_81893EE0 : ctx(app) = 0x81C06F78 - app*184 ; validé par
+  // DASH_GUIDE_TRACE=1 : diagnostic table des apps système (sub_81893EE0 : ctx(app) = 0x81C06F78 - app*184 ; validé par
   // sub_818941B0 qui enregistre l'app 254 avec la magie 0xAAAABBBB à +8 et son id à +4). Le message
   // du Guide part vers l'app 254 ; le répartiteur du système UI ne délivre qu'à l'app ACTIVE
   // (cellule 0x817E4B64). Le champ +4 de chaque contexte est l'id auto-déclaré à l'enregistrement.
-  {
+  static const bool trace = [] {
+    const char* e = std::getenv("DASH_GUIDE_TRACE");
+    return e && *e && *e != '0';
+  }();
+  if (trace) {
     const uint32_t aa = __builtin_bswap32(*reinterpret_cast<volatile uint32_t*>(base + 0x817E4B64));
     for (int app = 246; app <= 258; ++app) {
       const uint32_t ctxa = 0x81C06F78u - static_cast<uint32_t>(app) * 184u;
