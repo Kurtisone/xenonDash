@@ -78,3 +78,15 @@ guest_path = "game:\\flash\\ximecore.xex"
 out_directory_path = "generated/dash/ximecore"
 function_table_base = 0x84E00000
 includes = ["ximecore_overrides.toml", "ximecore_auto_overrides.toml"]
+
+# Guide.AvatarMiniCreator.xex (création d'avatar du Guide, partition système étendue 20352400) recompilé comme module. Après la
+# connexion d'un profil sans avatar, signin.xex appelle XamShowAvatarMiniCreatorUI ; XAM se décharge de signin puis charge
+# XexLoadImage("\sep\20352400\Guide.AvatarMiniCreator.xex") : ce chemin est le guest_path (FindRecompiledModule le compare
+# normalisé). Copie du fichier dans assets/sep/ (assets n'est pas versionné). Base fixe 0x90100000, comme signin, createprofile et
+# gamerprofile (XAM n'en charge qu'un à la fois) : génération à part (--target, tools/regen_xam_modules.py).
+[[modules]]
+file_path = "assets/sep/Guide.AvatarMiniCreator.xex"
+guest_path = "\\sep\\20352400\\Guide.AvatarMiniCreator.xex"
+out_directory_path = "generated/dash/Guide_AvatarMiniCreator"
+function_table_base = 0x84F00000
+includes = ["Guide_AvatarMiniCreator_overrides.toml", "Guide_AvatarMiniCreator_auto_overrides.toml"]

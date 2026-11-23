@@ -1,0 +1,3 @@
+# Corrections AUTOMATIQUES (Guide_AvatarMiniCreator), écrites par tools/codegen_module.py.
+[functions]
+0x90105154 = {}  # branche depuis 0x901051A4

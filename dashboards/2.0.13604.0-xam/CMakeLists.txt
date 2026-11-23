@@ -27,9 +27,10 @@ if(TARGET dash_hud)
     target_include_directories(dash_hud PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../../common/src)
 endif()
 
-# Modules XUI du HUD de XAM (palier N3) : vk.xex (clavier virtuel), ... Même procédé que dash_hud ; imports `xam.xex`
+# Modules XUI du HUD de XAM (palier N3) : vk.xex (clavier virtuel), ..., Guide.AvatarMiniCreator.xex (cible nommée par le codegen
+# d'après le fichier : Guide_AvatarMiniCreator). Même procédé que dash_hud ; imports `xam.xex`
 # produits par tools/gen_module_xam_imports.py dans src_xui/<nom>_xam_imports.cpp.
-foreach(xui_mod vk signin createprofile gamerprofile deviceselector ximecore)
+foreach(xui_mod vk signin createprofile gamerprofile deviceselector ximecore Guide_AvatarMiniCreator)
     if(TARGET dash_${xui_mod})
         target_sources(dash_${xui_mod} PRIVATE
             ${CMAKE_CURRENT_SOURCE_DIR}/generated/dash/${xui_mod}/dash_register.cpp
