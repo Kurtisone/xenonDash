@@ -178,9 +178,18 @@ renvoient une chaîne vide avec succès. Les profils de test se suppriment dans 
   contient pas `system.manifest` : la partition est alors construite depuis le dossier qui le contient.
 - **Refus d'alias** : le module d'avatar est reconnu sous `\sep` et sous `\Device\Harddisk0\SystemExtPartition`
   (non testé à l'exécution avec un alias réel).
-- **Non vérifié** : l'avatar choisi est-il enregistré dans le profil ; la personnalisation (touche Y) demande
-  `AvatarEditor.xex` (15 Mo, non recompilé) ; l'AppImage avec ce correctif sur le Deck, à partir d'un
-  premier lancement avec le zip.
+- **Personnalisation, option 2 (2026-11-23)** : `XamLaunchAvatarEditor` (ordinal 2011, relance du titre
+  `AvatarEditor.xex`, 15 Mo, non recompilé) ouvre à la place le choix d'avatar (`XamShowAvatarMiniCreatorUI(user, 2)`,
+  ordinal 1700). Point unique : `AvatarEditorOption2` dans `common/src/dash_xam_redirect.cpp` (appelé par
+  `CallModuleImport` pour signin, createprofile, gamerprofile, hud, le MiniCreator, et par l'accroche de dash.xex).
+  Depuis le MiniCreator (Y), l'ouverture est différée (fil invité de l'hôte) jusqu'au déchargement du module : un appel
+  synchrone après son `XamAppUnloadStack` renvoie 5. Validé (banc) : profil créé, Y rouvre le choix, sélection ->
+  `XamAvatarSetManifest`, réglage `0x63E80044` (1000 octets) écrit dans `profiles/<XUID>/FFFE07D1.gpd` ; après
+  redémarrage, Sign In ne redemande plus d'avatar. **Option 1** (éditeur complet recompilé) : retirer l'appel à
+  `AvatarEditorOption2` ; l'import retombe sur l'export 2011 de XAM recompilé.
+- **Non vérifié** : le XMB affiche une silhouette grise à la place de l'avatar choisi (rendu d'avatar non étudié) ;
+  « Customize Avatar » de dash.xex n'atteint pas `XamLaunchAvatarEditor` (`XamPackageManagerGetExperienceMode`
+  du HLE sans le bit 0x2) ; l'AppImage avec ce correctif sur le Deck, à partir d'un premier lancement avec le zip.
 - **Régression corrigée puis validée** : après connexion, le Guide affichait un panneau vide (XAM chargeait
   l'XEX d'avatar non recompilé). Corrigé par le refus de `XexLoadImage` ci-dessus ; le Guide revient au menu.
   Reste : après connexion, le Guide se ferme au lieu de rester ouvert (à traiter : faire échouer

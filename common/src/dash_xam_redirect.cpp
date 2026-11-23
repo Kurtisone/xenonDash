@@ -1041,6 +1041,13 @@ static dash::xamredir::Slot g_slot_XamIsUIActive{"XamIsUIActive"};
 REX_HOOK_RAW(__imp__XamIsUIActive) {
   dash::xamredir::IsUIActive(g_slot_XamIsUIActive, ctx, base);
 }
+// « Customize Avatar » de dash.xex (sub_9231DC28) : même point que les modules (AvatarEditorOption2, via CallModuleImport).
+// Non atteint aujourd'hui : dash.xex n'appelle XamLaunchAvatarEditor que si XamPackageManagerGetExperienceMode (HLE, mode 0)
+// a le bit 0x2 et si XamPackageManagerGetFileSize (HLE, 0) trouve l'éditeur.
+REX_HOOK_RAW(__imp__XamLaunchAvatarEditor) {
+  static dash::xamredir::ModuleImport imp{"XamLaunchAvatarEditor", 2011};
+  dash::xamredir::CallModuleImport(imp, ctx, base);
+}
 DASH_XAM_REDIRECT_HOOK(XamVoiceCreate)
 DASH_XAM_REDIRECT_HOOK(XamVoiceHeadsetPresent)
 DASH_XAM_REDIRECT_HOOK(XamVoiceSubmitPacket)
