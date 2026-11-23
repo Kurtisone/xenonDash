@@ -18,7 +18,9 @@
 #include <cstdlib>
 #include <cstring>
 
+#include <mutex>
 #include <string>
+#include <unordered_map>
 
 #include <rex/filesystem/entry.h>
 #include <rex/filesystem/file.h>
@@ -30,6 +32,7 @@
 #include "kernel_sdk_fn.h"
 #include <rex/runtime.h>
 #include <rex/system/kernel_state.h>
+#include <rex/system/lzx.h>
 
 namespace {
 
@@ -382,5 +385,82 @@ REX_HOOK_RAW(__imp__EtxConsumerProcessLogs) {
   (void)base;
   if (++g_etxlogs_calls == 1)
     REXLOG_INFO("[etx] EtxConsumerProcessLogs : succes (rien a traiter)");
+  ctx.r3.u64 = 0;
+}
+
+// Décompression LZX du noyau (LDI*). Le SDK les laisse en stub (r3 = 0 inchangé, rien d'écrit) : XAM croit avoir décompressé
+// et lit un tampon vide. Mesuré le 2026-11-23 : le travail de XamAvatarGetAssets (fil de l'application d'avatar 242) appelle
+// LDICreateDecompression puis échoue en ERROR_FUNCTION_FAILED / E_FAIL (OVERLAPPED du Dashboard) : le hub garde la silhouette.
+// Signatures relevées dans XAM recompilé (sub_81B22B?? et sub_81A62DA8) :
+//   LDICreateDecompression(r3 = UINT* cbDataBlockMax, r4 = {WindowSize, CpuType} (BE), r5 = alloc, r6 = free,
+//                          r7 = espace de travail ou 0, r8 = UINT* cbSrcBufferMin, r9 = HANDLE* sortie) ; 0 = succès.
+//   LDIDecompress(r3 = handle, r4 = source, r5 = taille source, r6 = destination, r7 = UINT* taille destination, entrée/sortie).
+//   LDIResetDecompression(r3 = handle), LDIDestroyDecompression(r3 = handle) ; 0 = succès.
+// Les deux appelants remettent l'état à zéro entre deux blocs (Reset, ou Create/Destroy par bloc) : chaque LDIDecompress est
+// décodé comme un flux LZX indépendant (lzx_decompress du SDK, libmspack), la taille de destination demandée étant exacte.
+namespace {
+std::mutex g_ldi_mu;
+std::unordered_map<uint32_t, uint32_t> g_ldi_window;  // handle -> taille de fenêtre
+uint32_t g_ldi_next = 0x4C440001u;
+std::atomic<long> g_ldi_calls{0}, g_ldi_errors{0};
+uint32_t LdiRd32(const uint8_t* p) { return uint32_t(p[0]) << 24 | uint32_t(p[1]) << 16 | uint32_t(p[2]) << 8 | p[3]; }
+void LdiWr32(uint8_t* p, uint32_t v) { p[0] = v >> 24; p[1] = v >> 16; p[2] = v >> 8; p[3] = v; }
+}  // namespace
+
+REX_HOOK_RAW(__imp__LDICreateDecompression) {
+  const uint32_t cfg = ctx.r4.u32, out = ctx.r9.u32;
+  const uint32_t window = cfg ? LdiRd32(base + cfg) : 0;
+  if (!out || window < 0x8000u || window > 0x200000u || (window & (window - 1))) {
+    REXLOG_WARN("[ldi] LDICreateDecompression : paramètres refusés (fenêtre 0x{:X}, sortie {:08X})", window, out);
+    ctx.r3.u64 = 1;  // MDI_ERROR_NOT_ENOUGH_MEMORY / échec
+    return;
+  }
+  uint32_t h;
+  {
+    std::lock_guard<std::mutex> lock(g_ldi_mu);
+    h = g_ldi_next++;
+    g_ldi_window[h] = window;
+  }
+  LdiWr32(base + out, h);
+  if (g_ldi_calls.fetch_add(1) < 4)
+    REXLOG_INFO("[ldi] LDICreateDecompression(fenêtre 0x{:X}) -> handle {:08X}", window, h);
+  ctx.r3.u64 = 0;
+}
+
+REX_HOOK_RAW(__imp__LDIDecompress) {
+  const uint32_t h = ctx.r3.u32, src = ctx.r4.u32, src_size = ctx.r5.u32, dst = ctx.r6.u32, pdst = ctx.r7.u32;
+  uint32_t window = 0;
+  {
+    std::lock_guard<std::mutex> lock(g_ldi_mu);
+    auto it = g_ldi_window.find(h);
+    if (it != g_ldi_window.end()) window = it->second;
+  }
+  const uint32_t dst_size = pdst ? LdiRd32(base + pdst) : 0;
+  if (!window || !src || !dst || !dst_size || dst_size > window) {
+    REXLOG_WARN("[ldi] LDIDecompress(handle {:08X}, source {} octets, destination {} octets) : paramètres refusés", h, src_size,
+                dst_size);
+    ctx.r3.u64 = 2;  // MDI_ERROR_BAD_PARAMETERS
+    return;
+  }
+  const int rc = lzx_decompress(base + src, src_size, base + dst, dst_size, window, nullptr, 0);
+  if (rc != 0) {
+    if (g_ldi_errors.fetch_add(1) < 8)
+      REXLOG_WARN("[ldi] LDIDecompress(handle {:08X}, {} -> {} octets) : erreur LZX {}", h, src_size, dst_size, rc);
+    ctx.r3.u64 = 4;  // MDI_ERROR_FAILED
+    return;
+  }
+  ctx.r3.u64 = 0;
+}
+
+REX_HOOK_RAW(__imp__LDIResetDecompression) {
+  (void)base;
+  std::lock_guard<std::mutex> lock(g_ldi_mu);
+  ctx.r3.u64 = g_ldi_window.count(ctx.r3.u32) ? 0 : 2;
+}
+
+REX_HOOK_RAW(__imp__LDIDestroyDecompression) {
+  (void)base;
+  std::lock_guard<std::mutex> lock(g_ldi_mu);
+  g_ldi_window.erase(ctx.r3.u32);
   ctx.r3.u64 = 0;
 }
