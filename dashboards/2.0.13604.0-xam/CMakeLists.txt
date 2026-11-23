@@ -30,6 +30,15 @@ endif()
 # Modules XUI du HUD de XAM (palier N3) : vk.xex (clavier virtuel), ..., Guide.AvatarMiniCreator.xex (cible nommée par le codegen
 # d'après le fichier : Guide_AvatarMiniCreator). Même procédé que dash_hud ; imports `xam.xex`
 # produits par tools/gen_module_xam_imports.py dans src_xui/<nom>_xam_imports.cpp.
+# Guide.AvatarMiniCreator.xex n'est pas versionné (fichier Microsoft) : sans lui, le module d'avatar n'est pas généré et XAM
+# refuse la création d'avatar (XexLoadImage refusé : module non recompilé). On le signale au lieu de l'omettre en silence.
+if(NOT EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/assets/sep/Guide.AvatarMiniCreator.xex)
+    message(WARNING "assets/sep/Guide.AvatarMiniCreator.xex absent : module d'avatar (dash_Guide_AvatarMiniCreator) non "
+                    "construit, création d'avatar indisponible. Copier le fichier depuis la mise à jour (dossier $SystemUpdate) "
+                    "puis relancer tools/regen_xam_modules.py.")
+elseif(NOT TARGET dash_Guide_AvatarMiniCreator)
+    message(WARNING "assets/sep/Guide.AvatarMiniCreator.xex présent mais module d'avatar non généré : relancer tools/regen_xam_modules.py")
+endif()
 foreach(xui_mod vk signin createprofile gamerprofile deviceselector ximecore Guide_AvatarMiniCreator)
     if(TARGET dash_${xui_mod})
         target_sources(dash_${xui_mod} PRIVATE

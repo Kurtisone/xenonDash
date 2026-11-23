@@ -3,7 +3,7 @@
 # Une seule AppImage (demande du 2026-11-21 : « pas de variantes, une XenonDash-Kinect, point ») :
 # l'argument <version> choisit seulement l'arbre de build (dashboards/<version>) dont embarquer le
 # binaire et les modules recompilés — le mode XAM s'active tout seul quand libdash_xam.so est là.
-# usage: tools/make_appimage.sh <version> [--no-strip] [--no-build-tools]
+# usage: tools/make_appimage.sh <version> [--no-strip] [--no-build-tools] [--no-toolchain]
 # --no-build-tools : sans les outils de recompilation de jeux (SDK, ngpu_core, XenosRecomp...) : AppImage légère, sans « Play Game »
 # --no-toolchain : sans clang/cmake/ninja embarqués (les jeux devront être recompilés ailleurs) ;
 #                 par défaut la toolchain est embarquée si elle est trouvée sur la machine de build
@@ -15,12 +15,17 @@
 # version met DASH_NATIVE_GPU à ON (13604), sinon linux-amd64-relwithdebinfo. Le mode de rendu part dans
 # usr/share/xenondash/gpu (native : plus de plugin xenos, shaders SPIR-V générés à l'import ; xenos : émulation, comme avant).
 set -eu
-V=${1:?usage: tools/make_appimage.sh <version> [--no-strip] [--no-build-tools]}
+USAGE="usage: tools/make_appimage.sh <version> [--no-strip] [--no-build-tools] [--no-toolchain]"
+V=${1:?$USAGE}
+shift
 STRIP=1; BUILD_TOOLS=1; TOOLCHAIN=1
-for a in "${2:-}" "${3:-}" "${4:-}"; do
-  [ "$a" = "--no-strip" ] && STRIP=0
-  [ "$a" = "--no-build-tools" ] && BUILD_TOOLS=0
-  [ "$a" = "--no-toolchain" ] && TOOLCHAIN=0
+for a in "$@"; do
+  case $a in
+    --no-strip) STRIP=0;;
+    --no-build-tools) BUILD_TOOLS=0;;
+    --no-toolchain) TOOLCHAIN=0;;
+    *) echo "argument inconnu : $a" >&2; echo "$USAGE" >&2; exit 2;;
+  esac
 done
 R=$(cd "$(dirname "$0")/.." && pwd)
 BDIR=$R/dashboards/$V/out/build
@@ -41,10 +46,13 @@ done
 [ $GPU = xenos ] && { [ -f "$R/sdk/lib/librexgpu-xenos.so" ] || { echo "manquant : sdk/lib/librexgpu-xenos.so" >&2; exit 1; }; }
 TOOLS=$R/work/appimage-tools
 mkdir -p "$TOOLS"
+# appimagetool : version « continuous » (non figée), sans somme de contrôle vérifiée. APPIMAGETOOL_URL=<url> pour imposer une
+# version publiée ; pour vérifier l'outil, le déposer soi-même (après contrôle) dans work/appimage-tools/appimagetool.
+APPIMAGETOOL_URL=${APPIMAGETOOL_URL:-https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-x86_64.AppImage}
 if [ ! -x "$TOOLS/appimagetool" ]; then
-  echo "téléchargement d'appimagetool dans work/appimage-tools/"
-  curl -fL -o "$TOOLS/appimagetool" \
-    https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-x86_64.AppImage
+  echo "téléchargement d'appimagetool dans work/appimage-tools/ : $APPIMAGETOOL_URL"
+  echo "AVERTISSEMENT : appimagetool téléchargé sans version figée ni somme de contrôle (APPIMAGETOOL_URL pour en imposer une)" >&2
+  curl -fL -o "$TOOLS/appimagetool" "$APPIMAGETOOL_URL"
   chmod +x "$TOOLS/appimagetool"
 fi
 
