@@ -236,30 +236,27 @@ REX_HOOK_RAW(__imp__XexStartExecutable) {
   ctx.r3.u64 = 0;
 }
 
-// XexLoadExecutable(nom, drapeaux, &section, &base) : charge un executif. Stub du SDK. XAM l'appelle
-// juste avant XexStartExecutable, sur le chemin du demarrage d'un executif (voir la chaine du HUD).
+// XexLoadExecutable(nom, &handle, types de module, version minimale) : charge un executif. Stub du
+// SDK. XAM l'appelle juste avant XexStartExecutable, sur le chemin du demarrage d'un executif (voir
+// la chaine du HUD ; appelant 0x818783AC : r3 = r31, r4 = r24, r5 = r23, r6 = lwz 268(r1)).
 //
-// On journalise d'abord ce qui est DEMANDE : sans cela on ignore quel fichier XAM veut demarrer,
-// et toute implementation serait a l'aveugle. DASH_TRACE_XEXLOAD=1 trace chaque appel.
+// r3 est un PCHAR (chaine C dans un tableau de 256 octets de la structure du chargeur de XAM), PAS
+// un X_ANSI_STRING : le lire comme tel donnait un nom vide. r5 et r6 sont des VALEURS (types de
+// module, version minimale), pas des pointeurs : on n'y ecrit rien. DASH_TRACE_XEXLOAD=1 journalise
+// chaque appel (nom, handle, r5, r6) ; rien n'est journalise sinon.
 REX_HOOK_RAW(__imp__XexLoadExecutable) {
-  const uint32_t name_ptr = ctx.r3.u32;
-  std::string name;
-  if (name_ptr && name_ptr < 0xF0000000u) {
-    // X_ANSI_STRING : u16 longueur, u16 longueur max, u32 pointeur.
-    const uint32_t len = __builtin_bswap16(*reinterpret_cast<uint16_t*>(base + name_ptr));
-    const uint32_t str = __builtin_bswap32(*reinterpret_cast<uint32_t*>(base + name_ptr + 4));
-    if (str && str < 0xF0000000u && len > 0 && len < 512)
-      name.assign(reinterpret_cast<const char*>(base + str), len);
-  }
-  static std::atomic<long> n{0};
   static const bool trace = std::getenv("DASH_TRACE_XEXLOAD") != nullptr;
-  if (trace || ++n <= 3)
-    REXLOG_INFO("[xex] XexLoadExecutable(\"{}\", drapeaux={:X}) -> non implemente (stub du SDK)", name,
-                ctx.r4.u32);
-  // Sorties laissees a zero : l'appelant teste le statut de retour et n'utilise pas les pointeurs
-  // sur echec.
-  if (ctx.r5.u32 && ctx.r5.u32 < 0xF0000000u) *reinterpret_cast<uint32_t*>(base + ctx.r5.u32) = 0;
-  if (ctx.r6.u32 && ctx.r6.u32 < 0xF0000000u) *reinterpret_cast<uint32_t*>(base + ctx.r6.u32) = 0;
+  if (trace) {
+    const uint32_t name_ptr = ctx.r3.u32;
+    std::string name;
+    if (name_ptr && name_ptr < 0xF0000000u) {
+      const char* s = reinterpret_cast<const char*>(base + name_ptr);
+      name.assign(s, strnlen(s, 256));
+    }
+    REXLOG_INFO("[xex] XexLoadExecutable(\"{}\", handle=0x{:08X}, r5=0x{:08X}, r6=0x{:08X}) -> succes "
+                "sans chargement (stub)",
+                name, ctx.r4.u32, ctx.r5.u32, ctx.r6.u32);
+  }
   // NECESSAIRE : ne PAS renvoyer STATUS_DLL_NOT_FOUND (0xC0000135) ici. Mesure (bissection) : ce
   // code remonte jusqu'a sub_8187A038, y echoue la comparaison aux statuts toleres (0xC0050005 /
   // 0xC005000F) et declenche VdDisplayFatalError(0x00012247) — erreur fatale d'affichage, ecran
