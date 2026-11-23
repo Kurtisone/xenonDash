@@ -626,6 +626,20 @@ void IsUIActive(Slot& s, PPCContext& ctx, uint8_t* base) {
   if (ctx.r3.u32 == 0 && g_xam.load() && XamSceneAboveRest(base)) ctx.r3.u64 = 1;
 }
 
+// Avatar du hub : dash.xex lie sa propre bibliothèque d'avatar (rendu 3D par le Dashboard) et ne demande à XAM que l'état
+// (XamAvatarInitialize, sub_923C4A4C) puis manifeste, assets et animations. Le HLE du SDK fait échouer XamAvatarInitialize
+// (~0, xam_avatar.cpp) : l'octet « avatar prêt » 0x929BBAE4 reste nul, XAvatarGetManifestLocalUser (sub_923C5890) renvoie
+// 0x8000FFFF sans appeler XAM, et le hub affiche l'avatar gris par défaut au lieu de l'avatar du profil. Servis par le HLE
+// (inchangé) ; DASH_XAM_REDIRECT=XamAvatarInitialize,... les envoie à XAM recompilé (essai). Journal des 64 premiers appels.
+void AvatarCall(Slot& s, PPCContext& ctx, uint8_t* base) {
+  const uint32_t a3 = ctx.r3.u32, a4 = ctx.r4.u32, a5 = ctx.r5.u32;
+  Dispatch(s, ctx, base);
+  static std::atomic<int> logged{0};
+  if (logged.fetch_add(1) < 64)
+    REXLOG_INFO("[avatar] {}({:08X}, {:08X}, {:08X}) -> 0x{:08X} par {}", s.name, a3, a4, a5, ctx.r3.u32,
+                s.guest.load() ? "XAM recompilé" : "HLE");
+}
+
 bool ProfileModeXam() {
   static const bool on = [] {
     const char* m = std::getenv("DASH_PROFILE_MODE");
@@ -1048,6 +1062,20 @@ REX_HOOK_RAW(__imp__XamLaunchAvatarEditor) {
   static dash::xamredir::ModuleImport imp{"XamLaunchAvatarEditor", 2011};
   dash::xamredir::CallModuleImport(imp, ctx, base);
 }
+#define DASH_XAM_AVATAR_HOOK(fn)                         \
+  static dash::xamredir::Slot g_slot_##fn{#fn};          \
+  REX_HOOK_RAW(__imp__##fn) { dash::xamredir::AvatarCall(g_slot_##fn, ctx, base); }
+DASH_XAM_AVATAR_HOOK(XamAvatarInitialize)
+DASH_XAM_AVATAR_HOOK(XamAvatarShutdown)
+DASH_XAM_AVATAR_HOOK(XamAvatarGetManifestLocalUser)
+DASH_XAM_AVATAR_HOOK(XamAvatarGetManifestsByXuid)
+DASH_XAM_AVATAR_HOOK(XamAvatarGetAssetsResultSize)
+DASH_XAM_AVATAR_HOOK(XamAvatarGetAssets)
+DASH_XAM_AVATAR_HOOK(XamAvatarGenerateMipMaps)
+DASH_XAM_AVATAR_HOOK(XamAvatarSetCustomAsset)
+DASH_XAM_AVATAR_HOOK(XamAvatarLoadAnimation)
+DASH_XAM_AVATAR_HOOK(XamAvatarManifestGetBodyType)
+DASH_XAM_AVATAR_HOOK(XamAvatarGetMetadataRandom)
 DASH_XAM_REDIRECT_HOOK(XamVoiceCreate)
 DASH_XAM_REDIRECT_HOOK(XamVoiceHeadsetPresent)
 DASH_XAM_REDIRECT_HOOK(XamVoiceSubmitPacket)
