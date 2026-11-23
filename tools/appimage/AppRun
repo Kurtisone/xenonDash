@@ -97,11 +97,14 @@ detect_side_files() {
     for z in "$SIDEDIR"/*.zip "$SIDEDIR"/*SystemUpdate*.zip; do
       [ -f "$z" ] || continue
       CACHE=${XENONDASH_DATA:-${XDG_DATA_HOME:-$HOME/.local/share}/xenondash}/cache/$(basename "$z" .zip)
-      if [ ! -d "$CACHE/\$SystemUpdate" ] && [ ! -f "$CACHE/dash.xex" ]; then
+      # Le zip range le dossier en minuscules ($systemupdate) : la recherche ignore la casse (Linux distingue les noms).
+      upd_dir() { find "$1" -maxdepth 1 -mindepth 1 -type d -iname '$systemupdate' 2>/dev/null | head -1; }
+      if [ -z "$(upd_dir "$CACHE")" ] && [ ! -f "$CACHE/dash.xex" ]; then
         echo "XenonDash : dezippage de $(basename "$z") (une seule fois)" >&2
         mkdir -p "$CACHE" && unzip -qo "$z" -d "$CACHE" 2>/dev/null
       fi
-      if [ -d "$CACHE/\$SystemUpdate" ]; then UPDATE=$CACHE/\$SystemUpdate
+      D=$(upd_dir "$CACHE")
+      if [ -n "$D" ]; then UPDATE=$D
       elif [ -f "$CACHE/dash.xex" ]; then UPDATE=$CACHE; fi
       [ -n "$UPDATE" ] && break
     done
