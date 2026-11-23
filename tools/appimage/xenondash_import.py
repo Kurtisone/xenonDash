@@ -15,6 +15,8 @@ sont listés dans <root>/shaders/<part>-echecs.txt.
 
 usage: xenondash_import.py <game_data_root> <mise_à_jour> [--modules <dossier XeBuilds>]
                            [--shrdres-xam <xam.xex complet>] [--games-example <games.example.toml>] [--native-shaders]
+                           [--system-ext <dossier>]
+       xenondash_import.py <game_data_root> <mise_à_jour> --system-ext-only   partition système étendue seule
        xenondash_import.py <game_data_root> --native-shaders   génération seule, si nécessaire
        xenondash_import.py <game_data_root> --regen-shaders    génération seule, forcée
 """
@@ -129,32 +131,65 @@ def build_system_ext(update, dst):
       FFFE07DF0000000{1,2,6,8}                   -> <dst>/Content/0000000000000000/FFFE07DF/00008000/
       Xna_TitleLauncher.xex                      -> <dst>/32000100/
       autres .xex / .lex / .xzp, su20076000_*    -> <dst>/20352400/
-    Renvoie le nombre de fichiers copiés (0 si system.manifest est absent : l'index des paquets reste vide).
+    Construit dans <dst>.new puis remplace <dst> à la fin seulement : un échec laisse l'ancienne partition intacte.
+    Renvoie le nombre de fichiers copiés (0 si system.manifest est absent : rien n'est touché).
     """
     manifest = os.path.join(update, "system.manifest")
-    shutil.rmtree(dst, ignore_errors=True)
     if not os.path.isfile(manifest):
-        pd.log(f"avertissement : pas de system.manifest dans {update} : partition système étendue non construite")
+        pd.log(f"ERREUR : pas de system.manifest dans {update} : partition système étendue non construite "
+               "(index des paquets XAM vide : création d'avatar indisponible)")
         return 0
-    os.makedirs(dst)
-    shutil.copy2(manifest, os.path.join(dst, "system.manifest"))
-    n = 1
-    for name in sorted(os.listdir(update)):
-        src = os.path.join(update, name)
-        if name == "system.manifest" or not os.path.isfile(src):
-            continue
-        if re.fullmatch(r"FFFE07DF0000000[1268]", name):
-            sub = os.path.join("Content", "0000000000000000", "FFFE07DF", "00008000")
-        elif name == "Xna_TitleLauncher.xex":
-            sub = "32000100"
-        elif name.lower().endswith((".xex", ".lex", ".xzp")) or name.startswith("su20076000_"):
-            sub = "20352400"
-        else:
-            continue
-        os.makedirs(os.path.join(dst, sub), exist_ok=True)
-        shutil.copy2(src, os.path.join(dst, sub, name))
-        n += 1
+    new = dst + ".new"
+    shutil.rmtree(new, ignore_errors=True)
+    try:
+        os.makedirs(new)
+        shutil.copy2(manifest, os.path.join(new, "system.manifest"))
+        n = 1
+        for name in sorted(os.listdir(update)):
+            src = os.path.join(update, name)
+            if name == "system.manifest" or not os.path.isfile(src):
+                continue
+            if re.fullmatch(r"FFFE07DF0000000[1268]", name):
+                sub = os.path.join("Content", "0000000000000000", "FFFE07DF", "00008000")
+            elif name == "Xna_TitleLauncher.xex":
+                sub = "32000100"
+            elif name.lower().endswith((".xex", ".lex", ".xzp")) or name.startswith("su20076000_"):
+                sub = "20352400"
+            else:
+                continue
+            os.makedirs(os.path.join(new, sub), exist_ok=True)
+            shutil.copy2(src, os.path.join(new, sub, name))
+            n += 1
+    except OSError:
+        shutil.rmtree(new, ignore_errors=True)
+        raise
+    replace_dir(new, dst)
     return n
+
+
+def replace_dir(new, dst):
+    """Remplace dst par new ; l'ancien dst n'est supprimé qu'une fois new en place."""
+    old = dst + ".old"
+    shutil.rmtree(old, ignore_errors=True)
+    if os.path.lexists(dst):
+        os.replace(dst, old)
+    os.replace(new, dst)
+    shutil.rmtree(old, ignore_errors=True)
+
+
+def system_ext_source(update):
+    """Dossier d'où construire la partition : la mise à jour si c'est un dossier.
+
+    Un paquet STFS su20076000_* ne contient pas system.manifest ni les modules de la partition (seulement les
+    $flash_*, cf. tools/stfs.py) : l'extraire ne suffit pas. On prend alors le dossier qui le contient s'il porte
+    system.manifest (paquet laissé dans son $SystemUpdate) ; sinon None (partition impossible à construire).
+    """
+    if os.path.isdir(update):
+        return update
+    parent = os.path.dirname(os.path.abspath(update))
+    if os.path.isfile(os.path.join(parent, "system.manifest")):
+        return parent
+    return None
 
 
 def import_system_ext(root, update, system_ext=None):
@@ -164,14 +199,26 @@ def import_system_ext(root, update, system_ext=None):
     la création d'avatar est sautée après la connexion.
     """
     dst = os.path.join(root, "SystemExtPartition")
-    if system_ext and os.path.isdir(system_ext):
-        shutil.rmtree(dst, ignore_errors=True)
-        shutil.copytree(system_ext, dst)
-        pd.log(f"partition système étendue copiée depuis {system_ext}")
+    if system_ext:
+        if os.path.isdir(system_ext):
+            new = dst + ".new"
+            shutil.rmtree(new, ignore_errors=True)
+            shutil.copytree(system_ext, new)
+            replace_dir(new, dst)
+            pd.log(f"partition système étendue copiée depuis {system_ext}")
+            return
+        pd.log(f"avertissement : --system-ext {system_ext} n'est pas un dossier : ignoré, construction depuis la mise à jour")
+    if os.path.isdir(update) and os.path.isdir(os.path.join(update, "SystemExtPartition")):
+        return import_system_ext(root, update, os.path.join(update, "SystemExtPartition"))
+    src = system_ext_source(update)
+    if src is None:
+        pd.log(f"ERREUR : {update} est un paquet STFS (ou un fichier isolé) sans system.manifest à côté : partition "
+               "système étendue non construite, création d'avatar indisponible. Importer le dossier $SystemUpdate "
+               "complet (mise à jour dézippée) pour l'obtenir.")
         return
-    n = build_system_ext(update, dst)
+    n = build_system_ext(src, dst)
     if n:
-        pd.log(f"partition système étendue construite depuis la mise à jour : {n} fichiers dans {dst}")
+        pd.log(f"partition système étendue construite depuis {src} : {n} fichiers dans {dst}")
 
 
 def main():
@@ -184,6 +231,9 @@ def main():
     ap.add_argument("--shrdres-xam", help="xam.xex complet (mise à jour récente, ex. 17559) d'où tirer shrdres.xzp")
     ap.add_argument("--system-ext", help="partition système étendue (dossier avec system.manifest, 20352400/, 32000100/, "
                                          "Content/) ; par défaut <mise à jour>/SystemExtPartition si présent")
+    ap.add_argument("--system-ext-only", action="store_true",
+                    help="(re)construire seulement <root>/SystemExtPartition depuis la mise à jour (installations "
+                         "importées avant la partition système étendue)")
     ap.add_argument("--games-example", help="modèle de games.toml")
     ap.add_argument("--native-shaders", action="store_true", help="générer les shaders SPIR-V du rendu natif (si nécessaire)")
     ap.add_argument("--regen-shaders", action="store_true", help="régénérer les shaders SPIR-V du rendu natif (sans import)")
@@ -197,6 +247,11 @@ def main():
         sys.exit(1 if failed else 0)
     if not a.update:
         ap.error("mise à jour requise (ou --native-shaders / --regen-shaders)")
+    if a.system_ext_only:
+        if not os.path.isfile(os.path.join(root, ".ready")):
+            sys.exit("[import] --system-ext-only : données non importées sous " + root)
+        import_system_ext(root, a.update, a.system_ext)
+        sys.exit(0)
 
     os.makedirs(root, exist_ok=True)
     tmp = tempfile.mkdtemp(prefix="xenondash-import-")
@@ -234,16 +289,16 @@ def main():
             shutil.copyfile(flash_xam, root_xam)  # rekeyé par stage_assets (port_dashboard)
         elif own_xam:
             shutil.copyfile(own_xam, root_xam)
-        elif os.path.exists(root_xam):
-            os.remove(root_xam)
+        else:
+            if os.path.exists(root_xam):
+                os.remove(root_xam)
             pd.log("avertissement : pas de $flash_xam.xex dans la mise à jour : shaders du HUD non générés")
     except pd.StageError as e:
         sys.exit(f"[import] ÉCHEC : {e}")
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
 
-    if os.path.isdir(a.update):
-        import_system_ext(root, a.update, a.system_ext or os.path.join(a.update, "SystemExtPartition"))
+    import_system_ext(root, a.update, a.system_ext)
     os.makedirs(os.path.join(root, "profiles"), exist_ok=True)  # profil par défaut : créé vierge par le Dashboard
     games = os.path.join(root, "games.toml")
     if not os.path.exists(games):

@@ -178,6 +178,21 @@ fi
 
 if ! ready; then echo "Données absentes : $DATA (utiliser --import)" >&2; exit 1; fi
 
+# Installations importées avant la partition système étendue (commit 16251b5) : .ready présent mais pas de
+# SystemExtPartition (index des paquets XAM vide, création d'avatar sautée). Seule cette étape est refaite
+# (copie de fichiers, quelques secondes), depuis la mise à jour posée à côté de l'AppImage, si elle porte system.manifest.
+if [ "$IMPORTED" = 0 ] && [ ! -f "$DATA/SystemExtPartition/system.manifest" ]; then
+  detect_side_files
+  SEP_SRC=$UPDATE
+  [ -n "$SEP_SRC" ] && [ -f "$SEP_SRC" ] && SEP_SRC=$(dirname "$SEP_SRC")
+  if [ -n "$SEP_SRC" ] && [ -f "$SEP_SRC/system.manifest" ]; then
+    python3 -I "$SHARE/tools/xenondash_import.py" "$DATA" "$SEP_SRC" --system-ext-only \
+      || echo "XenonDash : partition système étendue non construite (voir ci-dessus)." >&2
+  else
+    echo "XenonDash : partition système étendue absente (création d'avatar indisponible) : relancer avec --import <dossier \$SystemUpdate>." >&2
+  fi
+fi
+
 if [ "$REGEN_SHADERS" = 1 ]; then
   [ "$GPU" = native ] || { echo "--regen-shaders : sans objet pour un rendu $GPU" >&2; exit 1; }
   exec python3 -I "$SHARE/tools/xenondash_import.py" "$DATA" --regen-shaders
