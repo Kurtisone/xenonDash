@@ -35,7 +35,11 @@ BUILD=${BUILD_DIR:-$WANT}
 BIN=$BDIR/$BUILD/dash
 [ -x "$BIN" ] || { echo "binaire absent : $BIN (compiler d'abord le projet)" >&2; exit 1; }
 GPU=xenos
+# Le rendu natif est une définition de compilation (target_compile_definitions DASH_NATIVE_GPU=1 dans le CMakeLists du
+# Dashboard), pas une option de cache : on la cherche dans build.ninja. Sinon l'AppImage serait marquée xenos à tort
+# (--native-shaders jamais passé, shaders du HUD absents).
 grep -q '^DASH_NATIVE_GPU:BOOL=ON' "$BDIR/$BUILD/CMakeCache.txt" 2>/dev/null && GPU=native
+grep -q 'DDASH_NATIVE_GPU=1' "$BDIR/$BUILD/build.ninja" 2>/dev/null && GPU=native
 echo "build embarqué : $BUILD (rendu : $GPU)"
 if [ $GPU = native ] && grep -a -q 'librexgpu-xenos' "$BIN"; then
   echo "le binaire natif référence encore le plugin xenos : refusé" >&2; exit 1
