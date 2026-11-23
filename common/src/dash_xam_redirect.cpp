@@ -28,6 +28,7 @@
 #include <rex/system/function_dispatcher.h>
 #include <rex/system/kernel_state.h>
 #include <rex/system/user_module.h>
+#include <rex/system/xam/user_profile.h>
 #include <rex/system/xex_module.h>
 #include <rex/system/xobject.h>
 #include <rex/system/xthread.h>
@@ -90,6 +91,7 @@ PPCFunc* FindHle(const std::string& sym) {
 }
 
 void DispatchImpl(Slot& s, PPCContext& ctx, uint8_t* base);
+void SyncHleProfileWithXam(const PPCContext& ctx, uint8_t* base, uint64_t wanted);
 std::atomic<rex::system::KernelState*> g_ks{nullptr};
 
 // Exécute l'import : XAM recompilé si redirigé, sinon le HLE du SDK (même fonction que sans ce fichier).
@@ -182,7 +184,58 @@ void Dispatch(Slot& s, PPCContext& ctx, uint8_t* base) {
     }
     return;
   }
+  // Mode profil XAM : les réglages de profil restent servis par le HLE (voir dash_app_base.cpp, ApplyProfileSettings), mais le
+  // Dashboard les demande pour le XUID du compte connecté dans XAM recompilé. Le HLE refusait ce XUID (le sien est celui de
+  // l'utilisateur fixe du runtime) : X_E_NO_SUCH_USER, carte joueur vide (ni gamertag ni avatar, « 0 » au lieu du Gamerscore).
+  // On aligne donc l'identité du profil HLE sur le compte connecté (XUID et gamertag lus dans XAM) avant de servir la requête.
+  if (ProfileModeXam() && !s.guest.load() &&
+      (std::string_view(s.name) == "XamUserReadProfileSettings" || std::string_view(s.name) == "XamUserReadProfileSettingsEx")) {
+    const uint32_t xuid_count = ctx.r5.u32, xuids = ctx.r6.u32;
+    const uint64_t wanted = (xuid_count && xuids) ? __builtin_bswap64(*reinterpret_cast<const uint64_t*>(base + xuids)) : 0;
+    SyncHleProfileWithXam(ctx, base, wanted);
+    DispatchImpl(s, ctx, base);
+    static std::atomic<int> logged{0};
+    if (logged.fetch_add(1) < 4)
+      REXLOG_INFO("[xamredir] {}(xuid {:016X}) par HLE -> 0x{:08X}", s.name, wanted, ctx.r3.u32);
+    return;
+  }
   DispatchImpl(s, ctx, base);
+}
+
+// Lit dans XAM recompilé le XUID et le gamertag de l'utilisateur 0 (appel invité, tampons pris sous la pile de l'appelant) et les
+// donne au profil HLE. `wanted` : XUID demandé au HLE (0 = par index) ; un XUID étranger au compte connecté n'est pas adopté.
+void SyncHleProfileWithXam(const PPCContext& ctx, uint8_t* base, uint64_t wanted) {
+  rex::system::KernelState* ks = g_ks.load();
+  auto* profile = ks ? ks->user_profile() : nullptr;
+  if (!profile) return;
+  const uint32_t sp = ctx.r1.u32;
+  const uint32_t xuid_buf = sp - 0x40, tag_buf = sp - 0x80;  // entre la pile de l'appelant et celle de l'appel (tmp.r1)
+  PPCContext tmp = ctx;
+  tmp.r1.u64 = sp - 0x400;
+  std::memset(base + xuid_buf, 0, 8);
+  tmp.r3.u64 = 0;
+  tmp.r4.u64 = 3;  // XUID hors ligne ou en ligne (masque du Dashboard)
+  tmp.r5.u64 = xuid_buf;
+  if (!CallXamExport("XamUserGetXUID", tmp, base) || tmp.r3.u32 != 0) return;
+  const uint64_t xuid = __builtin_bswap64(*reinterpret_cast<const uint64_t*>(base + xuid_buf));
+  if (!xuid || (wanted && wanted != xuid) || xuid == profile->xuid()) return;
+  std::memset(base + tag_buf, 0, 32);
+  tmp = ctx;
+  tmp.r1.u64 = sp - 0x400;
+  tmp.r3.u64 = 0;
+  tmp.r4.u64 = tag_buf;
+  tmp.r5.u64 = 16;
+  std::string gamertag;
+  if (CallXamExport("XamUserGetGamerTag", tmp, base) && tmp.r3.u32 == 0) {
+    for (uint32_t i = 0; i < 15; ++i) {
+      const uint16_t c = static_cast<uint16_t>(base[tag_buf + 2 * i] << 8 | base[tag_buf + 2 * i + 1]);
+      if (!c) break;
+      gamertag += c < 0x80 ? static_cast<char>(c) : '?';
+    }
+  }
+  REXLOG_INFO("[xamredir] profil HLE aligné sur le compte XAM connecté : XUID {:016X} -> {:016X}, gamertag '{}'", profile->xuid(),
+              xuid, gamertag);
+  profile->SetIdentity(xuid, gamertag);
 }
 
 void DispatchImpl(Slot& s, PPCContext& ctx, uint8_t* base) {
