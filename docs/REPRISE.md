@@ -1,12 +1,15 @@
 # Reprise du projet par une autre session ou un autre modèle
 
 Ce document permet de reprendre le travail sans l'historique de conversation. Dernière mise à jour :
-2026-11-21 (nuit). **État bref** : boot propre, hub NXE navigable au clavier, Game Library stable
-(entrée/sortie sans crash), boîtes système rendues, disque complètement supprimé, une seule AppImage
-`XenonDash-Kinect.AppImage`. **Front unique : le Guide s'ouvre et sa scène 0x21015 CHARGE (r3=0, au
-banc et sur la machine de l'utilisateur) mais ne prend pas encore la présentation** — détails dans
-« État du front », mesures complètes dans `docs/xam_13604_compilation.md`. Index de la documentation :
-[INDEX.md](INDEX.md) ; le README est destiné aux utilisateurs.
+2026-11-23. **État bref** : boot propre, hub NXE navigable au clavier, Game Library stable, boîtes système
+rendues, disque complètement supprimé, une seule AppImage `XenonDash-Kinect.AppImage`. Le Guide s'ouvre et
+l'utilisateur le voit à l'écran (Deck). Création de profil, connexion par Sign In sans code d'accès et gamertag
+sur le XMB fonctionnent (banc). Couleurs et voile du Guide corrigés. **Avatar** : l'index des paquets de XAM est
+rempli et le module `Guide.AvatarMiniCreator.xex` est recompilé ; l'écran de création d'avatar s'affiche après la
+connexion d'un profil sans avatar (banc), mais l'avatar n'est pas encore vérifié dans le profil ni sur le XMB, et
+l'AppImage n'a pas encore été testée sur le Deck avec ce correctif. Détails : « Avatar » ci-dessous ; mesures
+complètes dans `docs/xam_13604_compilation.md`. Index de la documentation : [INDEX.md](INDEX.md) ; le README est
+destiné aux utilisateurs.
 
 ## Objectif en cours (Kinect 2.0.13604)
 Le Dashboard Kinect doit rester dans l'interface Xbox : plus de fenêtres ImGui façon Xenia-canary ; sans profil, le même parcours qu'une console
@@ -48,7 +51,12 @@ EOF
 - **AppImage** : `APPIMAGE_EXTRACT_AND_RUN=1 BUILD_DIR=linux-amd64-relwithdebinfo \
   ./tools/make_appimage.sh 2.0.13604.0-xam` — sortie fixe `out/appimage/XenonDash-Kinect.AppImage`
   (une seule AppImage, demande utilisateur ; le nom ne varie plus). `appimagetool` réclame `file`
-  et `rsvg-convert` (paquet `librsvg2-bin`).
+  et `rsvg-convert` (paquet `librsvg2-bin`). **Dans le conteneur podman**, monter aussi le dossier
+  `work/` du dépôt principal : `work` est un lien vers `/home/kurtisone/Projects/xbox360/work`, et sans ce
+  montage l'étape d'empaquetage échoue (« cannot create directory … work »). Les modules recompilés
+  embarqués sont listés par `module recompilé embarqué : libdash_*.so` dans le journal de build.
+- **Fichiers absents du dépôt, nécessaires au build** : `dashboards/2.0.13604.0-xam/assets/sep/Guide.AvatarMiniCreator.xex`
+  (copie de l'XEX de la mise à jour, ignorée par git via `*.xex`). Sans lui, le module d'avatar n'est pas compilé.
 - **Validation minimale du XMB (procédure éprouvée, 2026-11-22)** : lancer `Xvfb :N -screen 0 1280x720x24
   -fbdir <dossier> &`, puis le dash avec `DISPLAY=:N DASH_AUDIO=nop DASH_XAM_MODULE=2 DASH_PROFILE_MODE=xam
   VK_ICD_FILENAMES=/usr/share/vulkan/icd.d/lvp_icd.json LD_LIBRARY_PATH=<sdk>/lib
@@ -127,14 +135,42 @@ EOF
   perdues à la régénération — y mettre des sondes temporaires seulement ; le correctif durable va
   dans `common/src`, `native_gpu` ou le SDK.
 
-## Profil (palier N4, commité)
+## Profil (palier N4)
 `DASH_PROFILE_MODE=xam` (activé par l'AppImage) : création de profil, connexion et parcours « aucun
 profil » avec les vraies fenêtres Xbox. Pilote STFS minimal côté noyau, profil local hors ligne (XUID
-aléatoire, clé locale tirée au hasard), aucune clé de console. `dash_auto_profile` (défaut `false`) :
-sans profil, `XamUserGetName`/`GetGamerTag` renvoient une chaîne vide avec succès (jamais d'erreur :
-le Dashboard lirait un tampon non initialisé) — le bandeau affiche le score seul. Aucun hook de
-*création* de profil côté hôte : le marqueur `profiles/<XUID>/.created` reste à poser quand le
-parcours XAM le permettra. Détail : `docs/xam_recompile.md`.
+aléatoire, clé locale tirée au hasard), aucune clé de console. Validé (banc, 2026-11-23) : création,
+connexion par Sign In sans code d'accès, gamertag sur le XMB (`XamUserReadProfileSettings` synchronisé avec
+le profil HLE, cd7f3b0). `dash_auto_profile` (défaut `false`) : sans profil, `XamUserGetName`/`GetGamerTag`
+renvoient une chaîne vide avec succès. Les profils de test se suppriment dans `profiles/<XUID>` et
+`Content/<XUID>`. Détail : `docs/xam_recompile.md`.
+
+## Avatar (2026-11-23)
+- **Cause de l'absence d'écran d'avatar** : `signin.xex` n'appelle `XamShowAvatarMiniCreatorUI` que si
+  `XamPackageManagerGetFileSize("Guide.AvatarMiniCreator.xex")` renvoie une taille non nulle. XAM lit son index
+  des paquets dans `system.manifest` (signé) de la partition système étendue `\Device\Harddisk0\SystemExtPartition\`,
+  qui n'existait pas. Correctifs (commits `66ecb90`, `4af0231`, `3f234c2`, `16251b5`) :
+  - `common/src/dash_xam_runtime.cpp` : `MountSystemExtPartition` (monte `<données>/SystemExtPartition` sur
+    `\Device\HostSystemExtPartition`, lien depuis `\Device\Harddisk0\SystemExtPartition` : le NullDevice du SDK
+    masquerait un montage direct) ; `XboxKrnlVersion` reprend la version du Dashboard (XAM compare la version du
+    manifeste à celle du noyau) ; le hook `XexLoadImage` refuse les modules non recompilés de cette partition.
+  - `common/src/xam_kernel_stubs.cpp` : `XexLoadImageHeaders` lit l'en-tête XEX2 ; `XeKeysVerifyRSASignature`
+    renvoie TRUE en dur (les clés Microsoft ne sont pas disponibles ; le SHA-1 du contenu reste vérifié par XAM).
+    **Compromis accepté par l'utilisateur.**
+  - `dashboards/2.0.13604.0-xam` : module `Guide_AvatarMiniCreator` (base 0x90100000, table 0x84F00000,
+    `guest_path = \sep\20352400\Guide.AvatarMiniCreator.xex`), génération à part dans `tools/regen_xam_modules.py`.
+  - `tools/appimage/xenondash_import.py` : `build_system_ext` reconstruit `SystemExtPartition` depuis le dossier
+    `$SystemUpdate` dézippé (`AppRun` dézippe le zip de la mise à jour) : `system.manifest` à la racine ;
+    `FFFE07DF0000000{1,2,6,8}` dans `Content/0000000000000000/FFFE07DF/00008000/` ; `Xna_TitleLauncher.xex` dans
+    `32000100/` ; les autres `.xex`, `.lex`, `.xzp` et `su20076000_*` dans `20352400/`. Vérifié : l'arbre obtenu
+    depuis `~/dash/$systemupdate` est identique à l'arbre validé à la main. `--system-ext <dossier>` remplace
+    cette reconstruction.
+- **Non vérifié** : l'avatar choisi est-il enregistré dans le profil ; la personnalisation (touche Y) demande
+  `AvatarEditor.xex` (15 Mo, non recompilé) ; l'AppImage avec ce correctif sur le Deck, à partir d'un
+  premier lancement avec le zip.
+- **Régression corrigée puis validée** : après connexion, le Guide affichait un panneau vide (XAM chargeait
+  l'XEX d'avatar non recompilé). Corrigé par le refus de `XexLoadImage` ci-dessus ; le Guide revient au menu.
+  Reste : après connexion, le Guide se ferme au lieu de rester ouvert (à traiter : faire échouer
+  `XamShowAvatarMiniCreatorUI` dans `dash_xam_redirect.cpp`, maintenant que le module est recompilé).
 
 ## État du front (Guide)
 Chaîne complète établie et sondée (`[guidetrace]`, `[guideio]`, `[scene]`, `[uistate]`, `[app254]`) :
@@ -150,7 +186,9 @@ en +4) → chargeur `sub_8189BE20` (case 20) → ouvreur `sub_818A21B0`.
   par le répartiteur — mesuré) ; (b) pose de `+172=1` (« pipeline d'affichage prêt » : sur console,
   l'init vidéo D3D de XAM le pose — chaîne que le rendu natif ngpu remplace). Résultat : la scène
   charge (`r3=0`), l'état avance (+0=2, +56=1), au banc ET sur la machine de l'utilisateur.
-- **Restant : la présentation.** La scène chargée ne prend pas le rendu ; le compositeur affiche
+- **Présentation (ancienne impasse, 2026-11-23)** : l'utilisateur signale que le Guide s'affiche sur le Deck
+  avec le build de la période (cause précise non relevée dans ce document ; les mesures ci-dessous datent du
+  21 novembre). Ce qui était mesuré alors : la scène chargée ne prend pas le rendu ; le compositeur affiche
   toujours le hub. Mesuré et écarté : le rappel `[0x402E9B80+48]` n'est jamais écrit, mais la pompe
   UI (`sub_818905B0`) saute ces items (état 2, zéro `[trap]`) — normal ; forcer la cellule « app
   active » (0x817E4B64) à 254 ne change rien à l'affichage — ce n'est pas le sélecteur de rendu.
@@ -180,19 +218,18 @@ en +4) → chargeur `sub_8189BE20` (case 20) → ouvreur `sub_818A21B0`.
   le DPC ; chargement de XAM asynchrone.
 
 ## Suite, par ordre de priorité
-1. **Guide — couche présentation** : suivre les notifications post-ouverture (apps 255 et 9,
-   `[0x81C0638C]`) pour trouver qui fait présenter la scène chargée ; ensuite la bascule du
-   compositeur. Tout le reste de la chaîne fonctionne (voir « État du front »).
+1. **Avatar** : tester l'AppImage sur le Deck (premier lancement avec le zip) ; corriger la fermeture du Guide
+   après connexion (`XamShowAvatarMiniCreatorUI`) ; vérifier que l'avatar choisi est enregistré et s'affiche
+   sur le XMB et dans My Xbox ; personnalisation (Y, `AvatarEditor.xex`) à recompiler plus tard.
 2. **Manette** : la chaîne pad→SDL→InputSystem→XInputd→XAM est vivante et SDL voit les deux manettes
    (Steam Deck interne + Afterglow) ; les boutons sont arrivés au hook dans une session (12:56) et
    plus du tout dans une autre (14:20). Diagnostic en place (`XInputdReadState` journalise «
    l'InputSystem n'a pas d'etat ») — trancher avec le FICHIER `dash.log` de l'utilisateur.
-3. **Profil** : « Enter Pass Code » inexpliqué ; `XamUserReadProfileSettings(Ex)` redirigé vers XAM
-   plante le Dashboard (lecture invitée de `0x7008004F`) — gamertag/Gamerscore du bandeau restent
-   liés au profil HLE ; fenêtre « Save Profile » absente du parcours.
+3. **Profil** : « Enter Pass Code » inexpliqué à vérifier sur le Deck ; sous-menus de Customize Profile
+   (image, nom, avatar) non testés ; panneau du Guide vide après B non analysé.
 4. **Écran de progression des jeux** : les boîtes XAM fonctionnent désormais — brancher la
    progression de construction (`dash_xam_hud_ui.cpp`, socle N5 déjà commité) dessus et vérifier à
    l'écran ; toasts et redirection des succès.
-5. **Divers** : glyphe Gamerscore `U+E00A` absent des `.xtt` ; avatar (paquet utilisateur) ;
-   recompilateur générique pour XDK tardives (Trials Fusion : image noire, shaders hors
-   `Set*Shader`) ; vrai lecteur optique exposé comme `\Device\CdRom0` (directive utilisateur).
+5. **Divers** : glyphe Gamerscore `U+E00A` absent des `.xtt` ; recompilateur générique pour XDK tardives
+   (Trials Fusion : image noire, shaders hors `Set*Shader`) ; vrai lecteur optique exposé comme
+   `\Device\CdRom0` (directive utilisateur) ; étirement 32:9 de l'AppImage (reporté à la demande de l'utilisateur).
