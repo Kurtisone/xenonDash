@@ -732,7 +732,7 @@ void Configure(rex::system::KernelState* ks, rex::runtime::ExportResolver* resol
   // (fonction purement d'interface, sans sémantique de profil — socle de dash_xam_hud_ui.cpp).
   static std::string redirect_list;
   if (ProfileModeXam()) {
-    redirect_list = "XGetVideoMode,XamUserGetXUID,XamUserGetSigninState,XamUserLogon,XamUserCheckPrivilege,XamUserIsOnlineEnabled,"
+    redirect_list = "XGetVideoMode,XamUserGetXUID,XamUserGetSigninState,XamUserLogon,XamUserLogonEx,XamUserCheckPrivilege,XamUserIsOnlineEnabled,"
                     "XamShowMessageBoxUI,XamShowMessageBoxUIEx,"
                     "XamShowKeyboardUI,XamShowSigninUI,XamShowSigninUIp,XamShowCreateProfileUI,XamShowDeviceSelectorUI,"
                     "XamShowGamerCardUIForXUID,XamShowGuideUI";
@@ -912,6 +912,7 @@ DASH_XAM_REDIRECT_HOOK(XamTaskCloseHandle)
 DASH_XAM_REDIRECT_HOOK(XMsgCancelIORequest)
 DASH_XAM_REDIRECT_HOOK(XamUserGetXUID)
 DASH_XAM_REDIRECT_HOOK(XamUserLogon)
+DASH_XAM_REDIRECT_HOOK(XamUserLogonEx)  // ordinal 548 : appelée par dash.xex avant XamShowSigninUIp
 DASH_XAM_REDIRECT_HOOK(XamUserGetSigninState)
 DASH_XAM_REDIRECT_HOOK(XamUserReadProfileSettings)
 DASH_XAM_REDIRECT_HOOK(XamUserReadProfileSettingsEx)
