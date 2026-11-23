@@ -28,6 +28,7 @@
 #include <rex/system/function_dispatcher.h>
 #include <rex/system/kernel_state.h>
 #include <rex/system/user_module.h>
+#include <rex/system/xex_module.h>
 #include <rex/system/xobject.h>
 #include <rex/system/xthread.h>
 #include <rex/types.h>
@@ -577,6 +578,16 @@ bool CallXamExport(const char* name, PPCContext& ctx, uint8_t* base) {
   return true;
 }
 
+// Vrai si l'adresse invitée (lr d'un appelant) appartient au module chargé de ce nom (ex. "hud.xex").
+bool CallerInModule(uint32_t address, std::string_view module_name) {
+  rex::system::KernelState* ks = g_ks.load();
+  if (!ks) return false;
+  auto module = ks->GetModule(module_name, true);
+  if (!module) return false;
+  auto* user = static_cast<rex::system::UserModule*>(module.get());
+  return user->xex_module() && user->xex_module()->ContainsAddress(address);
+}
+
 void CallModuleImport(ModuleImport& imp, PPCContext& ctx, uint8_t* base) {
   PPCFunc* fn = imp.fn.load();
   if (!fn) {
@@ -613,7 +624,11 @@ void CallModuleImport(ModuleImport& imp, PPCContext& ctx, uint8_t* base) {
   // Boîte de message du HUD au démarrage (« disque illisible » : ERROR_WRONG_DISK, lecteur vide) : supprimée. Renvoyer une
   // erreur (ERROR_CANCELLED) faisait arrêter la boucle d'images du HUD (vtable+44, docs : mesure du 21/11) ; on renvoie donc
   // le chemin de succès (r3 = 0). DASH_HUD_MSGBOX_KEEP=1 conserve la boîte (diagnostic).
-  if (std::string_view(imp.name) == "XamShowMessageBox" && !std::getenv("DASH_HUD_MSGBOX_KEEP")) {
+  // Seules les boîtes demandées par hud.xex sont supprimées : celles des autres modules d'interface sont légitimes (ex.
+  // createprofile.xex, « nom de profil déjà utilisé » : la supprimer validait un profil sans nom, écran vide, aucun
+  // XamProfileCreate — mesure du 23/11).
+  if (std::string_view(imp.name) == "XamShowMessageBox" && !std::getenv("DASH_HUD_MSGBOX_KEEP") &&
+      CallerInModule(static_cast<uint32_t>(ctx.lr), "hud.xex")) {
     REXLOG_INFO("[xamredir] XamShowMessageBox refusee (lecteur vide, boite sans cause) lr={:08X}", (uint32_t)ctx.lr);
     ctx.r3.u64 = 0;
     return;
