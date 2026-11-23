@@ -151,6 +151,12 @@ std::optional<std::string> RecompiledSystemExtPath(rex::system::KernelState* ks,
   return std::nullopt;
 }
 
+bool IsUnrecompiledSystemExtModule(rex::system::KernelState* ks, const char* name) {
+  auto* entry = std::strpbrk(name, "\\/:") ? REX_KERNEL_FS()->ResolvePath(name) : nullptr;
+  if (!entry || !entry->absolute_path().starts_with(kSystemExtHostDevice)) return false;
+  return !ks->GetModule(name) && !RecompiledSystemExtPath(ks, name, entry->absolute_path());
+}
+
 void MountSystemExtPartition(rex::filesystem::VirtualFileSystem* vfs, const fs::path& dir) {
   if (!fs::is_regular_file(dir / "system.manifest")) {
     REXLOG_WARN("[dash] {} sans system.manifest : partition système étendue absente (index des paquets de XAM vide)",

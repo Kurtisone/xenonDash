@@ -40,6 +40,10 @@ void MountXamDevices(rex::filesystem::VirtualFileSystem* vfs);
 // index (+164) : XamPackageManagerGetFileSize/GetFilePathW y cherchent les fichiers. Sans elle l'index reste vide.
 void MountSystemExtPartition(rex::filesystem::VirtualFileSystem* vfs, const std::filesystem::path& dir);
 
+// Vrai si `name` (chemin invité, résolu par le VFS) désigne un fichier de la partition système étendue sans module recompilé
+// enregistré (sous ce chemin ou un autre alias de la partition). Faux hors de cette partition ou si le fichier est absent.
+bool IsUnrecompiledSystemExtModule(rex::system::KernelState* ks, const char* name);
+
 // Exécute `fn` sur un thread hôte du processus SYSTÈME (X_PROCTYPE_SYSTEM) et attend sa fin. XAM choisit son état
 // d'après KeGetCurrentProcessType() (== 2) : rex::system::XHostThread le place dans le processus titre (type 1), où
 // les objets de XAM ne sont jamais créés. Les threads créés par XAM (ExCreateThread, drapeau 2) sont déjà système.

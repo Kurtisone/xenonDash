@@ -246,21 +246,32 @@ REX_HOOK_RAW(__imp__XexStartExecutable) {
 // chaque appel (nom, handle, r5, r6) ; rien n'est journalise sinon.
 REX_HOOK_RAW(__imp__XexLoadExecutable) {
   static const bool trace = std::getenv("DASH_TRACE_XEXLOAD") != nullptr;
-  if (trace) {
-    const uint32_t name_ptr = ctx.r3.u32;
-    std::string name;
-    if (name_ptr && name_ptr < 0xF0000000u) {
-      const char* s = reinterpret_cast<const char*>(base + name_ptr);
-      name.assign(s, strnlen(s, 256));
-    }
-    REXLOG_INFO("[xex] XexLoadExecutable(\"{}\", handle=0x{:08X}, r5=0x{:08X}, r6=0x{:08X}) -> succes "
-                "sans chargement (stub)",
-                name, ctx.r4.u32, ctx.r5.u32, ctx.r6.u32);
+  const uint32_t name_ptr = ctx.r3.u32;
+  std::string name;
+  if (name_ptr && name_ptr < 0xF0000000u) {
+    const char* s = reinterpret_cast<const char*>(base + name_ptr);
+    name.assign(s, strnlen(s, 256));
   }
-  // NECESSAIRE : ne PAS renvoyer STATUS_DLL_NOT_FOUND (0xC0000135) ici. Mesure (bissection) : ce
-  // code remonte jusqu'a sub_8187A038, y echoue la comparaison aux statuts toleres (0xC0050005 /
-  // 0xC005000F) et declenche VdDisplayFatalError(0x00012247) — erreur fatale d'affichage, ecran
-  // noir. Un échec « honnête » ici coute donc l'affichage entier.
+  // Echec honnete pour un executif de la partition systeme etendue sans code recompile (ex.
+  // \sep\20352400\AvatarEditor.xex, lance par XamLaunchAvatarEditor apres ExTerminateTitleProcess) :
+  // un succes sans chargement laissait XAM croire le titre demarre. Le module de demarrage
+  // (\SystemRoot\dash.xex, dans la flash) n'est pas concerne et reussit toujours.
+  //
+  // Code choisi : 0xC0050005. Lecture de XAM : sub_818781E8 (appelant direct) le renvoie sans
+  // nouvelle tentative (0xC0050004 et 0xC000026E y sont retentes apres 1 s) ; sub_81878400 le
+  // remonte tel quel a sub_8187A038, qui le tolere (comme 0xC005000A) : sortie de la boucle de
+  // chargement, drapeau +632 pose, KeSetEvent(+784), sans VdDisplayFatalError. Tout autre statut
+  // negatif (ex. STATUS_DLL_NOT_FOUND, 0xC0000135, mesure) y aboutit a VdDisplayFatalError(0x12247).
+  const bool refuse = !name.empty() && dash::xamrt::IsUnrecompiledSystemExtModule(REX_KERNEL_STATE(), name.c_str());
+  if (trace)
+    REXLOG_INFO("[xex] XexLoadExecutable(\"{}\", handle=0x{:08X}, r5=0x{:08X}, r6=0x{:08X}) -> {}", name,
+                ctx.r4.u32, ctx.r5.u32, ctx.r6.u32,
+                refuse ? "0xC0050005 (non recompile)" : "succes sans chargement (stub)");
+  if (refuse) {
+    REXLOG_WARN("[xex] XexLoadExecutable(\"{}\") refuse : executif non recompile", name);
+    ctx.r3.u64 = 0xC0050005;
+    return;
+  }
   ctx.r3.u64 = 0;
 }
 
