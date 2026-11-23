@@ -104,7 +104,8 @@ EOF
   générés à l'import de l'AppImage). **Tous traduits** : 258/258 dash et 34/34 HUD (correctifs
   `patches/xenosrecomp/0005` à `0008` + `ngpu_core/src/renderer.cpp` ; détail dans `docs/technique.md`).
 - Régénérer les modules XAM/HUD : `python3 tools/regen_xam_modules.py` (après tout changement de
-  manifeste ou d'overrides), puis `python3 tools/xam_unimpl_patch.py`, puis compilation.
+  manifeste ou d'overrides), puis compilation. `tools/xam_unimpl_patch.py` est déjà lancé par
+  `regen_xam_modules.py` (inutile de le relancer à la main).
 - Builds longs en arrière-plan avec attente BORNÉE ; jamais deux builds lourds simultanés ; un seul
   agent par groupe de fichiers.
 
@@ -186,6 +187,9 @@ en +4) → chargeur `sub_8189BE20` (case 20) → ouvreur `sub_818A21B0`.
   par le répartiteur — mesuré) ; (b) pose de `+172=1` (« pipeline d'affichage prêt » : sur console,
   l'init vidéo D3D de XAM le pose — chaîne que le rendu natif ngpu remplace). Résultat : la scène
   charge (`r3=0`), l'état avance (+0=2, +56=1), au banc ET sur la machine de l'utilisateur.
+  **RETIRÉ depuis** (mesure du 2026-11-22, commentaire de `ShowXamGuide`) : plus d'envoi de `0x80000012` à la main
+  ni de `+172` forcé ; avec `XeKeysGetStatus` = 0x4, le fil du HUD de XAM (`sub_818A2F90` → `sub_818A2C98`) pose
+  lui-même `+172`/`+176`. Ce paragraphe ne décrit plus le code actuel.
 - **Présentation (ancienne impasse, 2026-11-23)** : l'utilisateur signale que le Guide s'affiche sur le Deck
   avec le build de la période (cause précise non relevée dans ce document ; les mesures ci-dessous datent du
   21 novembre). Ce qui était mesuré alors : la scène chargée ne prend pas le rendu ; le compositeur affiche
@@ -203,8 +207,9 @@ en +4) → chargeur `sub_8189BE20` (case 20) → ouvreur `sub_818A21B0`.
   le processus — c'était le « freeze » de la sortie de Game Library. Journal borné + `r3=0`.
 - **`NicGetLinkState`** : ne JAMAIS écrire à travers r4 (l'appelant réseau passe un r4 hérité non
   commité) — état « pas de lien » par r3=0 seulement.
-- **`XeKeysGetStatus`** : remplir la sortie (`*r3 = 0xC`) — sinon XAM ouvre la boîte modale du boot
-  (« Game Error »/« Unrecognized Disc »).
+- **`XeKeysGetStatus`** : remplir la sortie (`*r3 = 0x4` par défaut, `DASH_XEKEYS_STATUS=<hex>` pour tester) — laissée
+  à 0, XAM ouvre la boîte modale du boot (« Game Error »/« Unrecognized Disc ») ; avec 0xC (valeur retail), le fil
+  du HUD de XAM ne démarre pas et le Guide ne s'affiche jamais (mesure du 2026-11-22).
 - **xam.xex rekeyé aux DEUX emplacements** (flash ET racine des données) : le chargeur résout
   `game:\xam.xex` vers la racine (le montage `game:` du noyau masque la flash) ; code 2 = hash de
   bloc invalide (clé de session fausse), PAS fichier absent.

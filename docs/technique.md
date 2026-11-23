@@ -351,7 +351,7 @@ wayland, loader Vulkan et pilote GPU restent ceux du système), `AppRun`, `.desk
 `dash_shaders.py`, `hud_shaders.py`, XenosRecomp, `dxc-linux` et `xxhsum`). **Aucun fichier Microsoft**
 (ni `dash.xex`, ni modules flash, polices, `shrdres`).
 
-**Prérequis** : Python 3 système (+ `python3-cryptography` si le `xam.xex` de la mise à jour est chiffré avec la clé XEX1, ex. 13604), un GPU Vulkan, FUSE 2 (sinon `APPIMAGE_EXTRACT_AND_RUN=1`), et vos propres fichiers
+**Prérequis** : Python 3 système (`python3-cryptography` facultatif : `xex_rekey.py` se rabat sur libcrypto puis sur du Python pur), un GPU Vulkan, FUSE 2 (sinon `APPIMAGE_EXTRACT_AND_RUN=1`), et vos propres fichiers
 Microsoft : la mise à jour système officielle de la version (dossier `$SystemUpdate` ou paquet STFS), idéalement
 les modules/polices complets (archive XeBuilds) et, pour les icônes, une mise à jour récente (17559) contenant
 `$flash_xam.xex`.

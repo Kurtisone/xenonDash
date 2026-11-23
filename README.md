@@ -10,7 +10,7 @@ avec une bibliothèque de jeux qui se remplit toute seule et des jeux recompilé
 
 - Un PC **Linux x86-64** avec un **GPU compatible Vulkan** (pilotes à jour). 16 Go de mémoire vive recommandés pour recompiler les jeux.
 - Pour recompiler des jeux : `python3` (3.11 ou plus), `clang`, `cmake` et `ninja`. Sur Arch : `sudo pacman -S python clang cmake ninja`.
-- Pour importer le Dashboard : `python3-cryptography`.
+- Pour importer le Dashboard : `python3` seul (`python3-cryptography` est facultatif pour le rechiffrement de `xam.xex` : utilisé s'il est présent, sinon libcrypto ou une implémentation en Python pur).
 - **FUSE 2** pour lancer un AppImage ; sinon lancez-le avec `APPIMAGE_EXTRACT_AND_RUN=1`.
 - **Vos propres fichiers** :
   - la **mise à jour système officielle 2.0.13604** (le dossier `$SystemUpdate` ou le paquet `su20076000_00000000`), issue de votre console ou de l'archive publique du firmware ;
