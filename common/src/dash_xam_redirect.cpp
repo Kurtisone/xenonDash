@@ -668,6 +668,64 @@ bool CallerInModule(uint32_t address, std::string_view module_name) {
   return user->xex_module() && user->xex_module()->ContainsAddress(address);
 }
 
+// ---------------------------------------------------------------------------------------------------------------------
+// PERSONNALISATION DE L'AVATAR : OPTION 2 (point d'appel unique, à remplacer par l'option 1 plus tard).
+//
+// XamLaunchAvatarEditor (ordinal 2011) relance le titre AvatarEditor.xex (\sep\20352400, 15 Mo), qui n'est pas recompilé :
+// XexLoadExecutable le refuse (0xC0050005) et la personnalisation n'aboutit pas. Appelants : signin.xex (sub_901047C0,
+// après XamAppUnloadStack), createprofile.xex (sub_90106500, idem), gamerprofile.xex (« Avatar » d'Edit Profile,
+// sub_9010D2D0), hud.xex (0x913E7A70) et le MiniCreator lui-même (touche Y, sub_90102990 puis XamAppUnloadStack).
+//
+// Option 2 (ici) : l'écran de choix d'avatar (Guide.AvatarMiniCreator.xex, recompilé) s'ouvre à la place, par l'export
+// XamShowAvatarMiniCreatorUI (ordinal 1700) de XAM recompilé, mode 2 (celui de signin.xex). Aucun changement de titre.
+// Appelé depuis le MiniCreator (Y), l'ouverture est différée après son XamAppUnloadStack : sinon ce vidage de la pile
+// fermerait aussi le nouvel écran. Pas de boucle : le MiniCreator n'appelle XamLaunchAvatarEditor que sur Y.
+//
+// Option 1 (à venir, AvatarEditor.xex recompilé) : supprimer l'appel à AvatarEditorOption2 dans CallModuleImport ;
+// l'import retombe sur l'export 2011 de XAM recompilé (relance du titre AvatarEditor).
+// ---------------------------------------------------------------------------------------------------------------------
+constexpr std::string_view kAvatarMiniCreator = "Guide.AvatarMiniCreator.xex";
+std::atomic<int64_t> g_avatar_reopen_user{-1};  // utilisateur dont le choix d'avatar se rouvre après le vidage de la pile
+
+// XamShowAvatarMiniCreatorUI(utilisateur, 2) ; code Win32 positif converti en HRESULT, comme le fait createprofile.xex
+// (sub_90106480) : les appelants de XamLaunchAvatarEditor testent r3 < 0.
+void ShowAvatarChooser(uint32_t user, PPCContext& ctx, uint8_t* base) {
+  static ModuleImport show{"XamShowAvatarMiniCreatorUI", 1700};
+  ctx.r3.u64 = user;
+  ctx.r4.u64 = 2;
+  CallModuleImport(show, ctx, base);
+  REXLOG_INFO("[avatar] option 2 : XamShowAvatarMiniCreatorUI(utilisateur {}, 2) -> 0x{:08X}", user, ctx.r3.u32);
+  if (ctx.r3.s32 > 0) ctx.r3.u64 = 0x80070000u | (ctx.r3.u32 & 0xFFFFu);
+}
+
+// Vrai si l'import a été servi ici (XamLaunchAvatarEditor, ou XamAppUnloadStack du MiniCreator après Y).
+bool AvatarEditorOption2(ModuleImport& imp, PPCFunc* fn, PPCContext& ctx, uint8_t* base) {
+  const std::string_view name = imp.name;
+  const uint32_t lr = static_cast<uint32_t>(ctx.lr);
+  if (name == "XamLaunchAvatarEditor") {
+    const uint32_t user = ctx.r3.u32;
+    if (CallerInModule(lr, kAvatarMiniCreator)) {
+      g_avatar_reopen_user.store(user);
+      REXLOG_INFO("[avatar] XamLaunchAvatarEditor(utilisateur {}) depuis le MiniCreator lr={:08X} : choix rouvert après "
+                  "XamAppUnloadStack (option 2)", user, lr);
+      ctx.r3.u64 = 0;
+      return true;
+    }
+    REXLOG_INFO("[avatar] XamLaunchAvatarEditor(utilisateur {}) lr={:08X} -> choix d'avatar (option 2)", user, lr);
+    ShowAvatarChooser(user, ctx, base);
+    return true;
+  }
+  if (name == "XamAppUnloadStack" && g_avatar_reopen_user.load() >= 0 && CallerInModule(lr, kAvatarMiniCreator)) {
+    const int64_t user = g_avatar_reopen_user.exchange(-1);
+    fn(ctx, base);
+    const uint64_t result = ctx.r3.u64;
+    if (user >= 0) ShowAvatarChooser(static_cast<uint32_t>(user), ctx, base);
+    ctx.r3.u64 = result;
+    return true;
+  }
+  return false;
+}
+
 void CallModuleImport(ModuleImport& imp, PPCContext& ctx, uint8_t* base) {
   PPCFunc* fn = imp.fn.load();
   if (!fn) {
@@ -701,6 +759,7 @@ void CallModuleImport(ModuleImport& imp, PPCContext& ctx, uint8_t* base) {
     REXLOG_INFO("[xamredir] module : {} (ordinal {}) : appel 1 par {}", imp.name, imp.ordinal,
                 imp.guest.load() ? "XAM recompilé" : "HLE");
   }
+  if (AvatarEditorOption2(imp, fn, ctx, base)) return;  // personnalisation de l'avatar : option 2 (voir plus haut)
   // Boîte de message du HUD au démarrage (« disque illisible » : ERROR_WRONG_DISK, lecteur vide) : supprimée. Renvoyer une
   // erreur (ERROR_CANCELLED) faisait arrêter la boucle d'images du HUD (vtable+44, docs : mesure du 21/11) ; on renvoie donc
   // le chemin de succès (r3 = 0). DASH_HUD_MSGBOX_KEEP=1 conserve la boîte (diagnostic).
