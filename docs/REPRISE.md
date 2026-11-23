@@ -110,6 +110,13 @@ EOF
   agent par groupe de fichiers.
 
 ## Pièges connus
+- **« Enter pass code » après redémarrage** : `signin.xex` compare `RtlCompareMemoryUlong` à 4. Une bibliothèque
+  `librexruntime.so` sans le correctif SDK `7151265f` (comptage par octets) renvoie 1 et fait demander un code.
+  Le binaire a `RUNPATH=$ORIGIN` sans bibliothèque à côté : il prend celle de `LD_LIBRARY_PATH`. Vérifier la
+  bibliothèque utilisée avant de conclure à une régression. Supprimé le 2026-11-23 :
+  `third_party/xenondash-sdk/out/linux-amd64/librexruntime.so` (ancien). La bonne est dans `out/linux-amd64/Release/`.
+- **Journal du Guide** : `DASH_GUIDE_TRACE=1` active le diagnostic de l'ouverture du Guide (13 lignes par ouverture,
+  absentes par défaut).
 - Tas invités 0x8… et 0x9… : deux vues du même fichier (alias) ; le SDK sépare les tas par défaut
   (`REX_ALIAS_XEX_HEAPS=1` rétablit l'ancien mode). Table de fonctions d'un module : une
   `function_table_base` par module, sans recouvrement en adresses PHYSIQUES.
@@ -165,6 +172,12 @@ renvoient une chaîne vide avec succès. Les profils de test se suppriment dans 
     `32000100/` ; les autres `.xex`, `.lex`, `.xzp` et `su20076000_*` dans `20352400/`. Vérifié : l'arbre obtenu
     depuis `~/dash/$systemupdate` est identique à l'arbre validé à la main. `--system-ext <dossier>` remplace
     cette reconstruction.
+- **Import et reprise** : `build_system_ext` construit la partition dans `<dst>.new` puis la remplace (échec atomique,
+  pas de suppression avant vérification). Une installation antérieure sans partition est réparée par
+  `AppRun --system-ext-only` (cherche la mise à jour à côté de l'AppImage). Un paquet STFS `su20076000_*` seul ne
+  contient pas `system.manifest` : la partition est alors construite depuis le dossier qui le contient.
+- **Refus d'alias** : le module d'avatar est reconnu sous `\sep` et sous `\Device\Harddisk0\SystemExtPartition`
+  (non testé à l'exécution avec un alias réel).
 - **Non vérifié** : l'avatar choisi est-il enregistré dans le profil ; la personnalisation (touche Y) demande
   `AvatarEditor.xex` (15 Mo, non recompilé) ; l'AppImage avec ce correctif sur le Deck, à partir d'un
   premier lancement avec le zip.
@@ -222,7 +235,17 @@ en +4) → chargeur `sub_8189BE20` (case 20) → ouvreur `sub_818A21B0`.
   (7348c20) ; registre des modules XUI (`game:\flash\<nom>.xex` normalisé) ; `KeSetTimerEx` transmet
   le DPC ; chargement de XAM asynchrone.
 
+## Imports à risque (mesurés le 2026-11-23, comportement inchangé)
+- `XeKeysVerifyRSASignature` (TRUE en dur) : 5 appels au démarrage, tous des deux appelants connus
+  (0x8185A4C4 et 0x818BF0C0). Restreindre aux deux appelants ne change rien au parcours actuel.
+- `XexLoadExecutable` : 1 appel sur le chemin du XMB et du Guide (lr 0x818783AC). **Le nom lu est vide** :
+  le hook lit probablement mal ses arguments. Ne pas le faire échouer avant de corriger la lecture.
+- `XexStartExecutable` : 1 appel (lr 0x8187A028), entrée non nulle.
+- Imports absents (renvoient 0) : aucun appel dans le scénario XMB / Guide / connexion.
+
 ## Suite, par ordre de priorité
+0. **Connexion sans code** : vérifier sur le Deck avec le build courant qu'un Sign In sur un profil neuf,
+   après redémarrage, ne demande pas de code (cause : bibliothèque SDK périmée, voir Pièges).
 1. **Avatar** : tester l'AppImage sur le Deck (premier lancement avec le zip) ; corriger la fermeture du Guide
    après connexion (`XamShowAvatarMiniCreatorUI`) ; vérifier que l'avatar choisi est enregistré et s'affiche
    sur le XMB et dans My Xbox ; personnalisation (Y, `AvatarEditor.xex`) à recompiler plus tard.
