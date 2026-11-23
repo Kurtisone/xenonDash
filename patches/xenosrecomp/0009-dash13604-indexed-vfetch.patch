@@ -1,0 +1,128 @@
+From: Kurtisone <104103601+Kurtisone@users.noreply.github.com>
+Date: Tue, 24 Nov 2026 01:00:00 +0100
+Subject: [PATCH 9/9] XenonDash : vfetch indexes (palettes d'os des maillages skinnes)
+
+Les VS d'avatar du Dashboard 13604 (920636B0, 920644D8, 920654D0...) lisent leurs matrices
+d'os par vfetch indexe par BLENDINDICES (fetch constante 94, pas de 48 octets, trois lignes
+float4 par os, quatre os). Le recompilateur ignorait le registre d'indice du vfetch et lisait
+une entree de sommet : matrices prises au rang du sommet, maillage geant.
+
+Un vfetch dont le registre d'indice n'est pas r0 (indice du sommet) devient
+xeIndexedVertexFetch(rang de l'element dans le header, registre.composante, arrondi) : lecture
+a base + (indice * pas + decalage) * 4 dans une table remplie par l'hote (constantes partagees
++ 288, 32 entrees de 32 octets : adresse, pas | format << 8, decalage, taille), formats
+flottants 32 bits. Ces elements ne sont plus declares en entree de sommet (plus de
+deduplication de TEXCOORD6/7/8 a leur sujet). Cote hote : ngpu_core/src/renderer.cpp.
+---
+diff --git a/XenosRecomp/shader_common.h b/XenosRecomp/shader_common.h
+index cc62663..e71fbfb 100644
+--- a/XenosRecomp/shader_common.h
++++ b/XenosRecomp/shader_common.h
+@@ -390,6 +390,42 @@ float4 tfetchR11G11B10(uint4 value)
+     }
+ }
+ 
++// vfetch indexé (palette d'os) : table de 32 entrées de 32 octets à SharedConstants + 288, remplie
++// par l'hôte. Entrée : adresse (uint2), pas en dwords | format << 8, décalage en dwords (signé),
++// taille en octets. Données déjà converties en petit-boutiste par l'hôte. Formats flottants 32 bits.
++#ifdef __spirv__
++float4 xeIndexedVertexFetch(uint element, float index, bool rounded)
++{
++    uint64_t entry = g_PushConstants.SharedConstants + 288 + element * 32;
++    uint4 e = vk::RawBufferLoad<uint4>(entry);
++    uint size = vk::RawBufferLoad<uint>(entry + 16);
++    uint64_t base = (uint64_t(e.y) << 32) | uint64_t(e.x);
++    if (base == 0)
++        return 0.0;
++    uint stride = e.z & 0xFF;
++    uint format = (e.z >> 8) & 0x3F;
++    int i = int(rounded ? floor(index + 0.5) : floor(index));
++    int dword = max(i, 0) * int(stride) + asint(e.w);
++    uint bytes = format == 38 ? 16 : format == 57 ? 12 : format == 37 ? 8 : 4;
++    if (dword < 0 || uint(dword) * 4 + bytes > size)
++        return 0.0;
++    uint64_t at = base + uint64_t(dword) * 4;
++    switch (format)
++    {
++    case 36: return float4(asfloat(vk::RawBufferLoad<uint>(at)), 0.0, 0.0, 1.0);
++    case 37: return float4(asfloat(vk::RawBufferLoad<uint2>(at)), 0.0, 1.0);
++    case 57: return float4(asfloat(vk::RawBufferLoad<uint3>(at)), 1.0);
++    case 38: return asfloat(vk::RawBufferLoad<uint4>(at));
++    }
++    return 0.0;
++}
++#else
++float4 xeIndexedVertexFetch(uint element, float index, bool rounded)
++{
++    return 0.0;
++}
++#endif
++
+ float4 tfetchTexcoord(uint swappedTexcoords, float4 value, uint semanticIndex)
+ {
+     return (swappedTexcoords & (1ull << semanticIndex)) != 0 ? value.yxwz : value;
+diff --git a/XenosRecomp/shader_recompiler.cpp b/XenosRecomp/shader_recompiler.cpp
+index 8edc596..5744a7c 100644
+--- a/XenosRecomp/shader_recompiler.cpp
++++ b/XenosRecomp/shader_recompiler.cpp
+@@ -184,6 +184,26 @@ void ShaderRecompiler::recompile(const VertexFetchInstruction& instr, uint32_t a
+ 
+     out += " = ";
+ 
++    // vfetch indexé par un autre registre que l'indice du sommet (palette d'os des maillages skinnés) :
++    // lecture en mémoire à base + (indice * pas + décalage) * 4, comme le matériel, au lieu d'une
++    // entrée de sommet. L'hôte remplit la table (adresse, pas, format, décalage) d'après la fetch
++    // constante et le microcode patché par D3D.
++    if (auto indexed = indexedElements.find(address); indexed != indexedElements.end())
++    {
++        print("xeIndexedVertexFetch({}, r{}.{}, {}).", indexed->second, uint32_t(instr.srcRegister),
++            SWIZZLES[instr.srcSwizzle & 3], instr.isIndexRounded ? "true" : "false");
++        printDstSwizzle(instr.dstSwizzle, true);
++        out += ";\n";
++        printDstSwizzle01(instr.dstRegister, instr.dstSwizzle);
++        if (instr.isPredicated)
++        {
++            --indentation;
++            indent();
++            out += "}\n";
++        }
++        return;
++    }
++
+     auto findResult = vertexElements.find(address);
+     if (findResult == vertexElements.end())
+     {
+@@ -1471,6 +1491,19 @@ void ShaderRecompiler::recompile(const uint8_t* shaderData, const std::string_vi
+ 
+             vertexElements.emplace(uint32_t(vertexElement.address), vertexElement);
+ 
++            {
++                // vfetch dont l'indice vient d'un autre registre que r0 (indice du sommet) : lecture
++                // indexée (xeIndexedVertexFetch), pas d'entrée de sommet dans la signature.
++                const be<uint32_t>* fetchCode = reinterpret_cast<const be<uint32_t>*>(
++                    shaderData + shaderContainer->virtualSize + shader->physicalOffset) + uint32_t(vertexElement.address) * 3;
++                const uint32_t word0 = fetchCode[0];
++                if ((word0 & 0x1F) == 0 && ((word0 >> 5) & 0x3F) != 0)
++                {
++                    indexedElements.emplace(uint32_t(vertexElement.address), i);
++                    continue;
++                }
++            }
++
+             if (!declaredInputs.emplace(uint32_t(vertexElement.usage), uint32_t(vertexElement.usageIndex)).second)
+                 continue;  // entrée déjà déclarée dans la signature
+ 
+diff --git a/XenosRecomp/shader_recompiler.h b/XenosRecomp/shader_recompiler.h
+index 42152dd..9a36ce5 100644
+--- a/XenosRecomp/shader_recompiler.h
++++ b/XenosRecomp/shader_recompiler.h
+@@ -31,6 +31,9 @@ struct ShaderRecompiler : StringBuffer
+     bool trialsExt = false;
+     const uint8_t* constantTableData = nullptr;
+     std::unordered_map<uint32_t, VertexElement> vertexElements;
++    // vfetch indexés par un registre autre que l'indice du sommet (r0) : adresse -> rang de l'élément
++    // dans le header (entrée de la table des fetchs indexés des constantes partagées).
++    std::unordered_map<uint32_t, uint32_t> indexedElements;
+     std::unordered_map<uint32_t, std::string> interpolators;
+     std::unordered_map<uint32_t, const ConstantInfo*> float4Constants;
+     // Registers given literal values by the definition table (local cN).

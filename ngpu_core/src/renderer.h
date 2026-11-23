@@ -177,6 +177,7 @@ class Renderer {
       uint32_t address, usage, usage_index;
       uint32_t dst_register;  // the original vfetch's destination register
       uint32_t dst_swizzle;   // and its destination swizzle (components written)
+      bool indexed = false;   // fetched by an index other than the vertex's (bone palettes): read by the shader
     };
     std::vector<Element> elements;
     std::unique_ptr<plume::RenderShader> shader;
@@ -340,6 +341,13 @@ class Renderer {
     std::vector<uint32_t> slot_fetch;
     std::vector<std::vector<std::pair<uint32_t, uint32_t>>> half_swaps, narrowed, packed;
     std::vector<uint64_t> slot_layouts;
+    // Indexed fetches (XenosRecomp's xeIndexedVertexFetch): the element's rank in the header and
+    // the patched fetch (slot, stride, offset, format).
+    struct Indexed {
+      uint32_t element, fetch_slot, stride, format;
+      int32_t offset;
+    };
+    std::vector<Indexed> indexed;
   };
   std::unordered_map<uint64_t, VertexLayout> vertex_layouts_;
   struct ConstantUpload {

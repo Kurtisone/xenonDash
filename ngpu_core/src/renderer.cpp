@@ -49,7 +49,15 @@ struct SharedConstants {
   float halfPixelOffsetX{};
   float halfPixelOffsetY{};
   float alphaThreshold{};
+  uint32_t padding[3]{};
+  // XenosRecomp's xeIndexedVertexFetch table (SharedConstants + 288), by vertex element rank.
+  struct IndexedFetch {
+    uint32_t address_low, address_high, stride_format;
+    int32_t offset;
+    uint32_t size, padding[3];
+  } indexedFetches[32]{};
 };
+static_assert(offsetof(SharedConstants, indexedFetches) == 288, "XenosRecomp's xeIndexedVertexFetch table");
 
 struct ResolvePushConstants {
   uint32_t source_index;
@@ -636,9 +644,12 @@ Renderer::Shader* Renderer::GetShader(uint64_t key) {
           // microcode): what the recompiled shader reads the element from.
           const uint32_t virtualSize = xenos::LoadBE32(data + 4);
           const uint8_t* instruction = data + virtualSize + info.microcode_offset + address * 12;
+          const uint32_t word0 = xenos::LoadBE32(instruction);
           info.elements.push_back({address, (value >> 12) & 0xF, (value >> 16) & 0xF,
-                                   (xenos::LoadBE32(instruction) >> 12) & 0x3F,
-                                   xenos::LoadBE32(instruction + 4) & 0xFFF});
+                                   (word0 >> 12) & 0x3F,
+                                   xenos::LoadBE32(instruction + 4) & 0xFFF,
+                                   // As XenosRecomp decides: a vfetch whose index is not r0 (the vertex index).
+                                   (word0 & 0x1F) == 0 && ((word0 >> 5) & 0x3F) != 0});
         }
       }
     }
@@ -1281,7 +1292,8 @@ void Renderer::Draw(const DrawCall& call) {
       return mask;
     };
     size_t at = element.address * 12;
-    for (const Shader::Element& other : vs->elements) {
+    // An indexed fetch is read in place: its rows share destination registers with other bones'.
+    if (!element.indexed) for (const Shader::Element& other : vs->elements) {
       const size_t candidate = other.address * 12;
       if (candidate + 12 <= microcodeSize &&
           ((xenos::LoadBE32(microcode + candidate) >> 12) & 0x3F) == element.dst_register &&
@@ -1323,6 +1335,17 @@ void Renderer::Draw(const DrawCall& call) {
       ++stats_["vertex exp_adjust " + std::to_string(fetch.exp_adjust) + ": usage " +
                std::to_string(element.usage) + "." + std::to_string(element.usage_index) + " format " +
                std::to_string(fetch.format)];
+    }
+    if (element.indexed) {
+      // Read by the shader from memory (xeIndexedVertexFetch): not a vertex input.
+      if (((xenos::LoadBE32(microcode + at) >> 12) & 0x3F) != element.dst_register) {
+        ++stats_["indexed vertex fetch: patched destination differs"];
+      }
+      const uint32_t rank = uint32_t(&element - vs->elements.data());
+      if (rank < 32) {
+        vertexLayout.indexed.push_back({rank, fetch.fetch_slot, fetch.stride, fetch.format, fetch.offset});
+      }
+      continue;
     }
     // A fetch of constants only (0 and 1 in its swizzle, no vertex data): vertices
     // without this attribute, such as the wires' normals. Left unbound, it reads 0.
@@ -1435,6 +1458,41 @@ void Renderer::Draw(const DrawCall& call) {
 
   // Textures (resolved ones by address first) and samplers.
   SharedConstants shared;
+  // Indexed fetches: the fetch constant's memory, in host order, for the shader to read.
+  if (!vertexLayout.indexed.empty()) {
+    uint32_t lastSlot = ~0u;
+    uint64_t lastAddress = 0;
+    uint32_t lastSize = 0;
+    for (const VertexLayout::Indexed& indexed : vertexLayout.indexed) {
+      if (indexed.fetch_slot != lastSlot) {
+        lastSlot = indexed.fetch_slot;
+        const xenos::VertexFetch fetch = xenos::DecodeVertexFetch(state, indexed.fetch_slot);
+        const uint32_t address = fetch.address & 0x1FFFFFFF;
+        if (call.inline_vertices) {
+          convert_buffer_.assign(call.inline_vertices, call.inline_vertices + call.inline_size);
+          xenos::SwapEndian(convert_buffer_.data(), call.inline_size, 2);
+        } else if (fetch.size && uint64_t(address) + fetch.size <= 0x20000000ull) {
+          convert_buffer_.assign(physical_ + address, physical_ + address + fetch.size);
+          xenos::SwapEndian(convert_buffer_.data(), fetch.size, fetch.endian);
+        } else {
+          convert_buffer_.clear();
+        }
+        lastSize = uint32_t(convert_buffer_.size());
+        lastAddress = 0;
+        if (lastSize) {
+          const uint64_t at = Allocate(convert_buffer_.data(), lastSize, 16);
+          lastAddress = upload_address_ + at;
+        }
+        ++stats_["indexed vertex fetches"];
+      }
+      SharedConstants::IndexedFetch& entry = shared.indexedFetches[indexed.element];
+      entry.address_low = uint32_t(lastAddress);
+      entry.address_high = uint32_t(lastAddress >> 32);
+      entry.stride_format = (indexed.stride & 0xFF) | (indexed.format & 0x3F) << 8;
+      entry.offset = indexed.offset;
+      entry.size = lastSize;
+    }
+  }
   for (uint32_t slot = 0; slot < 16; ++slot) {
     // A fetch constant already seen, with no texture changed since.
     const uint8_t* fetchConstant = state.data + xenos::device::kFetchConstants + 24 * slot;
