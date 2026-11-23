@@ -74,7 +74,8 @@ REX_HOOK_RAW(__imp__EtxProducerRegister) {
 // La SORTIE (r3 = pointeur) doit être remplie : laissée à 0, l'absence du bit 3 (0x8) déclenchait l'envoi du
 // message 0x00020023 à l'application 254 par XAM au boot (sub_818B8658 -> sub_818C1188) — d'où la boîte modale
 // « Game Error » / « Unrecognized Disc » au démarrage (traque du 2026-11-21). Le bit 2 (0x4) est lu par deux
-// autres sites. Sur console retail ces contrôles de sécurité sont au vert : status = 0xC.
+// autres sites. Sur console retail ces contrôles de sécurité sont au vert (status = 0xC), mais la valeur rendue ici est
+// 0x4 par défaut (bit 3 absent) : voir ci-dessous, 0xC empêche le HUD de XAM de démarrer.
 REX_HOOK_RAW(__imp__XeKeysGetStatus) {
   // Défaut 0x4 (bit 3 absent) : avec 0xC le fil du HUD de XAM (sub_818A2F90 -> sub_818A2500) ne démarre pas et le Guide
   // ne s'affiche jamais ; avec 0x4 il démarre et remplit lui-même l'état UI (mesure du 2026-11-22).
@@ -137,10 +138,16 @@ REX_HOOK_RAW(__imp__XexLoadImageHeaders) {
     const uint32_t header_size = rd32(head + 8), security_offset = rd32(head + 16);
     if (header_size > size) {
       status = 0xC0000023;  // STATUS_BUFFER_TOO_SMALL
-    } else if (security_offset + 8 + 256 > header_size ||
-               file->ReadSync({base + out, header_size}, 0, &got) != 0 || got != header_size) {
+    } else if (uint64_t(security_offset) + 8 + 256 > header_size) {
+      // Signature (security_offset + 8, 256 octets) hors de l'en-tête : calcul en 64 bits (pas de repli de
+      // l'addition sur 32 bits pour un security_offset aberrant), refus sans rien lire.
+      REXLOG_WARN("[xex] XexLoadImageHeaders({}) : security_offset 0x{:X} + 264 hors de l'en-tête (0x{:X} octets)", path,
+                  security_offset, header_size);
+      status = 0xC000007B;  // STATUS_INVALID_IMAGE_FORMAT
+    } else if (file->ReadSync({base + out, header_size}, 0, &got) != 0 || got != header_size) {
       status = 0xC000007B;
     } else {
+      // Seul le champ +16 (security_offset) est relogé en pointeur ; les autres décalages restent tels quels.
       const uint32_t ptr = out + security_offset;
       uint8_t* f = base + out + 16;
       f[0] = ptr >> 24; f[1] = ptr >> 16; f[2] = ptr >> 8; f[3] = ptr;
@@ -263,20 +270,20 @@ REX_HOOK_RAW(__imp__XexLoadExecutable) {
 // HalGetPowerUpCause(&etat) : pourquoi la console a demarre (bouton, eject, reveil reseau...).
 // Remplit une structure que XAM lit ensuite octet par octet.
 //
-// Pourquoi c'est important : juste apres l'appel, XAM teste le bit 0 de l'octet a l'offset 4
-// (sub_81892A60 : lbz r11,4(r11) puis clrlwi r3,r11,31). Si ce bit est a 0, XAM appelle
-// VdDisplayFatalError(0x00012348) — « erreur fatale d'affichage » — mesure dans le journal.
+// Pourquoi c'est important : juste apres l'appel, XAM lit le bit 0 (bit de poids faible) de l'octet a l'offset 4
+// (sub_81892A60 : lbz r11,4(r11) puis clrlwi r3,r11,31) et le renvoie. Son appelant (sub_81872230) appelle
+// VdDisplayFatalError (« erreur fatale d'affichage ») si ce bit est a 1 et saute l'erreur s'il est a 0 (polarite
+// detaillee dans le corps ci-dessous) : le bit doit donc etre a 0.
 //
-// Le stub du SDK ne remplissait rien : la memoire restait a zero, donc le bit valait 0 et XAM
-// croyait a une panne d'affichage. On declare ici un demarrage normal (mise sous tension par
-// l'utilisateur), ce qui est la verite sur un PC.
+// Le stub du SDK ne remplissait rien. On remplit ici toute la structure : demarrage normal (mise sous tension par
+// l'utilisateur, ce qui est la verite sur un PC), bit 0 de l'octet 4 a 0.
 REX_HOOK_RAW(__imp__HalGetPowerUpCause) {
   const uint32_t out = ctx.r3.u32;
   if (out && out < 0xF0000000u) {
     // Structure de 8 octets remise a zero, puis :
     //   octet 0    : type de mise sous tension = 1 (bouton / mise sous tension normale)
-    //   octet 4    : drapeaux ; le bit 0 doit etre a 1 pour que XAM ne signale pas d'erreur
-    //                d'affichage (voir sub_81892A60 dans le code recompilé).
+    //   octet 4    : drapeaux ; le bit 0 doit etre a 0 pour que XAM ne signale pas d'erreur
+    //                d'affichage (voir sub_81892A60 et sub_81872230 dans le code recompilé).
     uint8_t* s = reinterpret_cast<uint8_t*>(base + out);
     for (int i = 0; i < 8; ++i) s[i] = 0;
     // ATTENTION a la polarite, verifiee dans le code recompilé (sub_81872230) :
