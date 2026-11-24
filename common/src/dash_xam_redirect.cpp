@@ -1164,6 +1164,18 @@ REX_HOOK_RAW(__imp__XamLaunchAvatarEditor) {
 // XamPackageManagerGetExperienceMode (ordinal 1606) de dash.xex : export réel de XAM recompilé (sub_818BC250) au lieu du HLE du SDK
 // (renvoie 0 sans écrire *pMode). Même schéma que hud_xam_imports.cpp / gamerprofile_xam_imports.cpp. Aucune valeur forcée ici.
 REX_HOOK_RAW(__imp__XamPackageManagerGetExperienceMode) {
+  // Désactivé par défaut : cette redirection fait basculer le démarrage vers AvatarEditor.xex (le hub n'apparaît plus).
+  // Sans DASH_XAM_EXPERIENCE_REDIRECT=1, même résultat que le HLE du SDK (xam_misc.cpp:622) : r3 = 0.
+  static const bool enabled = [] {
+    const char* e = std::getenv("DASH_XAM_EXPERIENCE_REDIRECT");
+    const bool on = e && std::string_view(e) == "1";
+    if (on) REXLOG_INFO("[xamredir] XamPackageManagerGetExperienceMode : redirection active (DASH_XAM_EXPERIENCE_REDIRECT=1)");
+    return on;
+  }();
+  if (!enabled) {
+    ctx.r3.u64 = 0;
+    return;
+  }
   static dash::xamredir::ModuleImport imp{"XamPackageManagerGetExperienceMode", 1606};
   dash::xamredir::CallModuleImport(imp, ctx, base);
 }
