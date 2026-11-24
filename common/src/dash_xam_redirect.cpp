@@ -1161,6 +1161,12 @@ REX_HOOK_RAW(__imp__XamLaunchAvatarEditor) {
   static dash::xamredir::ModuleImport imp{"XamLaunchAvatarEditor", 2011};
   dash::xamredir::CallModuleImport(imp, ctx, base);
 }
+// XamPackageManagerGetExperienceMode (ordinal 1606) de dash.xex : export réel de XAM recompilé (sub_818BC250) au lieu du HLE du SDK
+// (renvoie 0 sans écrire *pMode). Même schéma que hud_xam_imports.cpp / gamerprofile_xam_imports.cpp. Aucune valeur forcée ici.
+REX_HOOK_RAW(__imp__XamPackageManagerGetExperienceMode) {
+  static dash::xamredir::ModuleImport imp{"XamPackageManagerGetExperienceMode", 1606};
+  dash::xamredir::CallModuleImport(imp, ctx, base);
+}
 #define DASH_XAM_AVATAR_HOOK(fn)                         \
   static dash::xamredir::Slot g_slot_##fn{#fn};          \
   REX_HOOK_RAW(__imp__##fn) { dash::xamredir::AvatarCall(g_slot_##fn, ctx, base); }
