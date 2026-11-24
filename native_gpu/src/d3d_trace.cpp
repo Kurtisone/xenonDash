@@ -14,6 +14,7 @@
 #include <mutex>
 #include <thread>
 
+#include <rex/logging.h>
 #include <rex/system/kernel_state.h>
 #include "ngpu.h"
 #include NGPU_PROFILE_HEADER
@@ -152,12 +153,14 @@ void TraceFrame(uint32_t a) {
   extern "C" void sub_##A(PPCContext& __restrict ctx, uint8_t* base) {                \
     static int slot = Register(0x##A);                                                \
     ngpu::TraceHit(slot, 0x##A, ctx);                                                 \
+    if constexpr (0x##A == 0x9218DC60) REXLOG_INFO("[play-trace] entree sub_9218DC60 thread={}", std::hash<std::thread::id>{}(std::this_thread::get_id())); \
     if (0x##A == ngpu_profile::kSwapEntry) { ngpu::TraceFrame(0x##A); ngpu::SwapTick(); }                                 \
     if (ngpu::Enabled() && ngpu_hook_##A) {                                           \
       try { if (ngpu_hook_##A(ctx, base)) return; }                                   \
       catch (const std::exception& e) { std::fprintf(stderr, "[ngpu] EXCEPTION dans le crochet %08X : %s\n", 0x##A, e.what()); }   \
     }                            \
     __imp__sub_##A(ctx, base);                                                        \
+    if constexpr (0x##A == 0x9218DC60) REXLOG_INFO("[play-trace] sortie sub_9218DC60"); \
   }
 #include NGPU_ENTRIES_FILE
 #undef X
