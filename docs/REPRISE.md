@@ -137,8 +137,9 @@ EOF
   Sur le clavier virtuel, Start valide « Done » (`P`) : vérifié sur `s2_create` (touche `p`).
   Avant de conclure à un gel, vérifier qu'une autre touche change l'image.
 - `tools/dash_shaders.py` attend la sortie de `xxhsum` ≤ 0.8.1 ; xxhash ≥ 0.8.2 écrit autrement.
-- Glyphe `U+E00A` (Gamerscore) : absent des trois `.xtt` fournis — carré vide dans le bandeau.
-  Voir `docs/technique.md`, « Non résolu ».
+- Glyphe `U+E00A` (Gamerscore) : présent dans `XenonSCLatin.xtt` (13604), absent de `XenonJKLatin` et
+  `XenonCLatin` (6770). Résolu par `src/dash_font_patch.cpp` (police principale JKLatin → SCLatin ; `DASH_FONT_PATCH=0`
+  désactive). Voir `docs/technique.md`, « Glyphe Gamerscore ».
 - Le fork du SDK est le sous-module `third_party/xenondash-sdk` (branche `unified`) ; après
   modification : reconstruire, réinstaller dans `sdk/`, commiter le sous-module PUIS le dépôt.
 - Les instrumentations dans le code GÉNÉRÉ (`dashboards/*/generated/**`) sont non versionnées et
@@ -269,6 +270,6 @@ en +4) → chargeur `sub_8189BE20` (case 20) → ouvreur `sub_818A21B0`.
 4. **Écran de progression des jeux** : les boîtes XAM fonctionnent désormais — brancher la
    progression de construction (`dash_xam_hud_ui.cpp`, socle N5 déjà commité) dessus et vérifier à
    l'écran ; toasts et redirection des succès.
-5. **Divers** : glyphe Gamerscore `U+E00A` absent des `.xtt` ; recompilateur générique pour XDK tardives
+5. **Divers** : glyphe Gamerscore `U+E00A` (corrigé par `dash_font_patch.cpp`, voir `technique.md`) ; recompilateur générique pour XDK tardives
    (Trials Fusion : image noire, shaders hors `Set*Shader`) ; vrai lecteur optique exposé comme
    `\Device\CdRom0` (directive utilisateur) ; étirement 32:9 de l'AppImage (reporté à la demande de l'utilisateur).

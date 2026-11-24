@@ -207,13 +207,16 @@ et `p6_2.0.13604.0.png` (AppImage).
   (aucun `XamLoaderLaunchTitle*`/`XamContentLaunchImageInternal*`) : décision côté Lua du hub non identifiée ; utiliser F5
   ou `--dash_launch`. L'automatisation clavier sous lavapipe est instable (répétition de touches : une touche peut faire
   défiler plusieurs lames), exécuter sous gdb (`DASH_GDB=1`) et vérifier chaque écran.
-- Restent : glyphe Ⓖ manquant (carré), `DASHUSER:\ThematicSkin`/`VisionEffect` absents, XAM 13604 non recompilé.
-  *Cause établie (2026-11-15)* : l'élément XUI `GamerScoreIcon` est un `XuiText` contenant `U+E00A`
-  (zone privée Unicode, comme 517 autres icônes du Dashboard). Les polices sont bien utilisées pour ce texte
-  (sans elles, « Joueur » et « 0 » disparaissent), mais le point de code est absent des trois `.xtt` fournis :
-  remplacer `XenonCLatin` par `XenonJKLatin` donne un rendu identique au pixel. Les `.xttp1/.xttp2` ne comblent
-  rien (jamais demandés : 0 occurrence dans `strace`). Il faut la police d'origine de la NAND ; la mise à jour
-  système ne fournit que les correctifs `.xttp`.
+- Restent : `DASHUSER:\ThematicSkin`/`VisionEffect` absents, XAM 13604 non recompilé.
+- **Glyphe Gamerscore (Ⓖ, U+E00A)** : l'élément XUI `GamerScoreIcon` est un `XuiText` contenant `U+E00A`
+  (zone privée Unicode, comme 517 autres icônes du Dashboard). Le glyphe est dans `XenonSCLatin.xtt` (13604,
+  glyphe 7638) ; `XenonJKLatin` et `XenonCLatin` (6770) ne le contiennent pas. Le Dashboard choisit lui-même sa
+  police principale (`sub_928407F0`, région 258 et langue 8) : hors région 258, c'est JKLatin, qui n'a pas le
+  glyphe. `src/dash_font_patch.cpp` remplace, dans `sub_921E4C88`, JKLatin par SCLatin. Le contenu des polices
+  n'est pas modifié. `DASH_FONT_PATCH=0` désactive le correctif. Un correctif côté XAM (`XamGetLanguageTypeface`,
+  sub_8189C918) a été essayé et retiré : il ne change rien à l'écran.
+  *Constats (2026-11-24)* : les polices 13604 de `/home/kurtisone/dash/polices/` sont la source ; les `.xttp1/.xttp2`
+  ne comblent rien (jamais demandés : 0 occurrence dans `strace`).
 
 ## Dashboard 2.0.17559 et XAM recompilé (phase P4)
 
