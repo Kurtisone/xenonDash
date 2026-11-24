@@ -98,6 +98,12 @@ précision 1945/1947, 8464/8464, 48/51 contre le codegen de la recette ; rappel 
 positifs et la reprise de boucle de `codegen_loop.py` sont écrits mais **non déclenchés** dans les essais de ce lot ; la boucle d'amorçage
 (`XD_BOOT_LOOPS`, 12 par défaut) n'a pas été sollicitée non plus : aucune fonction non déclarée dans Skate ni dans Trials Fusion.
 
+Rejet par bisection (optionnel) : quand le codegen échoue sans nommer aucune adresse, le comportement par défaut retire d'un coup tous
+les candidats statiques de la nature la moins fiable restante (`data-in`, puis `code`, puis `data`). Avec `XD_CODEGEN_BISECT=1`, seule la
+moitié (par adresse croissante) de cette nature est retirée à chaque échec : on perd moins de vrais candidats, au prix de passes de codegen
+supplémentaires (bornées par `max_iter`, 14). **Désactivé par défaut** : le résultat de Skate (3 passes, aucun rejet) n'est pas modifié, et
+l'option n'a pas été mesurée. Les rejets (passe, nature, adresses) sont consignés dans `failure.json` en cas d'échec définitif.
+
 ## 5. Shaders génériques et boucle « jouer → reconstruire »
 
 `scan_shaders.py` balaie **tous** les fichiers du jeu (mmap) et l'image décodée à la recherche des conteneurs Xenos (magie `0x102A11xx`, en-tête de 0x24), y compris dans les archives non

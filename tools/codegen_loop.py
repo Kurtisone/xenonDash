@@ -153,9 +153,15 @@ def run_loop(rexglue, sdk_lib, proj, manifest, gen_dir, init_name, image, overri
                 named = {int(x, 16) for x in re.findall(ADDR, out)}
                 drop = [a for a in static if a in named]
                 if not drop:
+                    bisect = bool(os.environ.get("XD_CODEGEN_BISECT"))    # optionnel : voir docs/recompilateur_generique.md
                     for kind in ("data-in", "code", "data"):
-                        drop = [a for a, k in static.items() if k == kind]
+                        drop = sorted(a for a, k in static.items() if k == kind)
                         if drop:
+                            if bisect and len(drop) > 1:
+                                # bisection : seule la moitie de la nature est retiree a chaque echec (le fautif est retrouve en
+                                # quelques passes au lieu de perdre toute la nature) ; les rejets sont consignes dans `rejects`
+                                drop = drop[:(len(drop) + 1) // 2]
+                                log(f"  bisection ({kind}) : {len(drop)} candidat(s) sur {sum(1 for k in static.values() if k == kind)}")
                             break
                 if not drop:
                     raise CodegenError("codegen en echec sans cible non resolue exploitable :\n" + "\n".join(out.splitlines()[-20:]),
