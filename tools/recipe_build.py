@@ -1127,6 +1127,13 @@ class Build:
         except RecipeError as e:
             prog.update(error=str(e), message="echec")
             raise
+        except Exception as e:   # toute autre exception : cause dans le journal (build.log) et dans progress.json
+            import traceback
+            tb = traceback.format_exc()
+            print(f"[recipe] ERREUR INTERNE ({type(e).__name__}) :\n{tb}", file=sys.stderr, flush=True)
+            msg = f"erreur interne : {type(e).__name__}: {e} (voir build.log)"
+            prog.update(error=msg, message="echec")
+            raise RecipeError(msg) from e
         return self.cache
 
 
@@ -1212,6 +1219,10 @@ def main():
         return 0
     except RecipeError as e:
         print(f"[recipe] ERREUR : {e}", file=sys.stderr, flush=True)
+        return 1
+    except Exception as e:   # exception inattendue hors construction : cause dans le journal, code de sortie 1
+        import traceback
+        print(f"[recipe] ERREUR INTERNE ({type(e).__name__}) :\n{traceback.format_exc()}", file=sys.stderr, flush=True)
         return 1
 
 

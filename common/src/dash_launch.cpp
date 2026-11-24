@@ -604,6 +604,14 @@ std::string MissingToolchain() {
 void BuildMonitor(Game g, long pid, std::string cache, bool restart_on_fail) {
   const fs::path progress = fs::path(cache) / "progress.json";
   auto last_log = std::chrono::steady_clock::now() - std::chrono::seconds(10);
+  // Délai maximal : une construction bloquée ne doit pas garder la boîte de progression indéfiniment (XD_BUILD_TIMEOUT_S, défaut 4 h).
+  const auto t_start = std::chrono::steady_clock::now();
+  long max_s = 4 * 3600;
+  if (const char* e = std::getenv("XD_BUILD_TIMEOUT_S")) {
+    long v = std::atol(e);
+    if (v > 0) max_s = v;
+  }
+  bool timed_out = false;
   for (;;) {
     int st = 0;
     pid_t r = waitpid(pid_t(pid), &st, WNOHANG);  // enfant : le récolte ; sinon -1
@@ -630,6 +638,20 @@ void BuildMonitor(Game g, long pid, std::string cache, bool restart_on_fail) {
                   g_build.message, g_build.elapsed);
     }
     if (!alive) break;
+    if (now - t_start >= std::chrono::seconds(max_s)) {
+      timed_out = true;
+      REXLOG_ERROR("[dash] construction de {} : délai de {} s dépassé, arrêt du processus {}", g.name, max_s, pid);
+      killpg(pid_t(pid), SIGTERM);  // la construction est chef de session (setsid)
+      kill(pid_t(pid), SIGTERM);
+      for (int i = 0; i < 10; i++) {
+        std::this_thread::sleep_for(std::chrono::seconds(1));
+        if (waitpid(pid_t(pid), &st, WNOHANG) != 0 && kill(pid_t(pid), 0) != 0) break;
+      }
+      killpg(pid_t(pid), SIGKILL);
+      kill(pid_t(pid), SIGKILL);
+      waitpid(pid_t(pid), &st, WNOHANG);
+      break;
+    }
     std::this_thread::sleep_for(std::chrono::seconds(1));
   }
   std::string j;
@@ -638,7 +660,8 @@ void BuildMonitor(Game g, long pid, std::string cache, bool restart_on_fail) {
     j.assign(std::istreambuf_iterator<char>(f), std::istreambuf_iterator<char>());
   }
   std::string err = JsonField(j, "error");
-  const bool ok = JsonField(j, "done") == "true" && err.empty();
+  if (timed_out) err = "la construction a dépassé le délai maximal (" + std::to_string(max_s / 60) + " min) et a été arrêtée";
+  const bool ok = !timed_out && JsonField(j, "done") == "true" && err.empty();
   if (!ok) {
     if (err.empty()) err = "la construction s'est arrêtée avant la fin ; voir le journal";
     Notify("Construction de " + g.name + " échouée", err);
@@ -696,11 +719,22 @@ bool PrepareRecipeGame(Game& g) {
   std::error_code ec;
   fs::create_directories(cache, ec);
   const std::string log_path = cache + "/build.log";
+  // Journal en ajout (l'échec précédent reste lisible), une ligne de séparation par session ; au-delà de 8 Mo, l'ancien
+  // journal passe en build.log.old.
+  {
+    std::error_code ec2;
+    if (fs::exists(log_path, ec2) && fs::file_size(log_path, ec2) > (8u << 20)) fs::rename(log_path, log_path + ".old", ec2);
+    std::ofstream sep(log_path, std::ios::app);
+    char ts[32] = "";
+    std::time_t t = std::time(nullptr);
+    std::strftime(ts, sizeof ts, "%F %T", std::localtime(&t));
+    sep << "\n===== nouvelle session de construction " << g.name << " : " << ts << " =====\n";
+  }
   pid_t pid = fork();
   if (pid < 0) return false;
   if (pid == 0) {
     setsid();
-    int fd = open(log_path.c_str(), O_WRONLY | O_CREAT | O_TRUNC, 0644);
+    int fd = open(log_path.c_str(), O_WRONLY | O_CREAT | O_APPEND, 0644);
     int devnull = open("/dev/null", O_RDONLY);
     dup2(devnull, 0);
     dup2(fd, 1);
