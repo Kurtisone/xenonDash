@@ -16,7 +16,10 @@ if [ "$CUR" != "$SUM" ]; then
   podman build -t "$IMAGE" --label "xd.containerfile=$SUM" -f "$HERE/Containerfile" "$HERE"
 fi
 
+# Worktree : le fichier .git pointe vers le dépôt commun (…/.git/worktrees/<nom>) : il doit être monté au même chemin,
+# sinon git rev-parse échoue dans le conteneur.
+GITDIR="$(cd "$R" && cd "$(git rev-parse --git-common-dir)" && pwd)"
 exec podman run --rm --userns=keep-id:uid=0,gid=0 \
-  -v "$R:$R" -v "$WORK:$WORK" -v "$CCACHE_HOST:/ccache" \
+  -v "$R:$R" -v "$WORK:$WORK" -v "$GITDIR:$GITDIR" -v "$CCACHE_HOST:/ccache" \
   -e CCACHE_DIR=/ccache -e XD_JOBS="$(nproc)" -e XD_ROOT="$R" \
   -w "$R" "$IMAGE" bash "$R/tools/container/in_container.sh"
