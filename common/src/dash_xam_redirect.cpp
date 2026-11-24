@@ -871,23 +871,26 @@ void CallModuleImport(ModuleImport& imp, PPCContext& ctx, uint8_t* base) {
       addr = xam->GetProcAddressByOrdinal(imp.ordinal);
       fn = addr ? ks->function_dispatcher()->GetFunction(addr) : nullptr;
     }
+    bool cacheable = true;
     if (fn) {
       imp.guest.store(true);
     } else {
-      // Repli : symbole visible de l'exécutable (accroche de common/ ou HLE du SDK ; le `__imp__` du module est masqué).
-#if !defined(_WIN32)
-      fn = reinterpret_cast<PPCFunc*>(dlsym(RTLD_DEFAULT, (std::string("__imp__") + imp.name).c_str()));
-#else
-      fn = rex::ppc::FindPPCFuncByName((std::string("__imp__") + imp.name).c_str());
-#endif
-      REXLOG_WARN("[xamredir] module : {} (ordinal {}) absent de XAM recompilé, repli {}", imp.name, imp.ordinal,
-                  fn ? "HLE" : "aucun (retour 0)");
+      // Repli : HLE du SDK via RTLD_NEXT (FindHle). dlsym(RTLD_DEFAULT) renverrait le hook de l'exécutable lui-même
+      // (récursion infinie). Tant que XAM recompilé n'est pas chargé, le repli n'est pas mémorisé (nouvelle tentative).
+      cacheable = ks && xam;
+      fn = FindHle(std::string("__imp__") + imp.name);
+      if (cacheable) {
+        REXLOG_WARN("[xamredir] module : {} (ordinal {}) absent de XAM recompilé, repli {}", imp.name, imp.ordinal,
+                    fn ? "HLE" : "aucun (retour 0)");
+      }
       if (!fn) {
         ctx.r3.u64 = 0;
         return;
       }
     }
-    imp.fn.store(fn);
+    if (cacheable) {
+      imp.fn.store(fn);
+    }
   }
   const uint64_t n = imp.calls.fetch_add(1) + 1;
   if (n == 1) {
