@@ -32,3 +32,4 @@ out/
 runs/
 docs/inventaire/*.tsv
 docs/inventaire/*.json
+dashboards/*/generated/inputs.sha256

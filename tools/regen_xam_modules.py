@@ -12,7 +12,7 @@ Ensuite : correctif des instructions de XAM (tools/xam_unimpl_patch.py) et fichi
 (tools/gen_module_xam_imports.py).
 
 usage : tools/regen_xam_modules.py      (SDK installé dans sdk/ ; ~2 min)"""
-import os, subprocess, sys
+import hashlib, os, re, subprocess, sys
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 P = os.path.join(ROOT, "dashboards/2.0.13604.0-xam")
@@ -23,6 +23,21 @@ GROUPS = [["xam", "hud", "vk", "deviceselector", "ximecore", "signin"], ["create
 GEN = os.path.join(P, "generated/dash")
 # Chemin ABSOLU du manifeste, comme la construction CMake : l'empreinte des modules en dépend (sinon la construction les juge périmés).
 MANIFEST = os.path.join(P, "dash_manifest.toml")
+
+
+def inputs_digest():
+    """Empreinte des entrées du codegen (manifeste, overrides, XEX listés). Même calcul que le contrôle de cohérence de
+    dashboards/2.0.13604.0-xam/CMakeLists.txt : lignes « chemin:sha256 » triées, puis sha256 du texte."""
+    man = open(MANIFEST, encoding="utf-8").read()
+    rels = {"dash_manifest.toml"}
+    rels.update(f for f in os.listdir(P) if f.endswith("overrides.toml"))
+    rels.update(["../2.0.13604.0/dash_overrides.toml", "../2.0.13604.0/overrides.toml"])
+    rels.update(re.findall(r'(?m)^file_path = "([^"]+)"', man))
+    lines = []
+    for r in sorted(rels):
+        fp = os.path.join(P, r)
+        lines.append(f"{r}:" + (hashlib.sha256(open(fp, "rb").read()).hexdigest() if os.path.isfile(fp) else "absent") + "\n")
+    return hashlib.sha256("".join(lines).encode()).hexdigest()
 
 
 def run(*cmd):
@@ -44,3 +59,7 @@ for m in ["hud"] + XUI:
     out = os.path.join(P, "src_hud/hud_xam_imports.cpp" if m == "hud" else f"src_xui/{m}_xam_imports.cpp")
     os.makedirs(os.path.dirname(out), exist_ok=True)
     subprocess.run([sys.executable, os.path.join(ROOT, "tools/gen_module_xam_imports.py"), os.path.join(GEN, m), out], check=True)
+# Cohérence generated/ <-> entrées : CMakeLists.txt compare cette empreinte à celle du configure (FATAL_ERROR si l'écart est réel).
+with open(os.path.join(P, "generated", "inputs.sha256"), "w") as f:
+    f.write(inputs_digest() + "\n")
+print("empreinte des entrées écrite (generated/inputs.sha256)", flush=True)

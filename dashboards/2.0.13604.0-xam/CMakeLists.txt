@@ -8,6 +8,47 @@ project(dash LANGUAGES CXX)
 set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
+# Cohérence generated/ <-> entrées du codegen : tools/regen_xam_modules.py écrit generated/inputs.sha256 (empreinte du manifeste,
+# des overrides et des XEX listés). Si les entrées ont changé depuis la génération, le code généré est périmé : on arrête le
+# configure au lieu de compiler un mélange. Même calcul que inputs_digest() de l'outil (lignes « chemin:sha256 » triées).
+# Contournement ponctuel : -DXD_SKIP_GENERATED_CHECK=ON. Régénération : python3 tools/regen_xam_modules.py.
+if(NOT XD_SKIP_GENERATED_CHECK)
+    set(_xd_stamp ${CMAKE_CURRENT_SOURCE_DIR}/generated/inputs.sha256)
+    if(EXISTS ${_xd_stamp})
+        file(READ ${CMAKE_CURRENT_SOURCE_DIR}/dash_manifest.toml _xd_man)
+        string(REGEX MATCHALL "(^|\n)file_path = \"[^\"]+\"" _xd_fp "${_xd_man}")
+        set(_xd_rels dash_manifest.toml ../2.0.13604.0/dash_overrides.toml ../2.0.13604.0/overrides.toml)
+        foreach(_m ${_xd_fp})
+            string(REGEX REPLACE "^\n?file_path = \"([^\"]+)\"" "\\1" _r "${_m}")
+            list(APPEND _xd_rels "${_r}")
+        endforeach()
+        file(GLOB _xd_ov RELATIVE ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_CURRENT_SOURCE_DIR}/*overrides.toml)
+        list(APPEND _xd_rels ${_xd_ov})
+        list(REMOVE_DUPLICATES _xd_rels)
+        list(SORT _xd_rels)
+        set(_xd_text "")
+        foreach(_r ${_xd_rels})
+            if(EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/${_r})
+                file(SHA256 ${CMAKE_CURRENT_SOURCE_DIR}/${_r} _h)
+            else()
+                set(_h absent)
+            endif()
+            string(APPEND _xd_text "${_r}:${_h}\n")
+        endforeach()
+        string(SHA256 _xd_now "${_xd_text}")
+        file(STRINGS ${_xd_stamp} _xd_then LIMIT_COUNT 1)
+        set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS ${_xd_stamp} ${CMAKE_CURRENT_SOURCE_DIR}/dash_manifest.toml)
+        if(NOT _xd_now STREQUAL _xd_then)
+            message(FATAL_ERROR "generated/ périmé : les entrées du codegen (manifeste, overrides, XEX) ont changé depuis la "
+                                "dernière génération (empreinte ${_xd_then}, actuelle ${_xd_now}). Lancer "
+                                "python3 tools/regen_xam_modules.py puis relancer le configure (ou -DXD_SKIP_GENERATED_CHECK=ON).")
+        endif()
+    else()
+        message(WARNING "generated/inputs.sha256 absent : cohérence generated/ <-> entrées non vérifiée "
+                        "(python3 tools/regen_xam_modules.py l'écrit).")
+    endif()
+endif()
+
 include(generated/rexglue.cmake)
 
 # Module XAM (cible dash_xam, créée par generated/dash/dll_targets.cmake) : le gabarit du SDK (fork, commit e28335b) ne
