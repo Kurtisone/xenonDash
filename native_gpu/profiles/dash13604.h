@@ -24,9 +24,11 @@
 #define NGP_WaitFence 92197358              // (dev, fence, ...)
 #define NGP_WaitDrain 92196CA8              // (dev, position, taille)
 #define NGP_WaitSecond 92196C10             // (dev, a, b)
+#define NGP_WaitBatches 92198978            // (dev) : boucle tant que dev+11012 != 0
 
 namespace ngpu_profile {
 constexpr uint32_t kFencePtr = 10896;        // dev + : pointeur vers le bloc de retour du GPU
+constexpr uint32_t kBatchCounter = 11012;    // dev + : compteur de lots, incremente a chaque fin de tuilage (sub_921AE7B8, r7=1), attendu a 0 par sub_92198978 ; jamais decremente sans file reelle
 constexpr uint32_t kFenceValue = 10908;      // dev + : derniere position emise
 constexpr uint32_t kDrainWord = 60;          // mot +60 du bloc de retour : pointeur de lecture du GPU
 constexpr uint32_t kSecondWord = 4;          // mot +4 du bloc de retour : fence secondaire

@@ -604,6 +604,13 @@ NGPU_HOOK(NGP_WaitFence) {
   ngpu::NullGpuCompleteNow(base, ctx.r3.u32);
   return false;
 }
+// (dev) : sub_92198978 attend dev+11012 == 0 ; sans file reelle le compteur (incremente par sub_921AE7B8) ne redescend jamais.
+// On le remet a zero a l'entree puis on laisse le code d'origine s'executer (la boucle sort aussitot).
+NGPU_HOOK(NGP_WaitBatches) {
+  const uint32_t dev = ctx.r3.u32;
+  if (dev) ngpu::PutBe32(base + dev + ngpu_profile::kBatchCounter, 0);
+  return false;
+}
 // (dev, pos, taille) : GPU draine = pointeur de lecture (mot +60 du bloc de retour) a la position demandee.
 NGPU_HOOK(NGP_WaitDrain) {
   const uint32_t dev = ctx.r3.u32;
