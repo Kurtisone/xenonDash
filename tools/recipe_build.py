@@ -939,8 +939,9 @@ class Build:
         native = self.recipe.get("render", {}).get("mode") == "native"
         cm = ["cmake", "-S", proj, "-B", bdir, "-G", "Ninja", f"-DCMAKE_PREFIX_PATH={SDK}", "-DCMAKE_BUILD_TYPE=Release",
               "-DCMAKE_C_COMPILER=clang", "-DCMAKE_CXX_COMPILER=clang++",
-              f"-DCMAKE_C_FLAGS={b.get('arch_flags', '-march=x86-64-v2')}",
-              f"-DCMAKE_CXX_FLAGS={b.get('arch_flags', '-march=x86-64-v2')}",
+              # concatene aux flags de l'environnement (CFLAGS/CXXFLAGS : -isystem et -resource-dir de la toolchain embarquee)
+              f"-DCMAKE_C_FLAGS={(os.environ.get('CFLAGS', '') + ' ' + b.get('arch_flags', '-march=x86-64-v2')).strip()}",
+              f"-DCMAKE_CXX_FLAGS={(os.environ.get('CXXFLAGS', '') + ' ' + b.get('arch_flags', '-march=x86-64-v2')).strip()}",
               "-DREXGLUE_ENABLE_TRACY=OFF", "-DREXGLUE_ENABLE_PERF_COUNTERS=OFF", "-DREXGLUE_RECOMP_DEBUG_INFO=none",
               f"-DXD_NATIVE_GPU={'ON' if native else 'OFF'}",
               f"-DXD_SHADER_CACHE={os.path.join(self.cache, 'shaders', 'shader_cache.cpp')}"]
