@@ -477,6 +477,25 @@ std::string JsonField(const std::string& j, const std::string& key) {
     for (p++; p < j.size() && j[p] != '"'; p++) {
       if (j[p] == '\\' && p + 1 < j.size()) {
         p++;
+        if (j[p] == 'u' && p + 4 < j.size()) {  // \uXXXX (json.dumps de Python) -> UTF-8, paires de substitution comprises
+          auto hex4 = [&](size_t at) { return static_cast<uint32_t>(std::strtoul(j.substr(at, 4).c_str(), nullptr, 16)); };
+          uint32_t cp = hex4(p + 1);
+          p += 4;
+          if (cp >= 0xD800 && cp < 0xDC00 && p + 6 < j.size() && j[p + 1] == '\\' && j[p + 2] == 'u') {
+            cp = 0x10000 + ((cp - 0xD800) << 10) + (hex4(p + 3) - 0xDC00);
+            p += 6;
+          }
+          if (cp < 0x80) v += static_cast<char>(cp);
+          else if (cp < 0x800) { v += static_cast<char>(0xC0 | (cp >> 6)); v += static_cast<char>(0x80 | (cp & 0x3F)); }
+          else if (cp < 0x10000) {
+            v += static_cast<char>(0xE0 | (cp >> 12)); v += static_cast<char>(0x80 | ((cp >> 6) & 0x3F));
+            v += static_cast<char>(0x80 | (cp & 0x3F));
+          } else {
+            v += static_cast<char>(0xF0 | (cp >> 18)); v += static_cast<char>(0x80 | ((cp >> 12) & 0x3F));
+            v += static_cast<char>(0x80 | ((cp >> 6) & 0x3F)); v += static_cast<char>(0x80 | (cp & 0x3F));
+          }
+          continue;
+        }
         v += j[p] == 'n' ? '\n' : j[p];
       } else {
         v += j[p];

@@ -173,7 +173,19 @@ void ShowStartBox(const dash::launch::BuildStatus& st) {
 void ShowFailBox(const dash::launch::BuildStatus& st) {
   BoxRequest req;
   req.title = Wide(st.name);
-  std::string text = "Impossible de lancer le jeu : " + (st.error.empty() ? "erreur de construction" : st.error);
+  // Le message complet (liste des fonctions à faible confiance...) est trop long pour la boîte Xbox : motif seul à
+  // l'écran (jusqu'au premier « : »), détail dans le journal et failure.json.
+  std::string why = st.error.empty() ? "erreur de construction" : st.error;
+  bool cut = false;
+  if (size_t p = why.find(" : "); p != std::string::npos && p >= 20) why.resize(p), cut = true;
+  if (why.size() > 200) {
+    size_t n = 200;
+    while (n > 0 && (static_cast<unsigned char>(why[n]) & 0xC0) == 0x80) n--;
+    why.resize(n);
+    cut = true;
+  }
+  std::string text = "Impossible de lancer le jeu : " + why;
+  if (cut) text += " (détail dans le journal)";
   if (!st.stage.empty()) text += "\n" + ProgressLine(st);
   if (!st.log_path.empty()) text += "\nJournal : " + st.log_path;
   req.text = Wide(text);
