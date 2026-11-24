@@ -20,7 +20,31 @@ if(XD_NATIVE_GPU)
     if(NOT EXISTS "${XD_SHADER_CACHE}")
         message(FATAL_ERROR "XD_NATIVE_GPU : cache de shaders absent (${XD_SHADER_CACHE})")
     endif()
-    add_subdirectory(${XD_ROOT}/ngpu_core ngpu_core)
+    # ngpu_core + plume : bibliotheques precompilees partagees (tools/recipe_build.py, <donnees>/ngpu_prebuilt/<cle>/) si presentes,
+    # sinon compilation dans ce jeu.
+    set(XD_NGPU_PREBUILT "" CACHE PATH "Dossier de libngpu_core.a et libplume.a precompilees (vide : compiler ngpu_core ici)")
+    if(XD_NGPU_PREBUILT AND EXISTS "${XD_NGPU_PREBUILT}/libngpu_core.a" AND EXISTS "${XD_NGPU_PREBUILT}/libplume.a")
+        find_package(Vulkan REQUIRED)
+        find_package(X11 REQUIRED)
+        find_path(NGPU_XXHASH_DIR xxhash.h
+            HINTS ${XD_ROOT}/third_party/xenondash-sdk/thirdparty/xxHash NO_DEFAULT_PATH)
+        if(NOT NGPU_XXHASH_DIR)
+            find_path(NGPU_XXHASH_DIR xxhash.h REQUIRED)
+        endif()
+        add_library(plume STATIC IMPORTED)
+        set_target_properties(plume PROPERTIES IMPORTED_LOCATION "${XD_NGPU_PREBUILT}/libplume.a"
+            INTERFACE_INCLUDE_DIRECTORIES
+            "${XD_ROOT}/ngpu_core/third_party/plume;${XD_ROOT}/ngpu_core/third_party/plume/contrib/volk;${XD_ROOT}/ngpu_core/third_party/plume/contrib/VulkanMemoryAllocator/include;${Vulkan_INCLUDE_DIRS};${X11_INCLUDE_DIR}"
+            INTERFACE_LINK_LIBRARIES "${CMAKE_DL_LIBS};${X11_LIBRARIES}")
+        add_library(ngpu_core STATIC IMPORTED)
+        set_target_properties(ngpu_core PROPERTIES IMPORTED_LOCATION "${XD_NGPU_PREBUILT}/libngpu_core.a"
+            INTERFACE_INCLUDE_DIRECTORIES "${XD_ROOT}/ngpu_core/src;${NGPU_XXHASH_DIR}"
+            INTERFACE_LINK_LIBRARIES plume
+            INTERFACE_COMPILE_FEATURES cxx_std_20)
+        message(STATUS "ngpu_core precompile : ${XD_NGPU_PREBUILT}")
+    else()
+        add_subdirectory(${XD_ROOT}/ngpu_core ngpu_core)
+    endif()
     find_package(Vulkan REQUIRED)
     file(GLOB NATIVE_SOURCES CONFIGURE_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/native/*.cpp)
     list(APPEND GAME_SOURCES ${NATIVE_SOURCES}

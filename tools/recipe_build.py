@@ -208,6 +208,78 @@ def xenosrecomp_id():
     return h.hexdigest()[:12]
 
 
+KEEP_CACHES = 2   # cles de cache conservees par jeu (la plus recente est toujours gardee) ; XD_KEEP_CACHES pour changer
+
+
+def purge_old_caches(title_id, current, keep=None):
+    """Supprime les anciennes cles de cache d'un jeu au-dela de `keep` (defaut 2), la plus recente et `current` gardees.
+    Ne touche que les dossiers de cle (16 hexa) portant build.ok : une construction en cours ou inachevee est laissee."""
+    keep = max(1, int(os.environ.get("XD_KEEP_CACHES", keep or KEEP_CACHES)))
+    gdir = os.path.join(data_home(), "games", title_id)
+    done = []
+    for n in os.listdir(gdir) if os.path.isdir(gdir) else []:
+        ok = os.path.join(gdir, n, "build.ok")
+        if re.fullmatch(r"[0-9a-f]{16}", n) and os.path.isfile(ok):
+            done.append((os.path.getmtime(ok), n))
+    done.sort(reverse=True)
+    keepers = {n for _, n in done[:keep]} | {current}
+    for _, n in done:
+        if n not in keepers:
+            shutil.rmtree(os.path.join(gdir, n), ignore_errors=True)
+            log(f"ancienne cle de cache supprimee : {n} (on garde {keep} cles)")
+
+
+def ngpu_prebuilt(b, env_flags, logp):
+    """Bibliotheque ngpu_core (+ plume) precompilee, partagee entre les jeux : <donnees>/ngpu_prebuilt/<cle>/. La cle couvre les sources de
+    ngpu_core, le compilateur et les flags. Renvoie le dossier, ou None (construction impossible : le jeu recompile ngpu_core lui-meme)."""
+    if os.environ.get("XD_NO_NGPU_PREBUILT"):
+        return None
+    try:
+        ver = subprocess.run(["clang++", "--version"], stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True).stdout
+        src = os.path.join(ROOT, "ngpu_core")
+        files = [(src, r) for _, r in tree_files(src) if not r.startswith("tools/")]
+        key = hashlib.sha256((sha256_tree(files) + ver + env_flags + str(ENGINE_REV)).encode()).hexdigest()[:16]
+        root = os.path.join(data_home(), "ngpu_prebuilt")
+        d = os.path.join(root, key)
+        if all(os.path.isfile(os.path.join(d, f)) for f in ("libngpu_core.a", "libplume.a")):
+            return d
+        os.makedirs(root, exist_ok=True)
+        import fcntl
+        with open(os.path.join(root, ".lock"), "w") as lk:
+            fcntl.flock(lk, fcntl.LOCK_EX)
+            if all(os.path.isfile(os.path.join(d, f)) for f in ("libngpu_core.a", "libplume.a")):   # fait par un autre processus
+                return d
+            tmp = os.path.join(root, f"build-{key}")
+            shutil.rmtree(tmp, ignore_errors=True)
+            log("ngpu_core precompile : construction unique (partagee entre les jeux)")
+            run_logged(["cmake", "-S", src, "-B", tmp, "-G", "Ninja", "-DCMAKE_BUILD_TYPE=Release", "-DCMAKE_C_COMPILER=clang",
+                        "-DCMAKE_CXX_COMPILER=clang++", f"-DCMAKE_C_FLAGS={env_flags}", f"-DCMAKE_CXX_FLAGS={env_flags}",
+                        f"-DREXSDK_PREFIX={SDK}"] + ccache_args(), logp)
+            run_logged(["cmake", "--build", tmp, "-j", str(max(2, min(os.cpu_count() or 4, int(mem_available_gb() / 2.2))))], logp)
+            out = d + ".tmp"
+            shutil.rmtree(out, ignore_errors=True)
+            os.makedirs(out)
+            for f in ("libngpu_core.a", "libplume.a"):
+                found = [os.path.join(dp, f) for dp, _, fs in os.walk(tmp) if f in fs]
+                if not found:
+                    raise RecipeError(f"{f} introuvable apres la construction de ngpu_core")
+                shutil.copy(found[0], out)
+            shutil.rmtree(d, ignore_errors=True)
+            os.rename(out, d)
+            shutil.rmtree(tmp, ignore_errors=True)
+            return d
+    except Exception as e:   # sans precompile : on retombe sur la compilation de ngpu_core dans le jeu (comportement d'avant)
+        log(f"ngpu_core precompile indisponible ({type(e).__name__}: {e}) : compilation dans le jeu")
+        return None
+
+
+def ccache_args():
+    """ccache s'il est installe (cache de compilation partage entre constructions) ; sinon rien, sans erreur."""
+    if os.environ.get("XD_NO_CCACHE") or not shutil.which("ccache"):
+        return []
+    return ["-DCMAKE_C_COMPILER_LAUNCHER=ccache", "-DCMAKE_CXX_COMPILER_LAUNCHER=ccache"]
+
+
 def recipe_codegen_rev(rdir, recipe):
     """Ce qui change le code genere : la section [codegen] de la recette et les fichiers de codegen."""
     h = hashlib.sha256()
@@ -937,6 +1009,8 @@ class Build:
         b = self.recipe.get("build", {})
         lp = os.path.join(self.cache, "compile.log")
         native = self.recipe.get("render", {}).get("mode") == "native"
+        arch = b.get("arch_flags", "-march=x86-64-v2")
+        pre = ngpu_prebuilt(self, (os.environ.get("CXXFLAGS", "") + " " + arch).strip(), lp) if native else None
         cm = ["cmake", "-S", proj, "-B", bdir, "-G", "Ninja", f"-DCMAKE_PREFIX_PATH={SDK}", "-DCMAKE_BUILD_TYPE=Release",
               "-DCMAKE_C_COMPILER=clang", "-DCMAKE_CXX_COMPILER=clang++",
               # concatene aux flags de l'environnement (CFLAGS/CXXFLAGS : -isystem et -resource-dir de la toolchain embarquee)
@@ -944,7 +1018,8 @@ class Build:
               f"-DCMAKE_CXX_FLAGS={(os.environ.get('CXXFLAGS', '') + ' ' + b.get('arch_flags', '-march=x86-64-v2')).strip()}",
               "-DREXGLUE_ENABLE_TRACY=OFF", "-DREXGLUE_ENABLE_PERF_COUNTERS=OFF", "-DREXGLUE_RECOMP_DEBUG_INFO=none",
               f"-DXD_NATIVE_GPU={'ON' if native else 'OFF'}",
-              f"-DXD_SHADER_CACHE={os.path.join(self.cache, 'shaders', 'shader_cache.cpp')}"]
+              f"-DXD_SHADER_CACHE={os.path.join(self.cache, 'shaders', 'shader_cache.cpp')}",
+              f"-DXD_NGPU_PREBUILT={pre or ''}"] + ccache_args()
         prog.sub(0.0, "configuration (cmake)")
         run_logged(cm, lp)
         jobs = self.jobs or int(b.get("jobs", 0)) or max(2, min(os.cpu_count() or 4, int(mem_available_gb() / 2.2)))
@@ -1121,6 +1196,11 @@ class Build:
                            "version": info["version"], "key": self.key, "keyparts": self.keyparts,
                            "recipe_rev": recipe_rev(self.rdir), "mode": self.mode, "seconds": self.t, "built": time.strftime("%F %T"),
                            "game_dir": self.game_dir}, open(os.path.join(self.cache, "build.ok"), "w"), indent=1)
+            if self.stages == STAGES:
+                try:
+                    purge_old_caches(info["title_id"], self.key)
+                except OSError as e:
+                    log(f"purge des anciens caches ignoree : {e}")
             prog.update(done=True, percent=100.0, message="termine", stage_times=self.t)
             log(f"{self.name} : " + (f"construit en {time.time() - t0:.0f} s" if self.stages == STAGES else
                                     "etapes " + ",".join(self.stages) + f" faites en {time.time() - t0:.0f} s") + f" ({self.cache})")
