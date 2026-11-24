@@ -1195,17 +1195,23 @@ class Build:
             for f in newest:
                 text += open(os.path.join(logs, f), errors="replace").read()
         if "FATAL" in text or "Segmentation" in text:
-            m = re.search(r"Call to invalid or unregistered function at guest address 0x([0-9A-Fa-f]{8})", text)
+            pat_ = r"Call to invalid or unregistered function at guest address 0x([0-9A-Fa-f]{8})"
+            m = re.search(pat_, text)
             if m and self.mode == "generic":
                 # fonction invoquee par pointeur que l'analyse statique n'a pas vue : declaree dans le cache utilisateur, a la prochaine
                 # construction le codegen l'inclut (boucle « jouer -> reconstruire », docs/recompilateur_generique.md)
-                a = int(m.group(1), 16)
+                # XD_BOOT_COLLECT=1 : regroupe toutes les adresses distinctes du journal (un seul codegen pour plusieurs). Defaut : la 1re seule.
+                addrs = sorted({int(x, 16) for x in re.findall(pat_, text)}) if os.environ.get("XD_BOOT_COLLECT") else [int(m.group(1), 16)]
                 up = user_functions_path(self.info["title_id"])
                 os.makedirs(os.path.dirname(up), exist_ok=True)
                 with open(up, "a") as f:
-                    f.write(f"0x{a:08X} = {{}}  # appelee a l'execution sans etre declaree (bootstrap)\n")
-                raise MissingFunction(f"test d'amorcage : fonction 0x{a:08X} non declaree au codegen, ajoutee a {up} ; relancer la "
-                                      f"construction (boucle jouer -> reconstruire), voir {lp}", details={"address": f"0x{a:08X}", "log": lp})
+                    for a in addrs:
+                        f.write(f"0x{a:08X} = {{}}  # appelee a l'execution sans etre declaree (bootstrap)\n")
+                a = addrs[0]
+                more = f" (+{len(addrs) - 1} autre(s))" if len(addrs) > 1 else ""
+                raise MissingFunction(f"test d'amorcage : fonction 0x{a:08X}{more} non declaree au codegen, ajoutee a {up} ; relancer la "
+                                      f"construction (boucle jouer -> reconstruire), voir {lp}",
+                                      details={"address": f"0x{a:08X}", "addresses": [f"0x{x:08X}" for x in addrs], "log": lp})
             raise RecipeError("test d'amorcage : erreur fatale, voir " + lp)
         absent = [pat for pat in bt.get("expect", []) if pat not in text]
         if absent:

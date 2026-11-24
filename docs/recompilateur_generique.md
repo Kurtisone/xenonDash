@@ -104,6 +104,11 @@ moitié (par adresse croissante) de cette nature est retirée à chaque échec :
 supplémentaires (bornées par `max_iter`, 14). **Désactivé par défaut** : le résultat de Skate (3 passes, aucun rejet) n'est pas modifié, et
 l'option n'a pas été mesurée. Les rejets (passe, nature, adresses) sont consignés dans `failure.json` en cas d'échec définitif.
 
+Regroupement des fonctions manquantes à l'amorçage (optionnel) : par défaut, l'amorçage ne retient que la première adresse « Call to invalid
+or unregistered function » du journal puis relance un codegen. Avec `XD_BOOT_COLLECT=1`, toutes les adresses distinctes du journal sont
+déclarées d'un coup (un seul codegen pour plusieurs). Un appel invalide est fatal : le journal n'en contient souvent qu'une, le gain est donc
+limité ; **désactivé par défaut**, non mesuré.
+
 ## 5. Shaders génériques et boucle « jouer → reconstruire »
 
 `scan_shaders.py` balaie **tous** les fichiers du jeu (mmap) et l'image décodée à la recherche des conteneurs Xenos (magie `0x102A11xx`, en-tête de 0x24), y compris dans les archives non
