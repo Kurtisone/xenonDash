@@ -157,6 +157,12 @@ static void DiagPlayEntry(PPCContext& ctx, uint8_t* base) {
   REXLOG_INFO("[play-trace] sub_9218DC60 cs(dev+15156) owner={:08X} recursion={:08X} lock={:08X}", DiagBe32(base, dev + 15156 + 12), DiagBe32(base, dev + 15156 + 8), DiagBe32(base, dev + 15156 + 4));
 }
 
+static void DiagDevCounter(const char* tag, PPCContext& ctx, uint8_t* base) {
+  uint32_t dev = ctx.r3.u32;
+  if (!dev) { REXLOG_INFO("[play-trace] {} dev nul", tag); return; }
+  REXLOG_INFO("[play-trace] {} dev={:08X} compteur={:08X}", tag, dev, DiagBe32(base, dev + 11012));
+}
+
 #define X(A)                                                                          \
   extern "C" void __imp__sub_##A(PPCContext& __restrict, uint8_t*);                   \
   extern "C" __attribute__((weak)) bool ngpu_hook_##A(PPCContext&, uint8_t*);         \
@@ -165,6 +171,8 @@ static void DiagPlayEntry(PPCContext& ctx, uint8_t* base) {
     ngpu::TraceHit(slot, 0x##A, ctx);                                                 \
     if constexpr (0x##A == 0x9218DC60) REXLOG_INFO("[play-trace] entree sub_9218DC60 thread={}", std::hash<std::thread::id>{}(std::this_thread::get_id())); \
     if constexpr (0x##A == 0x9218DC60) DiagPlayEntry(ctx, base);                      \
+    if constexpr (0x##A == 0x92197FA8) DiagDevCounter("mise_en_file", ctx, base);     \
+    if constexpr (0x##A == 0x921AD750) DiagDevCounter("fin_lot", ctx, base);          \
     if constexpr (0x##A == 0x92198978) REXLOG_INFO("[play-trace] entree sub_92198978 r3={:08X}", ctx.r3.u32); \
     if (0x##A == ngpu_profile::kSwapEntry) { ngpu::TraceFrame(0x##A); ngpu::SwapTick(); }                                 \
     if (ngpu::Enabled() && ngpu_hook_##A) {                                           \
