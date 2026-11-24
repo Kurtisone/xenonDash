@@ -1,0 +1,14 @@
+# Image de build XenonDash (AppImage) : paquets installés une seule fois, sans dépendance au dépôt.
+FROM docker.io/library/ubuntu:24.04
+ENV DEBIAN_FRONTEND=noninteractive
+RUN apt-get update && apt-get install -y --no-install-recommends \
+      gcc-14 g++-14 libstdc++-14-dev clang-20 lld-20 cmake ninja-build git python3 file librsvg2-bin libfuse2t64 xz-utils \
+      pkg-config ca-certificates xxhash ccache \
+      libx11-dev libxext-dev libxrandr-dev libxcursor-dev libxi-dev libxinerama-dev libxkbcommon-dev libxkbcommon-x11-dev \
+      libwayland-dev libvulkan-dev libasound2-dev libudev-dev libdrm-dev libgbm-dev libegl-dev libgl-dev libpulse-dev \
+      libxss-dev libxtst-dev libxrender-dev libxxf86vm-dev libxfixes-dev libdbus-1-dev uuid-dev nasm yasm bison flex \
+      libx11-xcb-dev libxcb1-dev libxcb-util-dev libxcb-keysyms1-dev libxcb-icccm4-dev libxcb-randr0-dev \
+      libxcb-shape0-dev libxcb-xkb-dev libxcb-xinput-dev libxcb-dri3-dev libxcb-present-dev libxcb-sync-dev libxcb-glx0-dev \
+    && ln -sf /usr/bin/clang-20 /usr/local/bin/clang \
+    && ln -sf /usr/bin/clang++-20 /usr/local/bin/clang++ \
+    && rm -rf /var/lib/apt/lists/*
