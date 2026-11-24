@@ -27,9 +27,9 @@ EOF
   (sur l'hôte : `/usr/bin/clang` et `/usr/bin/clang++` ; supprimer `CMakeCache.txt` si la configuration
   garde un chemin de compilateur du conteneur). Le dash lie les bibliothèques de `sdk/lib/` et le
   `rexglue` de `sdk/bin/`. Le dossier `out/linux-amd64` n'existe plus.
-- **Codegen** : `/src/sdk/bin/rexglue codegen dash_manifest.toml` (≈ 1 min, 26 916 fonctions).
+- **Codegen** : `sdk/bin/rexglue codegen dash_manifest.toml` (chemin du dépôt ; dans le conteneur, le dépôt est monté sur `/src`) (≈ 1 min, 26 916 fonctions).
 - **Dashboard** : configure dans `dashboards/2.0.13604.0-xam/out/build/linux-amd64-relwithdebinfo`
-  avec `-DCMAKE_PREFIX_PATH=/src/sdk` (≈ 8 min).
+  (≈ 8 min). Le `CMakeLists.txt` impose le SDK du dépôt (`sdk/`, relatif au dépôt, aucun autre `CMAKE_PREFIX_PATH`) et sa version exacte (`XD_REXGLUE_VERSION`, à mettre à jour si le numéro du SDK change) ; `-DREXSDK_DIR=` permet d'utiliser un arbre source du SDK à la place.
 - **AppImage** : `APPIMAGE_EXTRACT_AND_RUN=1 BUILD_DIR=linux-amd64-relwithdebinfo \
   ./tools/make_appimage.sh 2.0.13604.0-xam` — sortie fixe `out/appimage/XenonDash-Kinect.AppImage`
   (une seule AppImage, demande utilisateur ; le nom ne varie plus). `appimagetool` réclame `file`

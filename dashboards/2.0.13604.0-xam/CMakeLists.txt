@@ -49,6 +49,21 @@ if(NOT XD_SKIP_GENERATED_CHECK)
     endif()
 endif()
 
+# SDK : version EXACTE et SDK du dépôt (sdk/) uniquement, jamais celui du système ni un autre CMAKE_PREFIX_PATH. generated/rexglue.cmake
+# est réécrit par le codegen (« DO NOT EDIT », find_package(rexglue 0.10.0 sans EXACT) : on impose donc ici, avant son inclusion,
+# la version (REXSDK_VERSION -> find_package(... EXACT)) et le dossier du paquet (rexglue_DIR). Après une reconstruction du SDK
+# dont le numéro change, mettre à jour XD_REXGLUE_VERSION (voir sdk/lib/cmake/rexglue/rexglueConfigVersion.cmake).
+if(NOT REXSDK_DIR)
+    set(XD_REXGLUE_VERSION "0.10.0.43")
+    get_filename_component(_xd_sdk "${CMAKE_CURRENT_SOURCE_DIR}/../../sdk" ABSOLUTE)
+    set(REXSDK_VERSION "${XD_REXGLUE_VERSION}" CACHE STRING "Override SDK version (leave empty for default)" FORCE)
+    set(CMAKE_PREFIX_PATH "${_xd_sdk}")
+    set(rexglue_DIR "${_xd_sdk}/lib/cmake/rexglue" CACHE PATH "Paquet rexglue du dépôt" FORCE)
+    set(CMAKE_FIND_USE_SYSTEM_ENVIRONMENT_PATH OFF)
+    set(CMAKE_FIND_USE_PACKAGE_REGISTRY OFF)
+    set(CMAKE_FIND_USE_SYSTEM_PACKAGE_REGISTRY OFF)
+endif()
+
 include(generated/rexglue.cmake)
 
 # Module XAM (cible dash_xam, créée par generated/dash/dll_targets.cmake) : le gabarit du SDK (fork, commit e28335b) ne
