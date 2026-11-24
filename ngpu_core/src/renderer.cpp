@@ -969,6 +969,16 @@ static uint32_t ViewportBottom(const xenos::DeviceState& state) {
   return bottom > 0.0f ? uint32_t(std::ceil(bottom)) : 0;
 }
 
+// Width of the host surface. Under predicated tiling (MSAA) the surface pitch is
+// one tile wide, while the draws and the resolves use the coordinates of the
+// whole image (the viewport spans it): the host surface, which is drawn once,
+// is as wide as that image, or everything past the first tile is cut off.
+static uint32_t SurfaceWidth(const xenos::DeviceState& state, uint32_t pitch) {
+  if (!((state.Reg(xenos::reg::RB_SURFACE_INFO) >> 16) & 3)) return pitch;
+  const float right = state.RegF(xenos::reg::PA_CL_VPORT_XOFFSET) + std::fabs(state.RegF(xenos::reg::PA_CL_VPORT_XSCALE));
+  return right > float(pitch) && right < 4096.0f ? uint32_t(std::ceil(right)) : pitch;
+}
+
 // The scene and what works at its size; the small passes stay as they are.
 float Renderer::SurfaceScale(uint32_t pitch) const {
   return pitch >= profile_.scene_pitch_min && pitch <= profile_.scene_pitch_max ? render_scale_ : 1.0f;
@@ -983,10 +993,11 @@ Renderer::Texture& Renderer::GetColorSurface(const xenos::DeviceState& state) {
   const uint32_t pitch = std::max(surface & 0x3FFF, 1u);
   const uint32_t format = (color >> 16) & 0xF;
   const float scale = SurfaceScale(pitch);
-  const uint64_t key = uint64_t(color & 0xFFF) | uint64_t(format) << 12 | uint64_t(pitch) << 16 |
+  const uint32_t width = SurfaceWidth(state, pitch);
+  const uint64_t key = uint64_t(color & 0xFFF) | uint64_t(format) << 12 | uint64_t(width) << 16 |
                        uint64_t(scale * 4.0f) << 40 | uint64_t(SurfaceWide(pitch) * 16.0f) << 48;
   if (key != last_color_key_ || !last_color_) {
-    last_color_ = &CreateSurface(key, uint32_t(pitch * scale * SurfaceWide(pitch)),
+    last_color_ = &CreateSurface(key, uint32_t(width * scale * SurfaceWide(pitch)),
                                  uint32_t(kMaxSurfaceHeight * scale), SurfaceFormat(format), false);
     last_color_->scale = scale;
     last_color_->scale_x = scale * SurfaceWide(pitch);
@@ -1000,10 +1011,11 @@ Renderer::Texture& Renderer::GetDepthSurface(const xenos::DeviceState& state) {
   const uint32_t depth = state.Reg(xenos::reg::RB_DEPTH_INFO);
   const uint32_t pitch = std::max(surface & 0x3FFF, 1u);
   const float scale = SurfaceScale(pitch);
-  const uint64_t key = uint64_t(depth & 0xFFF) | uint64_t(pitch) << 16 | 1ull << 63 | uint64_t(scale * 4.0f) << 40 |
+  const uint32_t width = SurfaceWidth(state, pitch);
+  const uint64_t key = uint64_t(depth & 0xFFF) | uint64_t(width) << 16 | 1ull << 63 | uint64_t(scale * 4.0f) << 40 |
                        uint64_t(SurfaceWide(pitch) * 16.0f) << 48;
   if (key != last_depth_key_ || !last_depth_) {
-    last_depth_ = &CreateSurface(key, uint32_t(pitch * scale * SurfaceWide(pitch)),
+    last_depth_ = &CreateSurface(key, uint32_t(width * scale * SurfaceWide(pitch)),
                                  uint32_t(kMaxSurfaceHeight * scale), RenderFormat::D32_FLOAT_S8_UINT, true);
     last_depth_->scale = scale;
     last_depth_->scale_x = scale * SurfaceWide(pitch);
@@ -1130,7 +1142,9 @@ void Renderer::Resolve(const ResolveCall& call) {
   // just the width padded to 32 texels.
   const uint32_t rectWidth = uint32_t(rect[2] - rect[0]);
   const uint32_t width = (rect[0] == 0 && destPitch == ((rectWidth + 31) & ~31u)) ? rectWidth : destPitch;
-  const uint32_t height = uint32_t(y) + destHeight;
+  // Predicated tiling resolves the tiles of one image into the same texture: the destination height is
+  // then the image's, and the tile's point lies inside it. Otherwise it counts from the point.
+  const uint32_t height = uint32_t(y) + uint32_t(rect[3] - rect[1]) <= destHeight ? destHeight : uint32_t(y) + destHeight;
   RenderFormat format = source.format;
   const float scale = source.scale, scaleX = source.scale_x;
   const uint32_t hostWidth = uint32_t(width * scaleX), hostHeight = uint32_t(height * scale);
