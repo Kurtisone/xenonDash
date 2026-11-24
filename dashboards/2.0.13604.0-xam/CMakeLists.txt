@@ -52,10 +52,19 @@ endif()
 # SDK : version EXACTE et SDK du dépôt (sdk/) uniquement, jamais celui du système ni un autre CMAKE_PREFIX_PATH. generated/rexglue.cmake
 # est réécrit par le codegen (« DO NOT EDIT », find_package(rexglue 0.10.0 sans EXACT) : on impose donc ici, avant son inclusion,
 # la version (REXSDK_VERSION -> find_package(... EXACT)) et le dossier du paquet (rexglue_DIR). Après une reconstruction du SDK
-# dont le numéro change, mettre à jour XD_REXGLUE_VERSION (voir sdk/lib/cmake/rexglue/rexglueConfigVersion.cmake).
+# dont le numéro change, la version est relue automatiquement dans rexglueConfigVersion.cmake du SDK installé.
 if(NOT REXSDK_DIR)
-    set(XD_REXGLUE_VERSION "0.10.0.43")
     get_filename_component(_xd_sdk "${CMAKE_CURRENT_SOURCE_DIR}/../../sdk" ABSOLUTE)
+    set(_xd_ver_file "${_xd_sdk}/lib/cmake/rexglue/rexglueConfigVersion.cmake")
+    if(NOT EXISTS "${_xd_ver_file}")
+        message(FATAL_ERROR "SDK rexglue introuvable : ${_xd_ver_file} (installer le SDK dans sdk/, voir docs/compilation.md)")
+    endif()
+    file(STRINGS "${_xd_ver_file}" _xd_ver_line REGEX "^set\\(PACKAGE_VERSION \"[^\"]+\"\\)")
+    if(NOT _xd_ver_line MATCHES "PACKAGE_VERSION \"([^\"]+)\"")
+        message(FATAL_ERROR "Version du SDK illisible dans ${_xd_ver_file}")
+    endif()
+    set(XD_REXGLUE_VERSION "${CMAKE_MATCH_1}")
+    message(STATUS "SDK rexglue ${XD_REXGLUE_VERSION} (lu dans sdk/)")
     set(REXSDK_VERSION "${XD_REXGLUE_VERSION}" CACHE STRING "Override SDK version (leave empty for default)" FORCE)
     set(CMAKE_PREFIX_PATH "${_xd_sdk}")
     set(rexglue_DIR "${_xd_sdk}/lib/cmake/rexglue" CACHE PATH "Paquet rexglue du dépôt" FORCE)
