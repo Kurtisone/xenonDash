@@ -140,6 +140,17 @@ void GuestLoop() {
 // Xbox du HUD. Une boîte au démarrage de la construction (nom du jeu, durée estimée, journal ; « Masquer » la ferme
 // sans toucher à la construction), une à l'échec (erreur + journal) ; rien au succès (le jeu se lance tout seul,
 // BuildMonitor de dash_launch.cpp).
+// Ligne d'avancement (déjà dans g_build) : pourcentage, étape courante (index/total, nom, message).
+std::string ProgressLine(const dash::launch::BuildStatus& st) {
+  char buf[64];
+  std::snprintf(buf, sizeof buf, "%.0f %%", st.percent);
+  std::string line = "Avancement : " + std::string(buf);
+  if (st.total > 0) line += "  (étape " + std::to_string(st.index) + "/" + std::to_string(st.total) + ")";
+  if (!st.stage.empty()) line += "  " + st.stage;
+  if (!st.message.empty()) line += " : " + st.message;
+  return line;
+}
+
 void ShowStartBox(const dash::launch::BuildStatus& st) {
   BoxRequest req;
   req.title = Wide(st.name);
@@ -152,6 +163,7 @@ void ShowStartBox(const dash::launch::BuildStatus& st) {
     text += "Cela peut prendre plusieurs dizaines de minutes. ";
   }
   text += "Le jeu se lancera tout seul à la fin.";
+  text += "\n" + ProgressLine(st);
   if (!st.log_path.empty()) text += "\nJournal : " + st.log_path;
   req.text = Wide(text);
   req.buttons = {u"Masquer"};
@@ -162,6 +174,7 @@ void ShowFailBox(const dash::launch::BuildStatus& st) {
   BoxRequest req;
   req.title = Wide(st.name);
   std::string text = "Impossible de lancer le jeu : " + (st.error.empty() ? "erreur de construction" : st.error);
+  if (!st.stage.empty()) text += "\n" + ProgressLine(st);
   if (!st.log_path.empty()) text += "\nJournal : " + st.log_path;
   req.text = Wide(text);
   req.buttons = {u"OK"};
@@ -175,7 +188,15 @@ void BuildWatcher() {
   bool was_active = false, was_failed = false;
   for (;;) {
     const dash::launch::BuildStatus st = dash::launch::GetBuildStatus();
-    if (st.active && !was_active) ShowStartBox(st);
+    if (st.active && !was_active) {
+      // Laisse le moniteur lire progress.json (étape et pourcentage réels) avant d'ouvrir la boîte, 3 s au plus.
+      dash::launch::BuildStatus cur = st;
+      for (int i = 0; i < 6 && cur.stage.empty() && cur.active; i++) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(500));
+        cur = dash::launch::GetBuildStatus();
+      }
+      ShowStartBox(cur);
+    }
     if (st.failed && !was_failed) ShowFailBox(st);
     was_active = st.active;
     was_failed = st.failed;
