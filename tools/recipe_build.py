@@ -363,7 +363,8 @@ def start_xvfb(fbdir, display=None):
 class Progress:
     """progress.json : lu par le Dashboard (superposition de construction) ; ecrit de facon atomique."""
 
-    def __init__(self, cache, estimate):
+    def __init__(self, cache, estimate, weights=None):
+        self.weights = weights or {}   # etape -> duree estimee (s) ; absente : poids egal
         self.lock = threading.Lock()
         self.tick_fn = None   # appelee chaque seconde par le battement de coeur (progression a l'estime d'une etape sans sortie)
         self.path = os.path.join(cache, "progress.json") if cache else None
@@ -394,19 +395,26 @@ class Progress:
                 time.sleep(1)
         threading.Thread(target=beat, daemon=True).start()
 
+    def _span(self, idx):
+        """(debut, largeur) de l'etape idx en pourcentage, ponderes par la duree estimee de chaque etape."""
+        w = [max(0.1, float(self.weights.get(n, 1.0))) for n in STAGES]
+        tot = sum(w)
+        return 100.0 * sum(w[:idx]) / tot, 100.0 * w[idx] / tot
+
     def stage(self, name, message=""):
         self.tick_fn = None
         if self.state["stage"] and self.state["stage"] != name:
             self.state["stages"][self.state["stage"]] = round(time.time() - self.state.get("stage_start", time.time()), 1)
         self.state["stage_start"] = time.time()
         idx = STAGES.index(name) if name in STAGES else 0
-        self.update(stage=name, index=idx + 1, message=message, percent=100.0 * idx / len(STAGES))
+        self.update(stage=name, index=idx + 1, message=message, percent=round(self._span(idx)[0], 1))
         log(f"[{idx + 1}/{len(STAGES)}] {name} : {message}")
 
     def sub(self, fraction, message=None):
         """Avancement a l'interieur de l'etape courante (0..1)."""
         idx = self.state["index"] - 1
-        pct = 100.0 * (idx + max(0.0, min(1.0, fraction))) / len(STAGES)
+        start, width = self._span(max(idx, 0))
+        pct = start + width * max(0.0, min(1.0, fraction))
         kw = {"percent": round(pct, 1)}
         if message is not None:
             kw["message"] = message
@@ -934,7 +942,8 @@ class Build:
         # progression : le codegen n'a pas de pourcentage ; on estime par le temps
         done = {"v": False}
 
-        prog.tick_fn = lambda: prog.sub(min(0.95, (time.time() - t0) / est), None)
+        passes = {"i": 0, "n": 1}   # compteur de passes du codegen : entre dans le pourcentage (jamais en dessous de l'estime au temps)
+        prog.tick_fn = lambda: prog.sub(min(0.95, max((time.time() - t0) / est, passes["i"] / max(1, passes["n"]))), None)
         env = {"LD_LIBRARY_PATH": os.path.join(SDK, "lib")}
         if self.mode == "generic":
             img = d3d_match.Image(os.path.join(self.cache, "image", next(f for f in os.listdir(os.path.join(self.cache, "image"))
@@ -952,7 +961,9 @@ class Build:
                 stats = codegen_loop.run_loop(REXGLUE, os.path.join(SDK, "lib"), proj, f"{name}_manifest.toml", out, f"{name}_init.cpp",
                                               img, os.path.join(proj, "functions.generated.toml"), ldir, crt.get("setjmp"),
                                               crt.get("longjmp"), log=log,
-                                              tick=lambda i, n: prog.update(message=f"codegen, passe {i}"),
+                                              tick=lambda i, n: (passes.update(i=i, n=n),
+                                                 prog.sub(min(0.95, max((time.time() - t0) / est, i / max(1, n))),
+                                                          f"codegen, passe {i}/{n}")),
                                               extra=read_user_functions(self.info["title_id"]), seeds=self.hooked_seeds(),
                                               rexcrt=self.rexcrt_roles(rep_), state_path=state,
                                               discover=not os.environ.get("XD_NO_DISCOVER"))
@@ -1220,7 +1231,10 @@ class Build:
         except OSError:
             raise RecipeError(f"{self.name} : une autre construction de ce jeu est deja en cours (verrou {gdir}/build.lock)")
         est = sum(self.recipe.get("build", {}).get("estimate_minutes", {"x": 30}).values()) * 60
-        prog = Progress(self.cache, est)
+        em = self.recipe.get("build", {}).get("estimate_minutes", {})
+        weights = {"identify": 3, "prepare": 3, "extract": 10, "scaffold": 5, "bootstrap": self.recipe.get("bootstrap", {}).get("seconds", 40)}
+        weights.update({k: v * 60 for k, v in em.items() if k in STAGES})
+        prog = Progress(self.cache, est, weights)
         prog.update(title_id=info["title_id"], name=self.name, cache=self.cache, source=self.game_dir)
         prog.start_heartbeat()
         if self.ok() and not self.force and self.stages == STAGES:
