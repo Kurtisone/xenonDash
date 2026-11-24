@@ -6,9 +6,11 @@ rendues, disque complètement supprimé, une seule AppImage `XenonDash-Kinect.Ap
 onglets (banc). Création de profil, connexion par Sign In sans code d'accès et gamertag sur le XMB fonctionnent
 (banc). **Avatar du hub** : le profil choisit un avatar prédéfini, et l'avatar s'affiche en couleur sur le XMB
 (banc, commits `243b35e`, `105b468`, `687ecab`, dépôt SDK `69764e99`). **Icône Gamerscore** : corrigée par
-`src/dash_font_patch.cpp` (commit `7cf0bd7`). Non encore vérifié : l'AppImage sur le Deck avec ces correctifs,
-le HUD, et l'éditeur d'avatar complet. Détails : « Avatar » ci-dessous ; mesures complètes dans
-`docs/xam_13604_compilation.md`. Index de la documentation : [INDEX.md](INDEX.md) ; le README est destiné aux
+`src/dash_font_patch.cpp` (commit `7cf0bd7`). **HUD vérifié au banc** (2026-11-24) : XMB, Guide et clavier
+« Enter Profile Name » s'affichent sans carré ni fenêtre tronquée ; boîtes de progression non testées. Non encore
+vérifié : l'AppImage sur le Deck avec ces correctifs, et l'éditeur d'avatar complet. Détails : « Avatar » ci-dessous
+(voir aussi [avatar_hub.md](avatar_hub.md)) ; compilation dans [compilation.md](compilation.md) ; mesures complètes
+dans `docs/xam_13604_compilation.md`. Index de la documentation : [INDEX.md](INDEX.md) ; le README est destiné aux
 utilisateurs.
 
 ## Objectif en cours (Kinect 2.0.13604)
@@ -22,63 +24,9 @@ Le Dashboard Kinect doit rester dans l'interface Xbox : plus de fenêtres ImGui 
 `docs/nxe_jeux.md` ; `docs/recompilateur_generique.md` ; `docs/bibliotheque.md` ; `docs/technique.md`.
 Notes détaillées des agents (non versionnées, `work/notes/`) : `xam13604-AVANCEMENT.md`, `hud_native-…`, `n3_modules-…`, `n4_profile-…` (si présent).
 
-## Environnement de compilation (hors poste de développement)
+## Environnement de compilation
 
-Sur une machine sans `clang`/`cmake`/`ninja` (SteamOS, `/usr` non inscriptible), tout passe par
-**podman**, avec une image dérivée de `localhost/xenondash-sdk-builder` :
-
-```sh
-podman build -t xd-builder:latest -f - . <<'EOF'
-FROM localhost/xenondash-sdk-builder:latest
-USER root
-RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
-      libvulkan-dev libxkbcommon-dev xxhash vulkan-tools xvfb mesa-vulkan-drivers \
-      librsvg2-bin fuse file gdb strace && rm -rf /var/lib/apt/lists/*
-EOF
-```
-
-- **Sous-modules** : `third_party/xenondash-sdk` doit être initialisé *avec les siens* :
-  `git -C third_party/xenondash-sdk submodule update --init --recursive --depth 1`. Sans eux, le
-  configure échoue sur `install TARGETS given target "xxhash"`.
-- **SDK** : `cmake -S third_party/xenondash-sdk -B third_party/xenondash-sdk/out/build/linux-amd64 \
-  -G "Ninja Multi-Config" -DCMAKE_INSTALL_PREFIX=$PWD/sdk`, puis
-  `cmake --build … --config Release --target install` (≈ 10 min, 8 tâches). Après une modification
-  du SDK : relancer `cmake --build third_party/xenondash-sdk/out/build/linux-amd64 --config Release --target install`
-  (sur l'hôte : `/usr/bin/clang` et `/usr/bin/clang++` ; supprimer `CMakeCache.txt` si la configuration
-  garde un chemin de compilateur du conteneur). Le dash lie les bibliothèques de `sdk/lib/` et le
-  `rexglue` de `sdk/bin/`. Le dossier `out/linux-amd64` n'existe plus.
-- **Codegen** : `/src/sdk/bin/rexglue codegen dash_manifest.toml` (≈ 1 min, 26 916 fonctions).
-- **Dashboard** : configure dans `dashboards/2.0.13604.0-xam/out/build/linux-amd64-relwithdebinfo`
-  avec `-DCMAKE_PREFIX_PATH=/src/sdk` (≈ 8 min).
-- **AppImage** : `APPIMAGE_EXTRACT_AND_RUN=1 BUILD_DIR=linux-amd64-relwithdebinfo \
-  ./tools/make_appimage.sh 2.0.13604.0-xam` — sortie fixe `out/appimage/XenonDash-Kinect.AppImage`
-  (une seule AppImage, demande utilisateur ; le nom ne varie plus). `appimagetool` réclame `file`
-  et `rsvg-convert` (paquet `librsvg2-bin`). **Dans le conteneur podman**, monter aussi le dossier
-  `work/` du dépôt principal : `work` est un lien vers `/home/kurtisone/Projects/xbox360/work`, et sans ce
-  montage l'étape d'empaquetage échoue (« cannot create directory … work »). Les modules recompilés
-  embarqués sont listés par `module recompilé embarqué : libdash_*.so` dans le journal de build.
-- **Fichiers absents du dépôt, nécessaires au build** : `dashboards/2.0.13604.0-xam/assets/sep/Guide.AvatarMiniCreator.xex`
-  (copie de l'XEX de la mise à jour, ignorée par git via `*.xex`). Sans lui, le module d'avatar n'est pas compilé.
-- **Validation minimale du XMB (procédure éprouvée, 2026-11-22)** : lancer `Xvfb :N -screen 0 1280x720x24
-  -fbdir <dossier> &`, puis le dash avec `DISPLAY=:N DASH_AUDIO=nop DASH_XAM_MODULE=2 DASH_PROFILE_MODE=xam
-  VK_ICD_FILENAMES=/usr/share/vulkan/icd.d/lvp_icd.json LD_LIBRARY_PATH=<sdk>/lib
-  --game_data_root=~/.local/share/xenondash/2.0.13604.0-xam --gpu_plugin=xenos` (en arrière-plan).
-  Attendre **60 s**, puis `xdotool windowfocus $(xdotool search --onlyvisible . | tail -1)`, attendre
-  5 s, capturer avec `tools/xwd2png.py <dossier>/Xvfb_screen0 <out.png>` et lire l'image. Sans le focus
-  ou avant 60 s, la capture est noire même pour le build de référence. Résultat attendu : XMB (Xbox LIVE,
-  My Xbox, Welcome, Getting Started, Kinect for Xbox 360, Family First). Vérifié le 2026-11-22 : build de
-  référence `out/build/native/dash` et build du fork (`xenondash-sdk` f2c7948) donnent la même capture.
-- **Banc visuel (conteneur)** : `Xvfb :N -screen 0 1280x720x24 -fbdir <dossier>` (créer le dossier
-  et `/tmp/.X11-unix` chmod 1777 au préalable), capture par `tools/xwd2png.py <fbdir>/Xvfb_screen0
-  <out.png>`, `VK_ICD_FILENAMES=…/lvp_icd.json` (lavapipe). Le GPU réel ne peut pas présenter sur
-  Xvfb (`No DRI3 support`) et la capture de la session réelle (`:0`) est noire (KWin composite).
-  Focus obligatoire : `xdotool windowfocus $(xdotool search --onlyvisible . | tail -1)` (sans WM,
-  les touches tombent dans le vide). Pour reproduire la machine de l'utilisateur, monter ses VRAIS
-  jeux (`-v /home/deck/XenonDash/Games:/games:ro`, `XENONDASH_GAMES_DIR=/games`) : une entrée de
-  registre synthétique sans fichiers provoque un crash memset artéfact au premier present.
-- **Sous gdb** : `handle SIGSEGV nostop noprint pass` EST OBLIGATOIRE — sinon gdb intercepte les
-  fautes avant le récupérateur du SDK (`[rec2]`, restauration de page commitée) et fabrique des
-  crashes imaginaires (vu sur le remplissage d'image du hub, `base+0xFE…` : n'existe pas hors gdb).
+Voir [compilation.md](compilation.md) : SDK, conteneur, build de test, AppImage.
 
 ## Règles de l'utilisateur
 - **Lecteur CD vide et muet** : la simulation de disque est **supprimée entièrement** (2026-11-21) —
@@ -157,60 +105,9 @@ le profil HLE, cd7f3b0). `dash_auto_profile` (défaut `false`) : sans profil, `X
 renvoient une chaîne vide avec succès. Les profils de test se suppriment dans `profiles/<XUID>` et
 `Content/<XUID>`. Détail : `docs/xam_recompile.md`.
 
-## Avatar (2026-11-23)
-- **Cause de l'absence d'écran d'avatar** : `signin.xex` n'appelle `XamShowAvatarMiniCreatorUI` que si
-  `XamPackageManagerGetFileSize("Guide.AvatarMiniCreator.xex")` renvoie une taille non nulle. XAM lit son index
-  des paquets dans `system.manifest` (signé) de la partition système étendue `\Device\Harddisk0\SystemExtPartition\`,
-  qui n'existait pas. Correctifs (commits `66ecb90`, `4af0231`, `3f234c2`, `16251b5`) :
-  - `common/src/dash_xam_runtime.cpp` : `MountSystemExtPartition` (monte `<données>/SystemExtPartition` sur
-    `\Device\HostSystemExtPartition`, lien depuis `\Device\Harddisk0\SystemExtPartition` : le NullDevice du SDK
-    masquerait un montage direct) ; `XboxKrnlVersion` reprend la version du Dashboard (XAM compare la version du
-    manifeste à celle du noyau) ; le hook `XexLoadImage` refuse les modules non recompilés de cette partition.
-  - `common/src/xam_kernel_stubs.cpp` : `XexLoadImageHeaders` lit l'en-tête XEX2 ; `XeKeysVerifyRSASignature`
-    renvoie TRUE en dur (les clés Microsoft ne sont pas disponibles ; le SHA-1 du contenu reste vérifié par XAM).
-    **Compromis accepté par l'utilisateur.**
-  - `dashboards/2.0.13604.0-xam` : module `Guide_AvatarMiniCreator` (base 0x90100000, table 0x84F00000,
-    `guest_path = \sep\20352400\Guide.AvatarMiniCreator.xex`), génération à part dans `tools/regen_xam_modules.py`.
-  - `tools/appimage/xenondash_import.py` : `build_system_ext` reconstruit `SystemExtPartition` depuis le dossier
-    `$SystemUpdate` dézippé (`AppRun` dézippe le zip de la mise à jour) : `system.manifest` à la racine ;
-    `FFFE07DF0000000{1,2,6,8}` dans `Content/0000000000000000/FFFE07DF/00008000/` ; `Xna_TitleLauncher.xex` dans
-    `32000100/` ; les autres `.xex`, `.lex`, `.xzp` et `su20076000_*` dans `20352400/`. Vérifié : l'arbre obtenu
-    depuis `~/dash/$systemupdate` est identique à l'arbre validé à la main. `--system-ext <dossier>` remplace
-    cette reconstruction.
-- **Import et reprise** : `build_system_ext` construit la partition dans `<dst>.new` puis la remplace (échec atomique,
-  pas de suppression avant vérification). Une installation antérieure sans partition est réparée par
-  `AppRun --system-ext-only` (cherche la mise à jour à côté de l'AppImage). Un paquet STFS `su20076000_*` seul ne
-  contient pas `system.manifest` : la partition est alors construite depuis le dossier qui le contient.
-- **Refus d'alias** : le module d'avatar est reconnu sous `\sep` et sous `\Device\Harddisk0\SystemExtPartition`
-  (non testé à l'exécution avec un alias réel).
-- **Personnalisation, option 2 (2026-11-23)** : `XamLaunchAvatarEditor` (ordinal 2011, relance du titre
-  `AvatarEditor.xex`, 15 Mo, non recompilé) ouvre à la place le choix d'avatar (`XamShowAvatarMiniCreatorUI(user, 2)`,
-  ordinal 1700). Point unique : `AvatarEditorOption2` dans `common/src/dash_xam_redirect.cpp` (appelé par
-  `CallModuleImport` pour signin, createprofile, gamerprofile, hud, le MiniCreator, et par l'accroche de dash.xex).
-  Depuis le MiniCreator (Y), l'ouverture est différée (fil invité de l'hôte) jusqu'au déchargement du module : un appel
-  synchrone après son `XamAppUnloadStack` renvoie 5. Validé (banc) : profil créé, Y rouvre le choix, sélection ->
-  `XamAvatarSetManifest`, réglage `0x63E80044` (1000 octets) écrit dans `profiles/<XUID>/FFFE07D1.gpd` ; après
-  redémarrage, Sign In ne redemande plus d'avatar. **Option 1** (éditeur complet recompilé) : retirer l'appel à
-  `AvatarEditorOption2` ; l'import retombe sur l'export 2011 de XAM recompilé.
-- **Avatar affiché sur le XMB (2026-11-24, banc)** : la silhouette grise avait quatre causes successives,
-  toutes corrigées :
-  1. `XamAvatarGetAssets` renvoyait des tampons vides : les fonctions noyau `LDI*` (décompression LZX) étaient
-     des stubs du SDK. Implémentées dans `common/src/xam_kernel_stubs.cpp` (`243b35e`).
-  2. Le recompilateur du SDK n'avait pas `vavguw`, `crmove` ni `crnot` (plantage du code de XAM). Ajoutées
-     (dépôt SDK imbriqué, `69764e99`).
-  3. Les shaders de sommets de l'avatar lisent leurs matrices d'os par `vfetch` indexés (BLENDINDICES). XenosRecomp
-     ignorait l'index : patch `0009-dash13604-indexed-vfetch.patch` et tampon bindless (`105b468`).
-  4. Sous tuilage prédit, la hauteur de la texture résolue était `y + destHeight` au lieu de `destHeight`
-     (`ngpu_core/src/renderer.cpp`, `687ecab`).
-  Restent : `Customize Avatar` de dash.xex n'atteint pas `XamLaunchAvatarEditor` (`XamPackageManagerGetExperienceMode`
-  du HLE sans le bit 0x2) ; l'AppImage avec ces correctifs sur le Deck, à partir d'un premier lancement avec le zip.
-  La carte d'ombre de l'avatar est noire (passes de profondeur seule ignorées) mais sans effet visible : l'ombre
-  au sol est un sprite fixe du XMB, qui ne suit pas l'avatar, et l'avatar n'est pas assombri (captures
-  `dr3/11_trig.png`, `av4/10_wait.png`). Pas de correctif ; à revoir si l'occlusion pose problème ailleurs.
-- **Régression corrigée puis validée** : après connexion, le Guide affichait un panneau vide (XAM chargeait
-  l'XEX d'avatar non recompilé). Corrigé par le refus de `XexLoadImage` ci-dessus ; le Guide revient au menu.
-  Reste : après connexion, le Guide se ferme au lieu de rester ouvert (à traiter : faire échouer
-  `XamShowAvatarMiniCreatorUI` dans `dash_xam_redirect.cpp`, maintenant que le module est recompilé).
+## Avatar
+
+Voir [avatar_hub.md](avatar_hub.md) : chaîne de correctifs, état et réglage du manifeste.
 
 ## État du front (Guide)
 Chaîne complète établie et sondée (`[guidetrace]`, `[guideio]`, `[scene]`, `[uistate]`, `[app254]`) :

@@ -6,6 +6,8 @@ Pour **utiliser** XenonDash (installation, jeux, contrôles, dépannage) : le [R
 |---|---|
 | [technique.md](technique.md) | Référence technique : mise en place depuis les sources, arborescence, portage d'une version de Dashboard, versions portées, détails Kinect et Metro, AppImage, lancement des jeux, profil joueur, corrections, problèmes connus |
 | [REPRISE.md](REPRISE.md) | **Point d'entrée pour reprendre le travail** : état du front (Guide), règles, méthode, pièges, suite — lire en premier |
+| [compilation.md](compilation.md) | Environnement de build hors poste de développement : SDK (installation dans `sdk/`), conteneur, build de test, AppImage |
+| [avatar_hub.md](avatar_hub.md) | Avatar du hub (13604) : chaîne de correctifs (LZX, vfetch indexés, hauteur de résolution), réglage 0x63E80044, état au banc |
 | [xam_13604_compilation.md](xam_13604_compilation.md) | Journal détaillé de la variante -xam (XAM 13604 recompilé, Guide, boîtes, entrées, disque) : ne couvre que les 20 et 21 novembre 2026 ; les mesures postérieures (22-23 novembre : Guide, avatar, partition système étendue) sont dans REPRISE.md et le journal git (à y reporter si utile) |
 | [../PLAN.md](../PLAN.md) | Plan et décisions par phases (P0 à P8), état d'avancement |
 | [xam_recompile.md](xam_recompile.md) | XAM 13604 recompilé et ses modules (HUD, clavier virtuel, connexion, création de profil) : paliers A à N4, blocages, procédures |
