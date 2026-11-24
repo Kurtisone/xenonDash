@@ -904,7 +904,10 @@ void CallModuleImport(ModuleImport& imp, PPCContext& ctx, uint8_t* base) {
   // Seules les boîtes demandées par hud.xex sont supprimées : celles des autres modules d'interface sont légitimes (ex.
   // createprofile.xex, « nom de profil déjà utilisé » : la supprimer validait un profil sans nom, écran vide, aucun
   // XamProfileCreate — mesure du 23/11).
+  // Restreint au seul site de la boîte « disque illisible » (hud.xex, appel en dash_recomp.0.cpp ligne 7438, lr 0x913EC15C) :
+  // les autres boîtes de hud.xex (progression/échec de construction, lr 0x913ED690) passent normalement (mesure du 24/11).
   if (std::string_view(imp.name) == "XamShowMessageBox" && !std::getenv("DASH_HUD_MSGBOX_KEEP") &&
+      static_cast<uint32_t>(ctx.lr) == 0x913EC15C &&
       CallerInModule(static_cast<uint32_t>(ctx.lr), "hud.xex")) {
     REXLOG_INFO("[xamredir] XamShowMessageBox refusee (lecteur vide, boite sans cause) lr={:08X}", (uint32_t)ctx.lr);
     ctx.r3.u64 = 0;
