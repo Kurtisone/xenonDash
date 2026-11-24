@@ -202,7 +202,9 @@ renvoient une chaîne vide avec succès. Les profils de test se suppriment dans 
      (`ngpu_core/src/renderer.cpp`, `687ecab`).
   Restent : `Customize Avatar` de dash.xex n'atteint pas `XamLaunchAvatarEditor` (`XamPackageManagerGetExperienceMode`
   du HLE sans le bit 0x2) ; l'AppImage avec ces correctifs sur le Deck, à partir d'un premier lancement avec le zip.
-  La carte d'ombre est noire (passes de profondeur seule ignorées) : à traiter si visible.
+  La carte d'ombre de l'avatar est noire (passes de profondeur seule ignorées) mais sans effet visible : l'ombre
+  au sol est un sprite fixe du XMB, qui ne suit pas l'avatar, et l'avatar n'est pas assombri (captures
+  `dr3/11_trig.png`, `av4/10_wait.png`). Pas de correctif ; à revoir si l'occlusion pose problème ailleurs.
 - **Régression corrigée puis validée** : après connexion, le Guide affichait un panneau vide (XAM chargeait
   l'XEX d'avatar non recompilé). Corrigé par le refus de `XexLoadImage` ci-dessus ; le Guide revient au menu.
   Reste : après connexion, le Guide se ferme au lieu de rester ouvert (à traiter : faire échouer
@@ -269,7 +271,7 @@ en +4) → chargeur `sub_8189BE20` (case 20) → ouvreur `sub_818A21B0`.
 0. **Connexion sans code** : vérifier sur le Deck avec le build courant qu'un Sign In sur un profil neuf,
    après redémarrage, ne demande pas de code (cause : bibliothèque SDK périmée, voir Pièges).
 1. **Avatar** : l'avatar s'affiche sur le XMB (banc). Reste à vérifier sur le Deck, dans My Xbox, et à
-   traiter la carte d'ombre noire. Corriger la fermeture du Guide après connexion si elle persiste
+   confirmer. Corriger la fermeture du Guide après connexion si elle persiste
    (`XamShowAvatarMiniCreatorUI`). Personnalisation (Y, `AvatarEditor.xex`) à recompiler plus tard.
 2. **Manette** : la chaîne pad→SDL→InputSystem→XInputd→XAM est vivante et SDL voit les deux manettes
    (Steam Deck interne + Afterglow) ; les boutons sont arrivés au hook dans une session (12:56) et
