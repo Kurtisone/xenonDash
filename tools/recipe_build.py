@@ -203,8 +203,10 @@ def xenosrecomp_id():
     if os.path.isdir(pdir):
         for f in sorted(os.listdir(pdir)):
             h.update(open(os.path.join(pdir, f), "rb").read())
-    if os.path.isfile(XENOSRECOMP):
-        h.update(str(os.path.getsize(XENOSRECOMP)).encode())
+    if os.path.isfile(XENOSRECOMP):   # hachage du binaire (pas seulement sa taille : un correctif peut garder la meme taille)
+        with open(XENOSRECOMP, "rb") as f:
+            for blk in iter(lambda: f.read(1 << 20), b""):
+                h.update(blk)
     return h.hexdigest()[:12]
 
 
@@ -314,6 +316,48 @@ def cache_key(info, recipe, rdir):
 # --------------------------------------------------------------------------------------------------
 # Progression
 # --------------------------------------------------------------------------------------------------
+def start_xvfb(fbdir, display=None):
+    """Demarre Xvfb et verifie qu'il tourne. Sans `display`, Xvfb choisit un ecran libre (-displayfd) : plus de :97 fixe qui
+    entre en collision avec une autre construction ou une session. Renvoie (processus, ":N") ; RecipeError s'il ne demarre pas."""
+    cmd = ["Xvfb", "-screen", "0", "1280x720x24", "-fbdir", fbdir]
+    if display:
+        xv = subprocess.Popen(cmd[:1] + [display] + cmd[1:], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        sock = f"/tmp/.X11-unix/X{display.lstrip(':').split('.')[0]}"
+        for _ in range(50):
+            if xv.poll() is not None:
+                raise RecipeError(f"Xvfb {display} s'est arrete au demarrage (code {xv.returncode}) : ecran deja pris ?")
+            if os.path.exists(sock):
+                time.sleep(0.5)   # le socle d'un autre serveur peut exister : verifier que NOTRE Xvfb est toujours vivant
+                if xv.poll() is None:
+                    return xv, display
+                continue
+            time.sleep(0.2)
+        xv.terminate()
+        raise RecipeError(f"Xvfb {display} n'a pas demarre en 10 s")
+    r, w = os.pipe()
+    xv = subprocess.Popen(cmd + ["-displayfd", str(w)], pass_fds=(w,), stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    os.close(w)
+    try:
+        import select
+        buf = b""
+        t0 = time.time()
+        while b"\n" not in buf and time.time() - t0 < 10:
+            if xv.poll() is not None:
+                raise RecipeError(f"Xvfb s'est arrete au demarrage (code {xv.returncode})")
+            if select.select([r], [], [], 0.2)[0]:
+                chunk = os.read(r, 64)
+                if not chunk:
+                    break
+                buf += chunk
+        num = buf.strip().decode(errors="replace")
+        if not num.isdigit():
+            xv.terminate()
+            raise RecipeError("Xvfb n'a pas annonce son ecran en 10 s")
+        return xv, ":" + num
+    finally:
+        os.close(r)
+
+
 class Progress:
     """progress.json : lu par le Dashboard (superposition de construction) ; ecrit de facon atomique."""
 
@@ -1068,9 +1112,9 @@ class Build:
             return
         exe = self.recipe["codegen"]["project"]
         seconds = bt.get("seconds", 30)
-        display = os.environ.get("XD_DISPLAY", ":97")
+        display = os.environ.get("XD_DISPLAY")   # impose : :N ; sinon Xvfb choisit lui-meme un ecran libre (-displayfd)
         lp = os.path.join(self.cache, "bootstrap.log")
-        env = dict(os.environ, DISPLAY=display)
+        env = dict(os.environ)
         env.pop("LD_LIBRARY_PATH", None)   # comme le lanceur du Dashboard : le binaire doit trouver seul ses bibliotheques
         # Test sans affichage : Xvfb n'a pas DRI3, on presente par lavapipe (rendu logiciel) s'il existe
         lvp = "/usr/share/vulkan/icd.d/lvp_icd.json"
@@ -1087,9 +1131,10 @@ class Build:
             fb = os.path.join(self.cache, "bootstrap.fb")
             shutil.rmtree(fb, ignore_errors=True)
             os.makedirs(fb)
-            xv = subprocess.Popen(["Xvfb", display, "-screen", "0", "1280x720x24", "-fbdir", fb],
-                                  stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-            time.sleep(1)
+            xv, display = start_xvfb(fb, display)
+            env["DISPLAY"] = display
+        elif display:
+            env["DISPLAY"] = display
         try:
             with open(lp, "w") as lf:
                 p = subprocess.Popen([os.path.join(self.cache, "bin", exe)], cwd=os.path.join(self.cache, "bin"), env=env,
@@ -1163,6 +1208,15 @@ class Build:
         self.do_identify()
         info = self.info
         os.makedirs(self.cache, exist_ok=True)
+        # un seul build a la fois par jeu (verrou libere a la fin du processus) : deux construction simultanees du meme jeu
+        # s'ecraseraient dans le meme dossier de cache
+        import fcntl
+        gdir = os.path.dirname(self.cache)
+        self._lockf = open(os.path.join(gdir, "build.lock"), "w")
+        try:
+            fcntl.flock(self._lockf, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except OSError:
+            raise RecipeError(f"{self.name} : une autre construction de ce jeu est deja en cours (verrou {gdir}/build.lock)")
         est = sum(self.recipe.get("build", {}).get("estimate_minutes", {"x": 30}).values()) * 60
         prog = Progress(self.cache, est)
         prog.update(title_id=info["title_id"], name=self.name, cache=self.cache, source=self.game_dir)
