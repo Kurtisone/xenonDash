@@ -147,7 +147,9 @@ if [ -x "$TC/bin/clang" ] && [ -x "$TC/bin/cmake" ] && [ -x "$TC/bin/ninja" ]; t
   LD_LIBRARY_PATH=$TC/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}; export LD_LIBRARY_PATH
   # clang embarqué : ses en-têtes et les en-têtes C++ sont dans la toolchain, pas sur l'hôte.
   export CC=$TC/bin/clang CXX=$TC/bin/clang++
-  export CFLAGS="-resource-dir=$TC/lib/clang/20 --gcc-toolchain=/usr -isystem $TC/include/c++ -isystem $TC/include/x86_64-linux-gnu/c++"
+  # version de clang : le plus grand numero de dossier sous lib/clang/ (pas de version figee)
+  CLANGVER=$(ls -1 "$TC/lib/clang" 2>/dev/null | grep -E '^[0-9]+' | sort -n | tail -1)
+  export CFLAGS="-resource-dir=$TC/lib/clang/${CLANGVER:-20} --gcc-toolchain=/usr -isystem $TC/include/c++ -isystem $TC/include/x86_64-linux-gnu/c++"
   export CXXFLAGS=$CFLAGS
   # cmake a besoin de ses modules (CMAKE_ROOT), embarqués sous toolchain/share/cmake-*
   for d in "$TC"/share/cmake-*; do [ -d "$d" ] && CMAKE_ROOT=$d && export CMAKE_ROOT && break; done
