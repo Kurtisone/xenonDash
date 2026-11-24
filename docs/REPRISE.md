@@ -1,15 +1,15 @@
 # Reprise du projet par une autre session ou un autre modèle
 
 Ce document permet de reprendre le travail sans l'historique de conversation. Dernière mise à jour :
-2026-11-23. **État bref** : boot propre, hub NXE navigable au clavier, Game Library stable, boîtes système
-rendues, disque complètement supprimé, une seule AppImage `XenonDash-Kinect.AppImage`. Le Guide s'ouvre et
-l'utilisateur le voit à l'écran (Deck). Création de profil, connexion par Sign In sans code d'accès et gamertag
-sur le XMB fonctionnent (banc). Couleurs et voile du Guide corrigés. **Avatar** : l'index des paquets de XAM est
-rempli et le module `Guide.AvatarMiniCreator.xex` est recompilé ; l'écran de création d'avatar s'affiche après la
-connexion d'un profil sans avatar (banc), mais l'avatar n'est pas encore vérifié dans le profil ni sur le XMB, et
-l'AppImage n'a pas encore été testée sur le Deck avec ce correctif. Détails : « Avatar » ci-dessous ; mesures
-complètes dans `docs/xam_13604_compilation.md`. Index de la documentation : [INDEX.md](INDEX.md) ; le README est
-destiné aux utilisateurs.
+2026-11-24. **État bref** : boot propre, hub NXE navigable au clavier, Game Library stable, boîtes système
+rendues, disque complètement supprimé, une seule AppImage `XenonDash-Kinect.AppImage`. Le Guide s'ouvre avec ses
+onglets (banc). Création de profil, connexion par Sign In sans code d'accès et gamertag sur le XMB fonctionnent
+(banc). **Avatar du hub** : le profil choisit un avatar prédéfini, et l'avatar s'affiche en couleur sur le XMB
+(banc, commits `243b35e`, `105b468`, `687ecab`, dépôt SDK `69764e99`). **Icône Gamerscore** : corrigée par
+`src/dash_font_patch.cpp` (commit `7cf0bd7`). Non encore vérifié : l'AppImage sur le Deck avec ces correctifs,
+le HUD, et l'éditeur d'avatar complet. Détails : « Avatar » ci-dessous ; mesures complètes dans
+`docs/xam_13604_compilation.md`. Index de la documentation : [INDEX.md](INDEX.md) ; le README est destiné aux
+utilisateurs.
 
 ## Objectif en cours (Kinect 2.0.13604)
 Le Dashboard Kinect doit rester dans l'interface Xbox : plus de fenêtres ImGui façon Xenia-canary ; sans profil, le même parcours qu'une console
@@ -139,7 +139,7 @@ EOF
 - `tools/dash_shaders.py` attend la sortie de `xxhsum` ≤ 0.8.1 ; xxhash ≥ 0.8.2 écrit autrement.
 - Glyphe `U+E00A` (Gamerscore) : présent dans `XenonSCLatin.xtt` (13604), absent de `XenonJKLatin` et
   `XenonCLatin` (6770). Résolu par `src/dash_font_patch.cpp` (police principale JKLatin → SCLatin ; `DASH_FONT_PATCH=0`
-  désactive). Voir `docs/technique.md`, « Glyphe Gamerscore ».
+  désactive). Voir `docs/technique.md` (puce « Glyphe Gamerscore », section 13604).
 - Le fork du SDK est le sous-module `third_party/xenondash-sdk` (branche `unified`) ; après
   modification : reconstruire, réinstaller dans `sdk/`, commiter le sous-module PUIS le dépôt.
 - Les instrumentations dans le code GÉNÉRÉ (`dashboards/*/generated/**`) sont non versionnées et
@@ -190,9 +190,19 @@ renvoient une chaîne vide avec succès. Les profils de test se suppriment dans 
   `XamAvatarSetManifest`, réglage `0x63E80044` (1000 octets) écrit dans `profiles/<XUID>/FFFE07D1.gpd` ; après
   redémarrage, Sign In ne redemande plus d'avatar. **Option 1** (éditeur complet recompilé) : retirer l'appel à
   `AvatarEditorOption2` ; l'import retombe sur l'export 2011 de XAM recompilé.
-- **Non vérifié** : le XMB affiche une silhouette grise à la place de l'avatar choisi (rendu d'avatar non étudié) ;
-  « Customize Avatar » de dash.xex n'atteint pas `XamLaunchAvatarEditor` (`XamPackageManagerGetExperienceMode`
-  du HLE sans le bit 0x2) ; l'AppImage avec ce correctif sur le Deck, à partir d'un premier lancement avec le zip.
+- **Avatar affiché sur le XMB (2026-11-24, banc)** : la silhouette grise avait quatre causes successives,
+  toutes corrigées :
+  1. `XamAvatarGetAssets` renvoyait des tampons vides : les fonctions noyau `LDI*` (décompression LZX) étaient
+     des stubs du SDK. Implémentées dans `common/src/xam_kernel_stubs.cpp` (`243b35e`).
+  2. Le recompilateur du SDK n'avait pas `vavguw`, `crmove` ni `crnot` (plantage du code de XAM). Ajoutées
+     (dépôt SDK imbriqué, `69764e99`).
+  3. Les shaders de sommets de l'avatar lisent leurs matrices d'os par `vfetch` indexés (BLENDINDICES). XenosRecomp
+     ignorait l'index : patch `0009-dash13604-indexed-vfetch.patch` et tampon bindless (`105b468`).
+  4. Sous tuilage prédit, la hauteur de la texture résolue était `y + destHeight` au lieu de `destHeight`
+     (`ngpu_core/src/renderer.cpp`, `687ecab`).
+  Restent : `Customize Avatar` de dash.xex n'atteint pas `XamLaunchAvatarEditor` (`XamPackageManagerGetExperienceMode`
+  du HLE sans le bit 0x2) ; l'AppImage avec ces correctifs sur le Deck, à partir d'un premier lancement avec le zip.
+  La carte d'ombre est noire (passes de profondeur seule ignorées) : à traiter si visible.
 - **Régression corrigée puis validée** : après connexion, le Guide affichait un panneau vide (XAM chargeait
   l'XEX d'avatar non recompilé). Corrigé par le refus de `XexLoadImage` ci-dessus ; le Guide revient au menu.
   Reste : après connexion, le Guide se ferme au lieu de rester ouvert (à traiter : faire échouer
@@ -258,9 +268,9 @@ en +4) → chargeur `sub_8189BE20` (case 20) → ouvreur `sub_818A21B0`.
 ## Suite, par ordre de priorité
 0. **Connexion sans code** : vérifier sur le Deck avec le build courant qu'un Sign In sur un profil neuf,
    après redémarrage, ne demande pas de code (cause : bibliothèque SDK périmée, voir Pièges).
-1. **Avatar** : tester l'AppImage sur le Deck (premier lancement avec le zip) ; corriger la fermeture du Guide
-   après connexion (`XamShowAvatarMiniCreatorUI`) ; vérifier que l'avatar choisi est enregistré et s'affiche
-   sur le XMB et dans My Xbox ; personnalisation (Y, `AvatarEditor.xex`) à recompiler plus tard.
+1. **Avatar** : l'avatar s'affiche sur le XMB (banc). Reste à vérifier sur le Deck, dans My Xbox, et à
+   traiter la carte d'ombre noire. Corriger la fermeture du Guide après connexion si elle persiste
+   (`XamShowAvatarMiniCreatorUI`). Personnalisation (Y, `AvatarEditor.xex`) à recompiler plus tard.
 2. **Manette** : la chaîne pad→SDL→InputSystem→XInputd→XAM est vivante et SDL voit les deux manettes
    (Steam Deck interne + Afterglow) ; les boutons sont arrivés au hook dans une session (12:56) et
    plus du tout dans une autre (14:20). Diagnostic en place (`XInputdReadState` journalise «

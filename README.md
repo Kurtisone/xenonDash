@@ -50,9 +50,11 @@ Un jeu que XenonDash ne sait pas faire fonctionner nativement est **refusé avec
 |---|---|
 | Dashboard Kinect : hub, My Xbox, Xbox LIVE (hors ligne), Game Library, succès, navigation | fonctionne |
 | Profil local « Joueur » créé automatiquement ; création de profil et connexion comme sur console (fenêtres XAM) | fonctionne (profil local hors ligne) |
-| **Bouton Guide** (touche `G`) : le Guide de la console (XAM recompilé) s'ouvre et charge sa scène | **en cours** — l'écran bascule encore sur le hub, l'affichage du Guide est le chantier en cours |
+| **Bouton Guide** (touche `G`) : le Guide de la console (XAM recompilé) s'ouvre avec ses onglets et ses libellés | fonctionne (vérifié au banc) |
 | Création de profil comme sur une vraie console (clavier virtuel Xbox, fenêtre de connexion) | fonctionne (parcours XAM) |
-| Éditeur d'avatar | non disponible (nécessite un paquet que le firmware de base ne contient pas) |
+| Avatar du profil : choix d'un avatar prédéfini (Y ou « Modifier mon avatar »), affiché sur le XMB | fonctionne (vérifié au banc ; à confirmer sur Steam Deck) |
+| Icône Gamerscore à côté du gamertag | fonctionne (vérifié au banc) |
+| Éditeur d'avatar complet (vêtements, traits) | non disponible (nécessite le titre `AvatarEditor.xex`, non recompilé) |
 | Bibliothèque de jeux : dossiers, XEX, paquets XBLA | fonctionne |
 | Bibliothèque de jeux : ISO, Games on Demand | prévu, vérifié sur des fichiers de test seulement |
 | Jeux : **Skate** | fonctionne (testé de bout en bout ; la progression de la recompilation n'est pas visible, voir plus haut) |
@@ -68,29 +70,26 @@ Un jeu que XenonDash ne sait pas faire fonctionner nativement est **refusé avec
 
 | Touche | Manette |
 |---|---|
-| `Espace` ou `;` | **A** (valider) |
-| `Backspace` ou `'` | **B** (retour) |
-| `L` / `P` | X / Y |
-| `1` / `3` | LB / RB, pour changer d'onglet |
-| `Z` ou `Tab` | Back |
-| `Entrée` ou `X` | Start |
+| `Espace` ou `Entrée` | **A** (valider) |
+| `Retour arrière` ou `Échap` | **B** (retour) |
+| `X` / `Y` | X / Y |
+| `Q` / `E` | LB / RB, pour changer d'onglet |
+| `1` / `3` | LT / RT |
+| `Tab` | Back |
+| `P` | **Start** (valide aussi « Done » sur le clavier virtuel) |
 | `W` `A` `S` `D` (AZERTY : `Z` `Q` `S` `D`) | Stick gauche |
-| Flèches | Stick droit |
-| `Shift` + flèches | Croix directionnelle |
+| `Shift` + flèches | Stick droit |
+| Flèches | Croix directionnelle |
 | `G` | **Bouton Guide** (Guide de la console, voir ci-dessous) |
 | `F6` | Rescanner le dossier de jeux |
 
 ### Le bouton Guide
 
 `G` (ou le bouton Xbox de la manette) appelle le **Guide de la console** : c'est XAM recompilé qui
-le gère (ouverture de l'interface système, chargement de sa scène). L'intégration est en cours :
-la séquence complète se déroule (la scène du Guide se charge), mais l'écran bascule encore sur le
-hub — l'affichage du Guide lui-même est le chantier en cours (détails techniques dans
-`docs/REPRISE.md`, « État du front »).
+le gère. Le Guide s'affiche avec ses onglets (Marketplace, Games, Media, Settings) et son menu.
 
-> **Attention** : `Entrée` est **Start**, pas A, et `Échap` n'est lié à rien. Suivre
-> l'ancienne version de ce tableau (Entrée = A, Échap = B) donne l'impression que le
-> Dashboard ne répond plus : rien ne se valide, rien ne se ferme.
+> **Attention** : `P` est **Start**, `Entrée` est **A**. Les touches ci-dessus suivent le mappage
+> du Dashboard (`common/src/dash_input.h`), qui remplace celui du SDK.
 
 Les touches se redéfinissent : `--keybind_a=Return,Space`, `--keybind_right_shoulder=E`, etc.
 Le nom d'une touche suit les *keysyms* X11 (`space`, `semicolon`, `apostrophe`, `Return`,
