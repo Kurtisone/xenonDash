@@ -14,7 +14,6 @@
 #include <mutex>
 #include <thread>
 
-#include <rex/logging.h>
 #include <rex/system/kernel_state.h>
 #include "ngpu.h"
 #include NGPU_PROFILE_HEADER
@@ -147,41 +146,18 @@ void TraceFrame(uint32_t a) {
 }
 }  // namespace ngpu
 
-// Diagnostic lecture seule de la memoire invitee (sub_9218DC60 / sub_92198978).
-static uint32_t DiagBe32(const uint8_t* base, uint32_t ea) { return ngpu::Be32(base + ea); }
-static void DiagPlayEntry(PPCContext& ctx, uint8_t* base) {
-  uint32_t dev = ctx.r3.u32, v1 = DiagBe32(base, 0x92000C9C), v2 = v1 ? DiagBe32(base, v1) : 0;
-  uint32_t cb = v2 ? DiagBe32(base, v2 + 4) : 0;
-  REXLOG_INFO("[play-trace] sub_9218DC60 cb={:08X}", cb);
-  REXLOG_INFO("[play-trace] sub_9218DC60 dev={:08X} dev+11012={:08X}", dev, DiagBe32(base, dev + 11012));
-  REXLOG_INFO("[play-trace] sub_9218DC60 cs(dev+15156) owner={:08X} recursion={:08X} lock={:08X}", DiagBe32(base, dev + 15156 + 12), DiagBe32(base, dev + 15156 + 8), DiagBe32(base, dev + 15156 + 4));
-}
-
-static void DiagDevCounter(const char* tag, PPCContext& ctx, uint8_t* base) {
-  uint32_t dev = ctx.r3.u32;
-  if (!dev) { REXLOG_INFO("[play-trace] {} dev nul", tag); return; }
-  REXLOG_INFO("[play-trace] {} dev={:08X} compteur={:08X}", tag, dev, DiagBe32(base, dev + 11012));
-}
-
 #define X(A)                                                                          \
   extern "C" void __imp__sub_##A(PPCContext& __restrict, uint8_t*);                   \
   extern "C" __attribute__((weak)) bool ngpu_hook_##A(PPCContext&, uint8_t*);         \
   extern "C" void sub_##A(PPCContext& __restrict ctx, uint8_t* base) {                \
     static int slot = Register(0x##A);                                                \
     ngpu::TraceHit(slot, 0x##A, ctx);                                                 \
-    if constexpr (0x##A == 0x9218DC60) REXLOG_INFO("[play-trace] entree sub_9218DC60 thread={}", std::hash<std::thread::id>{}(std::this_thread::get_id())); \
-    if constexpr (0x##A == 0x9218DC60) DiagPlayEntry(ctx, base);                      \
-    if constexpr (0x##A == 0x92197FA8) DiagDevCounter("mise_en_file", ctx, base);     \
-    if constexpr (0x##A == 0x921AD750) DiagDevCounter("fin_lot", ctx, base);          \
-    if constexpr (0x##A == 0x92198978) REXLOG_INFO("[play-trace] entree sub_92198978 r3={:08X}", ctx.r3.u32); \
     if (0x##A == ngpu_profile::kSwapEntry) { ngpu::TraceFrame(0x##A); ngpu::SwapTick(); }                                 \
     if (ngpu::Enabled() && ngpu_hook_##A) {                                           \
       try { if (ngpu_hook_##A(ctx, base)) return; }                                   \
       catch (const std::exception& e) { std::fprintf(stderr, "[ngpu] EXCEPTION dans le crochet %08X : %s\n", 0x##A, e.what()); }   \
     }                            \
     __imp__sub_##A(ctx, base);                                                        \
-    if constexpr (0x##A == 0x9218DC60) REXLOG_INFO("[play-trace] sortie sub_9218DC60"); \
-    if constexpr (0x##A == 0x92198978) REXLOG_INFO("[play-trace] sortie sub_92198978"); \
   }
 #include NGPU_ENTRIES_FILE
 #undef X
