@@ -270,8 +270,8 @@ en +4) → chargeur `sub_8189BE20` (case 20) → ouvreur `sub_818A21B0`.
 ## Suite, par ordre de priorité
 0. **Connexion sans code** : vérifier sur le Deck avec le build courant qu'un Sign In sur un profil neuf,
    après redémarrage, ne demande pas de code (cause : bibliothèque SDK périmée, voir Pièges).
-1. **Avatar** : l'avatar s'affiche sur le XMB (banc). Reste à vérifier sur le Deck, dans My Xbox, et à
-   confirmer. Corriger la fermeture du Guide après connexion si elle persiste
+1. **Avatar** : l'avatar s'affiche sur le XMB (banc). Reste à vérifier sur le Deck et dans My Xbox.
+   Corriger la fermeture du Guide après connexion si elle persiste
    (`XamShowAvatarMiniCreatorUI`). Personnalisation (Y, `AvatarEditor.xex`) à recompiler plus tard.
 2. **Manette** : la chaîne pad→SDL→InputSystem→XInputd→XAM est vivante et SDL voit les deux manettes
    (Steam Deck interne + Afterglow) ; les boutons sont arrivés au hook dans une session (12:56) et
