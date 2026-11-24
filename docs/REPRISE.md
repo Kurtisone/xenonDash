@@ -43,8 +43,10 @@ EOF
 - **SDK** : `cmake -S third_party/xenondash-sdk -B third_party/xenondash-sdk/out/build/linux-amd64 \
   -G "Ninja Multi-Config" -DCMAKE_INSTALL_PREFIX=$PWD/sdk`, puis
   `cmake --build … --config Release --target install` (≈ 10 min, 8 tâches). Après une modification
-  du SDK : `cmake --build . --config Release` puis recopier `out/linux-amd64/Release/librexruntime.so`
-  dans `sdk/lib/` (le dash lie celle-là).
+  du SDK : relancer `cmake --build third_party/xenondash-sdk/out/build/linux-amd64 --config Release --target install`
+  (sur l'hôte : `/usr/bin/clang` et `/usr/bin/clang++` ; supprimer `CMakeCache.txt` si la configuration
+  garde un chemin de compilateur du conteneur). Le dash lie les bibliothèques de `sdk/lib/` et le
+  `rexglue` de `sdk/bin/`. Le dossier `out/linux-amd64` n'existe plus.
 - **Codegen** : `/src/sdk/bin/rexglue codegen dash_manifest.toml` (≈ 1 min, 26 916 fonctions).
 - **Dashboard** : configure dans `dashboards/2.0.13604.0-xam/out/build/linux-amd64-relwithdebinfo`
   avec `-DCMAKE_PREFIX_PATH=/src/sdk` (≈ 8 min).
@@ -113,8 +115,8 @@ EOF
 - **« Enter pass code » après redémarrage** : `signin.xex` compare `RtlCompareMemoryUlong` à 4. Une bibliothèque
   `librexruntime.so` sans le correctif SDK `7151265f` (comptage par octets) renvoie 1 et fait demander un code.
   Le binaire a `RUNPATH=$ORIGIN` sans bibliothèque à côté : il prend celle de `LD_LIBRARY_PATH`. Vérifier la
-  bibliothèque utilisée avant de conclure à une régression. Supprimé le 2026-11-23 :
-  `third_party/xenondash-sdk/out/linux-amd64/librexruntime.so` (ancien). La bonne est dans `out/linux-amd64/Release/`.
+  bibliothèque utilisée avant de conclure à une régression. Les bibliothèques à utiliser sont celles de
+  `sdk/lib/` (installation depuis le worktree, 2026-11-24). Ne pas réutiliser une copie hors de ce dossier.
 - **Journal du Guide** : `DASH_GUIDE_TRACE=1` active le diagnostic de l'ouverture du Guide (13 lignes par ouverture,
   absentes par défaut).
 - Tas invités 0x8… et 0x9… : deux vues du même fichier (alias) ; le SDK sépare les tas par défaut
