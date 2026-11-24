@@ -307,7 +307,9 @@ def cache_key(info, recipe, rdir):
     sdk_ver, sdk_hash = sdk_id()
     parts = [info["sha256_image"], str(recipe["schema"]), sdk_hash, xenosrecomp_id(), recipe_codegen_rev(rdir, recipe)]
     if recipe.get("generic"):
-        parts.append("generic-" + recipe_rev(rdir))
+        # recipe_rev (moteur + gabarit + ngpu_core) n'entre PAS dans la cle : une retouche du moteur ne doit pas refaire le codegen
+        # (~13 min). Elle reste verifiee dans build.ok (Build.ok) : elle ne relance que la compilation.
+        parts.append("generic")
     return hashlib.sha256("|".join(parts).encode()).hexdigest()[:16], {
         "xex_image": info["sha256_image"], "sdk": sdk_ver, "sdk_hash": sdk_hash, "xenosrecomp": xenosrecomp_id(),
         "codegen_rev": parts[-1]}
