@@ -49,7 +49,9 @@ ENGINE_REV = 2   # a incrementer quand la disposition des produits du cache (bin
 
 
 class RecipeError(Exception):
-    pass
+    def __init__(self, *a, details=None):
+        super().__init__(*a)
+        self.details = details or {}    # contexte d'echec : ecrit dans failure.json
 
 
 class MissingFunction(RecipeError):
@@ -762,6 +764,21 @@ class Build:
         os.makedirs(os.path.dirname(self.stamp(name)), exist_ok=True)
         open(self.stamp(name), "w").write(rev + "\n")
 
+    def write_failure(self, prog, msg, details):
+        """failure.json (etape, message, adresse, passe, derniers rejets, motifs expect absents) + reference dans progress.json.
+        Le champ `error` de progress.json (affiche par la boite d'echec du Dashboard) porte la raison ; `failure` donne le fichier detaille."""
+        path = os.path.join(self.cache, "failure.json")
+        rec = {"stage": prog.state.get("stage", ""), "message": msg, "when": time.strftime("%F %T"), "elapsed_s": prog.state.get("elapsed_s")}
+        rec.update(details or {})
+        try:
+            with open(path + ".tmp", "w") as f:
+                json.dump(rec, f, indent=1)
+            os.replace(path + ".tmp", path)
+        except OSError as e:
+            log(f"failure.json non ecrit : {e}")
+            path = ""
+        prog.update(error=msg, message="echec", failure=path)
+
     def ok(self):
         p = os.path.join(self.cache, "build.ok")
         if not os.path.isfile(p):
@@ -968,7 +985,7 @@ class Build:
                                               rexcrt=self.rexcrt_roles(rep_), state_path=state,
                                               discover=not os.environ.get("XD_NO_DISCOVER"))
             except codegen_loop.CodegenError as e:
-                raise RecipeError(f"codegen generique : {e}")
+                raise RecipeError(f"codegen generique : {e}", details=getattr(e, "details", None))
             json.dump(stats, open(os.path.join(self.cache, "codegen_stats.json"), "w"), indent=1)
             shutil.copy(os.path.join(proj, "functions.generated.toml"), os.path.join(self.cache, "functions.final.toml"))
             log(f"codegen generique : {stats['functions']} fonctions en {stats['iterations']} passes "
@@ -1188,11 +1205,12 @@ class Build:
                 with open(up, "a") as f:
                     f.write(f"0x{a:08X} = {{}}  # appelee a l'execution sans etre declaree (bootstrap)\n")
                 raise MissingFunction(f"test d'amorcage : fonction 0x{a:08X} non declaree au codegen, ajoutee a {up} ; relancer la "
-                                      f"construction (boucle jouer -> reconstruire), voir {lp}")
+                                      f"construction (boucle jouer -> reconstruire), voir {lp}", details={"address": f"0x{a:08X}", "log": lp})
             raise RecipeError("test d'amorcage : erreur fatale, voir " + lp)
-        for pat in bt.get("expect", []):
-            if pat not in text:
-                raise RecipeError(f"test d'amorcage : '{pat}' absent du journal ({lp})")
+        absent = [pat for pat in bt.get("expect", []) if pat not in text]
+        if absent:
+            raise RecipeError(f"test d'amorcage : '{absent[0]}' absent du journal ({lp})",
+                              details={"expect_absent": absent, "log": lp})
         if not alive:
             raise RecipeError("test d'amorcage : le jeu s'est arrete avant " + str(seconds) + " s, voir " + lp)
 
@@ -1235,7 +1253,11 @@ class Build:
         weights = {"identify": 3, "prepare": 3, "extract": 10, "scaffold": 5, "bootstrap": self.recipe.get("bootstrap", {}).get("seconds", 40)}
         weights.update({k: v * 60 for k, v in em.items() if k in STAGES})
         prog = Progress(self.cache, est, weights)
-        prog.update(title_id=info["title_id"], name=self.name, cache=self.cache, source=self.game_dir)
+        prog.update(title_id=info["title_id"], name=self.name, cache=self.cache, source=self.game_dir, failure="")
+        try:
+            os.remove(os.path.join(self.cache, "failure.json"))    # echec d'une construction precedente : plus d'actualite
+        except OSError:
+            pass
         prog.start_heartbeat()
         if self.ok() and not self.force and self.stages == STAGES:
             log(f"{self.name} : cache a jour ({self.cache})")
@@ -1275,14 +1297,14 @@ class Build:
             log(f"{self.name} : " + (f"construit en {time.time() - t0:.0f} s" if self.stages == STAGES else
                                     "etapes " + ",".join(self.stages) + f" faites en {time.time() - t0:.0f} s") + f" ({self.cache})")
         except RecipeError as e:
-            prog.update(error=str(e), message="echec")
+            self.write_failure(prog, str(e), getattr(e, "details", {}))
             raise
         except Exception as e:   # toute autre exception : cause dans le journal (build.log) et dans progress.json
             import traceback
             tb = traceback.format_exc()
             print(f"[recipe] ERREUR INTERNE ({type(e).__name__}) :\n{tb}", file=sys.stderr, flush=True)
             msg = f"erreur interne : {type(e).__name__}: {e} (voir build.log)"
-            prog.update(error=msg, message="echec")
+            self.write_failure(prog, msg, {"traceback": tb.splitlines()[-15:]})
             raise RecipeError(msg) from e
         return self.cache
 

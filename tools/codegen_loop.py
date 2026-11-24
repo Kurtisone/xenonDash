@@ -30,7 +30,9 @@ ADDR = r"0x([0-9A-Fa-f]{8})"
 
 
 class CodegenError(Exception):
-    pass
+    def __init__(self, msg, details=None):
+        super().__init__(msg)
+        self.details = details or {}    # passe, adresse, derniers rejets : ecrits dans failure.json par recipe_build
 
 
 def write_overrides(path, unresolved, ptr, cont, setjmp=None, longjmp=None, extra=None, rexcrt=None):
@@ -123,6 +125,13 @@ def run_loop(rexglue, sdk_lib, proj, manifest, gen_dir, init_name, image, overri
             s, sz = secs[nm]
             ranges.append(f"{s + image.base:X}:{s + image.base + sz:X}")
     final_warn = ""
+    rejects = []     # journal des rejets de candidats statiques : {"pass", "kind", "count", "addresses"}
+
+    def fail_details(it, out):
+        named = [f"0x{int(x, 16):08X}" for x in re.findall(ADDR, out)][:10]
+        return {"pass": it, "max_iter": max_iter, "address": named[0] if named else None, "named_addresses": named,
+                "last_rejects": rejects[-10:], "error_tail": out.splitlines()[-20:]}
+    out = ""
     for it in range(1, max_iter + 1):
         lp = os.path.join(log_dir, f"codegen{it}.log")
         t0 = time.time()
@@ -149,7 +158,9 @@ def run_loop(rexglue, sdk_lib, proj, manifest, gen_dir, init_name, image, overri
                         if drop:
                             break
                 if not drop:
-                    raise CodegenError("codegen en echec sans cible non resolue exploitable :\n" + "\n".join(out.splitlines()[-20:]))
+                    raise CodegenError("codegen en echec sans cible non resolue exploitable :\n" + "\n".join(out.splitlines()[-20:]),
+                                       fail_details(it, out))
+                rejects.append({"pass": it, "named": bool(named), "count": len(drop), "addresses": [f"0x{a:08X}" for a in drop[:20]]})
                 for a in drop:
                     static.pop(a)
                     ptr.pop(a, None)
@@ -200,7 +211,7 @@ def run_loop(rexglue, sdk_lib, proj, manifest, gen_dir, init_name, image, overri
         ptr.update(new)
         cont.update(newc)
         write()
-    raise CodegenError(f"codegen : pas de convergence en {max_iter} iterations")
+    raise CodegenError(f"codegen : pas de convergence en {max_iter} iterations", fail_details(max_iter, out))
 
 
 def write_auto_stubs(path, symbols):
