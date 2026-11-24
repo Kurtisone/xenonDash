@@ -667,7 +667,18 @@ void Handle(uint32_t addr, PPCContext& ctx, uint8_t* base, void (*orig)(PPCConte
       const auto now = std::chrono::steady_clock::now();
       if (g.next_frame < now) g.next_frame = now;
       g.next_frame += std::chrono::microseconds(16667);
+      const auto diag_a = std::chrono::steady_clock::now();
       std::this_thread::sleep_until(g.next_frame);
+      {  // mesure seule : moyenne sur 600 iterations
+        static double s_att = 0;
+        static int s_n = 0;
+        s_att += std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - diag_a).count();
+        if (++s_n == 600) {
+          std::fprintf(stderr, "[ngpu-diag] hud_attente_ms=%.3f\n", s_att / 600);
+          s_att = 0;
+          s_n = 0;
+        }
+      }
       orig(ctx, base);
       return;
     }

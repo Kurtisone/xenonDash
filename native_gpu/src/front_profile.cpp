@@ -840,9 +840,13 @@ NGPU_HOOK(NGP_Swap) {
       BeginFrameIfNeeded();
       if (Evlog() && g.frames < 5) std::fprintf(stderr, "[ev] swap %llu front=%08X draws=%llu clears=%llu resolves=%llu skipped=%llu\n", (unsigned long long)g.frames,
                                                 g.front_buffer, (unsigned long long)g.draws, (unsigned long long)g.clears, (unsigned long long)g.resolves, (unsigned long long)g.skipped);
+      const auto diag_t0 = std::chrono::steady_clock::now();
       renderer.EndFrame(g.front_buffer);
+      const auto diag_t1 = std::chrono::steady_clock::now();
       g.in_frame = false;
       g.frames++;
+      auto diag_t2 = diag_t1;
+      auto diag_t3 = diag_t1;
       if (const uint32_t* pixels = renderer.presented()) {
         static std::vector<uint32_t> composed;
         if (ngpu::HudComposite) {  // le HUD de XAM (boite de message...) est superpose a l'image du Dashboard
@@ -880,9 +884,30 @@ NGPU_HOOK(NGP_Swap) {
             }
           }
         }
+        diag_t2 = std::chrono::steady_clock::now();
         VkPresentPacked(pixels, renderer.presented_width(), renderer.presented_height());
+        diag_t3 = std::chrono::steady_clock::now();
       } else {
+        diag_t2 = std::chrono::steady_clock::now();
         VkPresent();
+        diag_t3 = std::chrono::steady_clock::now();
+      }
+      {  // mesure seule : moyennes sur 600 images
+        using ms = std::chrono::duration<double, std::milli>;
+        static double s_rendu = 0, s_copie = 0, s_present = 0;
+        static int s_n = 0;
+        static std::chrono::steady_clock::time_point s_debut = diag_t0;
+        s_rendu += ms(diag_t1 - diag_t0).count();
+        s_copie += ms(diag_t2 - diag_t1).count();
+        s_present += ms(diag_t3 - diag_t2).count();
+        if (++s_n == 600) {
+          const double dt = std::chrono::duration<double>(diag_t3 - s_debut).count();
+          std::fprintf(stderr, "[ngpu-diag] fps=%.1f rendu_ms=%.3f copie_ms=%.3f present_ms=%.3f\n", dt > 0 ? 600.0 / dt : 0.0,
+                       s_rendu / 600, s_copie / 600, s_present / 600);
+          s_rendu = s_copie = s_present = 0;
+          s_n = 0;
+          s_debut = diag_t3;
+        }
       }
       if (g.frames == 1 || g.frames % 600 == 0) {
         for (const auto& [what, n] : renderer.stats()) NGPU_LOG("noyau : %s : %u", what.c_str(), n);
