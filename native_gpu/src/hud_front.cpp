@@ -17,6 +17,8 @@
 #include <execinfo.h>
 #include <pthread.h>
 #include <sys/stat.h>
+#include <sys/syscall.h>
+#include <unistd.h>
 
 #include <algorithm>
 #include <atomic>
@@ -778,6 +780,67 @@ static thread_local bool t_fin_valide = false;
 static thread_local uint64_t t_enfants_ns = 0;
 static std::unordered_map<uint32_t, uint64_t> g_excl_ns;
 static std::unordered_map<std::string, uint64_t> g_excl_thr;
+// mesure seule : fenêtres de 5 s, cumul par tid (temps exclusif dans le hook, appels) et CPU réel par tid
+struct CumulFenetre { uint64_t excl_ns = 0, appels = 0; };
+static std::unordered_map<long, CumulFenetre> g_fen_cumul;
+static std::mutex g_fen_mtx;
+static std::atomic<int64_t> g_fen_dernier_ns{0};
+
+static void fenetre5s_ecrire() {
+  static std::unordered_map<long, uint64_t> s_prec;
+  static const long hz_ticks = sysconf(_SC_CLK_TCK);
+  std::unordered_map<long, CumulFenetre> cumul;
+  {
+    std::lock_guard<std::mutex> verrou(g_fen_mtx);
+    cumul.swap(g_fen_cumul);
+  }
+  std::unordered_map<long, uint64_t> now;
+  std::vector<std::pair<uint64_t, long>> lignes;
+  if (DIR* dir = opendir("/proc/self/task")) {
+    while (const dirent* ent = readdir(dir)) {
+      if (ent->d_name[0] == '.') continue;
+      const long tid = std::strtol(ent->d_name, nullptr, 10);
+      char chemin[96];
+      std::snprintf(chemin, sizeof chemin, "/proc/self/task/%ld/stat", tid);
+      FILE* f = std::fopen(chemin, "r");
+      if (!f) continue;
+      char ligne[512];
+      if (std::fgets(ligne, sizeof ligne, f)) {
+        const char* p = std::strrchr(ligne, ')');
+        if (p) {
+          unsigned long ut = 0, st = 0, f8, f9, f10, f11, f12;
+          char etat = 0;
+          int f3, f4, f5, f6, f7;
+          std::sscanf(p + 2, "%c %d %d %d %d %d %lu %lu %lu %lu %lu %lu %lu", &etat, &f3, &f4, &f5, &f6, &f7, &f8, &f9,
+                      &f10, &f11, &f12, &ut, &st);
+          now[tid] = ut + st;
+        }
+      }
+      std::fclose(f);
+    }
+    closedir(dir);
+  }
+  const uint64_t seuil = static_cast<uint64_t>(5.0 * 0.2 * static_cast<double>(hz_ticks > 0 ? hz_ticks : 100));
+  for (const auto& kv : now) {
+    const uint64_t d = kv.second - (s_prec.count(kv.first) ? s_prec[kv.first] : 0);
+    if (d > seuil) lignes.emplace_back(d, kv.first);
+  }
+  s_prec = now;
+  std::sort(lignes.rbegin(), lignes.rend());
+  for (size_t i = 0; i < lignes.size() && i < 6; ++i) {
+    char nomf[64] = "?";
+    char chemin[96];
+    std::snprintf(chemin, sizeof chemin, "/proc/self/task/%ld/comm", lignes[i].second);
+    if (FILE* f = std::fopen(chemin, "r")) {
+      if (std::fgets(nomf, sizeof nomf, f)) nomf[std::strcspn(nomf, "\n")] = 0;
+      std::fclose(f);
+    }
+    const CumulFenetre c = cumul.count(lignes[i].second) ? cumul[lignes[i].second] : CumulFenetre{};
+    std::fprintf(stderr, "[ngpu-diag] fenetre5s fil=%s cpu_ticks=%llu hook_excl_ms=%.1f appels=%llu\n", nomf,
+                 static_cast<unsigned long long>(lignes[i].first), static_cast<double>(c.excl_ns) / 1e6,
+                 static_cast<unsigned long long>(c.appels));
+  }
+}
 
 extern "C" void hudd3d_call(uint32_t addr, PPCContext& ctx, uint8_t* base, void (*orig)(PPCContext&, uint8_t*)) {
   static const bool enabled = std::getenv("DASH_HUD_DISABLE") == nullptr && std::getenv("DASH_NGPU_DISABLE") == nullptr;
@@ -818,6 +881,19 @@ extern "C" void hudd3d_call(uint32_t addr, PPCContext& ctx, uint8_t* base, void 
         g_hook_ns[nom] += ns;
         g_excl_ns[a] += excl;
         g_excl_thr[nom] += excl;
+      }
+      {
+        static thread_local const long t_tid = static_cast<long>(syscall(SYS_gettid));
+        std::lock_guard<std::mutex> verrou(g_fen_mtx);
+        auto& c = g_fen_cumul[t_tid];
+        c.excl_ns += excl;
+        c.appels++;
+      }
+      {
+        const int64_t maint = std::chrono::duration_cast<std::chrono::nanoseconds>(fin.time_since_epoch()).count();
+        int64_t prec = g_fen_dernier_ns.load();
+        if (prec == 0) g_fen_dernier_ns.compare_exchange_strong(prec, maint);
+        else if (maint - prec >= 5000000000LL && g_fen_dernier_ns.compare_exchange_strong(prec, maint)) fenetre5s_ecrire();
       }
       t_fin_appel = fin;
       t_fin_valide = true;
