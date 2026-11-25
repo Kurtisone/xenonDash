@@ -645,7 +645,18 @@ void Handle(uint32_t addr, PPCContext& ctx, uint8_t* base, void (*orig)(PPCConte
         std::lock_guard<std::mutex> lock(g.mutex);
         CloseInline(base);
         if (g.in_frame && g.core) {
+          const auto diag_rendu_a = std::chrono::steady_clock::now();  // mesure seule
           g.core->renderer().EndFrame(0);
+          {  // mesure seule : temps de EndFrame (rendu natif), moyenne sur 600 images
+            static double s_rendu = 0;
+            static int s_rendu_n = 0;
+            s_rendu += std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - diag_rendu_a).count();
+            if (++s_rendu_n == 600) {
+              std::fprintf(stderr, "[ngpu-diag] hud_endframe_ms=%.3f\n", s_rendu / 600);
+              s_rendu = 0;
+              s_rendu_n = 0;
+            }
+          }
           g.in_frame = false;
           ++g.frames;
           PublishOverlay();
