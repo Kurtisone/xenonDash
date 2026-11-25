@@ -868,6 +868,36 @@ extern "C" void hudd3d_call(uint32_t addr, PPCContext& ctx, uint8_t* base, void 
       }
       std::fprintf(stderr, "[ngpu-diag] liste52 obj=0x%08X tete=0x%08X chaine=%s fin=%s\n", obj, tete, chaine.c_str(), fin);
     }
+    {  // mesure seule : memorise l'objet (premiere entree) et lance un fil de surveillance de la liste a obj+52
+      static std::atomic<uint32_t> s_obj{0};
+      static std::once_flag s_once;
+      uint32_t attendu = 0;
+      if (s_obj.compare_exchange_strong(attendu, ctx.r3.u32)) {
+        std::call_once(s_once, [base]() {
+          std::thread([base]() {
+            auto lit = [base](uint32_t a) { uint32_t v; std::memcpy(&v, base + a, 4); return __builtin_bswap32(v); };
+            for (int t = 1;; ++t) {
+              std::this_thread::sleep_for(std::chrono::seconds(5));
+              const uint32_t obj = s_obj.load(), tete = obj + 52;
+              std::string chaine;
+              char tmp[16];
+              uint32_t noeud = tete;
+              const char* fin = "cycle_ou_longue";
+              const uint32_t tete_suivant = lit(tete);
+              for (int i = 0; i < 16; ++i) {
+                std::snprintf(tmp, sizeof tmp, "%s0x%08X", i ? ">" : "", noeud);
+                chaine += tmp;
+                const uint32_t suiv = lit(noeud);
+                if (suiv == tete) { fin = "termine"; break; }
+                noeud = suiv;
+              }
+              std::fprintf(stderr, "[ngpu-diag] surveille52 t=%d obj=0x%08X tete_suivant=0x%08X chaine=%s fin=%s\n", t, obj,
+                           tete_suivant, chaine.c_str(), fin);
+            }
+          }).detach();
+        });
+      }
+    }
   }
   if (addr == 0x819BE580) {  // mesure seule : itérations de la boucle de vidage de sub_819BE610 (un appel par itération)
     static std::atomic<uint64_t> s_vidage{0};
