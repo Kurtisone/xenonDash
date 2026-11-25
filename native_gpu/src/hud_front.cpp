@@ -848,6 +848,16 @@ extern "C" void hudd3d_call(uint32_t addr, PPCContext& ctx, uint8_t* base, void 
     orig(ctx, base);
     return;
   }
+  if (addr == 0x819BE580) {  // mesure seule : itérations de la boucle de vidage de sub_819BE610 (un appel par itération)
+    static std::atomic<uint64_t> s_vidage{0};
+    const uint64_t k = ++s_vidage;
+    if (k <= 2000 || k % 100000 == 0) {
+      auto lit = [base](uint32_t a) { uint32_t v; std::memcpy(&v, base + a, 4); return __builtin_bswap32(v); };
+      const uint32_t tete = lit(ctx.r3.u32 + 16);
+      const uint32_t premier = lit(tete);
+      std::fprintf(stderr, "[ngpu-diag] vidage n=%llu tete=0x%08X premier=0x%08X\n", static_cast<unsigned long long>(k), tete, premier);
+    }
+  }
   // DASH_HUD_TRACE=1 : premier appel crochete, puis un point d'avancement tous les 5000. Repond a
   // la question « le HUD est-il sollicite du tout ? » : sans cette trace, un HUD muet ne distingue
   // pas « jamais appele » de « appele mais rien a dessiner ».
