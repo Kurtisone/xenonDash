@@ -899,6 +899,30 @@ extern "C" void hudd3d_call(uint32_t addr, PPCContext& ctx, uint8_t* base, void 
       }
     }
   }
+  struct SortieSbe580 {  // mesure seule : ligne de sortie de sub_819BE580 (destructeur, apres l'appel d'origine)
+    bool actif = false;
+    uint8_t* base = nullptr;
+    uint32_t obj = 0, noeud = 0;
+    ~SortieSbe580() {
+      if (!actif) return;
+      auto lit = [this](uint32_t a) { uint32_t v; std::memcpy(&v, base + a, 4); return __builtin_bswap32(v); };
+      std::fprintf(stderr, "[ngpu-diag] sbe580_sortie obj=0x%08X noeud=0x%08X suivant_de_noeud=0x%08X tete=0x%08X\n", obj, noeud,
+                   lit(noeud), lit(obj + 52));
+    }
+  } sortie_sbe580;
+  if (addr == 0x819BE580) {  // mesure seule : entree de sub_819BE580 (40 lignes au plus ; la sortie suit l'entree)
+    static std::atomic<int> s_sbe{0};
+    if (s_sbe.fetch_add(1) < 40) {
+      auto lit = [base](uint32_t a) { uint32_t v; std::memcpy(&v, base + a, 4); return __builtin_bswap32(v); };
+      const uint32_t obj = ctx.r3.u32, noeud = ctx.r4.u32;
+      std::fprintf(stderr, "[ngpu-diag] sbe580_entree obj=0x%08X noeud=0x%08X suivant_de_noeud=0x%08X tete=0x%08X\n", obj, noeud,
+                   lit(noeud), lit(obj + 52));
+      sortie_sbe580.actif = true;
+      sortie_sbe580.base = base;
+      sortie_sbe580.obj = obj;
+      sortie_sbe580.noeud = noeud;
+    }
+  }
   if (addr == 0x819BE580) {  // mesure seule : itérations de la boucle de vidage de sub_819BE610 (un appel par itération)
     static std::atomic<uint64_t> s_vidage{0};
     const uint64_t k = ++s_vidage;
