@@ -13,6 +13,8 @@
 // format 0x102A0E0x convertis par tools/hud_shaders.py), un seul peripherique, pas de GPU nul a fournir (le HUD n'attend rien du
 // GPU), cadence limitee a 60 Hz a la soumission (la boucle d'image du HUD tourne sinon a ~2400 images/s, faute de vsync).
 
+#include <execinfo.h>
+#include <pthread.h>
 #include <sys/stat.h>
 
 #include <algorithm>
@@ -677,6 +679,17 @@ void Handle(uint32_t addr, PPCContext& ctx, uint8_t* base, void (*orig)(PPCConte
           std::fprintf(stderr, "[ngpu-diag] hud_attente_ms=%.3f\n", s_att / 600);
           s_att = 0;
           s_n = 0;
+        }
+      }
+      {  // mesure seule : profondeur de pile toutes les 60 images
+        static int s_pile_n = 0;
+        if (++s_pile_n >= 60) {
+          s_pile_n = 0;
+          static void* s_cadres[4096];
+          const int n = backtrace(s_cadres, 4096);
+          char nom[32] = "?";
+          pthread_getname_np(pthread_self(), nom, sizeof nom);
+          std::fprintf(stderr, "[ngpu-diag] hud_pile=%d fil=%s\n", n, nom);
         }
       }
       orig(ctx, base);
