@@ -766,6 +766,11 @@ extern "C" void hudd3d_call(uint32_t addr, PPCContext& ctx, uint8_t* base, void 
   static const bool trace = std::getenv("DASH_HUD_TRACE") != nullptr;
   static std::atomic<uint64_t> calls{0};
   const uint64_t n = ++calls;
+  if (n % 5000 == 0) {  // mesure seule : profondeur de pile au point d'appel, toutes les 5000 entrées
+    static void* s_cadres_d3d[4096];
+    const int nc = backtrace(s_cadres_d3d, 4096);
+    std::fprintf(stderr, "[ngpu-diag] d3d_pile=%d addr=%08X n=%llu\n", nc, addr, static_cast<unsigned long long>(n));
+  }
   // Trace ciblee : seules les adresses que Handle traite (D3D 2099 du HUD) sont interessantes.
   // Les 1348 fonctions de xam.xex passent aussi par ici, d'ou le bruit.
   if (trace) {
