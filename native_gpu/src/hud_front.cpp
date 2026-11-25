@@ -848,6 +848,28 @@ extern "C" void hudd3d_call(uint32_t addr, PPCContext& ctx, uint8_t* base, void 
     orig(ctx, base);
     return;
   }
+  if (addr == 0x819BE610 && ctx.r3.u32 < 0x10000) {  // mesure seule : appel de sub_819BE610 avec r3 nul (5 lignes au plus)
+    static std::atomic<int> s_nul{0};
+    const int k = s_nul.fetch_add(1);
+    if (k < 5) {
+      char nom[32];
+      std::snprintf(nom, sizeof nom, "?");
+      pthread_getname_np(pthread_self(), nom, sizeof nom);
+      std::fprintf(stderr, "[ngpu-diag] appel610_nul r3=0x%08X lr=0x%08X fil=%s tid=%ld n=%d\n", ctx.r3.u32,
+                   static_cast<uint32_t>(ctx.lr), nom, static_cast<long>(syscall(SYS_gettid)), k + 1);
+    }
+  }
+  if (addr == 0x819BEA78 || addr == 0x819BEB90) {  // mesure seule : entrées de sub_819BEA78 / sub_819BEB90 (10 lignes au plus chacune)
+    static std::atomic<int> s_a78{0}, s_b90{0};
+    std::atomic<int>& cpt = addr == 0x819BEA78 ? s_a78 : s_b90;
+    if (cpt.fetch_add(1) < 10) {
+      char nom[32];
+      std::snprintf(nom, sizeof nom, "?");
+      pthread_getname_np(pthread_self(), nom, sizeof nom);
+      std::fprintf(stderr, "[ngpu-diag] %s r3=0x%08X r6=0x%08X lr=0x%08X fil=%s tid=%ld\n", addr == 0x819BEA78 ? "beA78" : "beB90",
+                   ctx.r3.u32, ctx.r6.u32, static_cast<uint32_t>(ctx.lr), nom, static_cast<long>(syscall(SYS_gettid)));
+    }
+  }
   if (addr == 0x819BE610) {  // mesure seule : liste chainee a obj+52 a l'entree de sub_819BE610 (une fois par 5 s)
     static std::atomic<int64_t> s_prochain{0};
     const int64_t now = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
