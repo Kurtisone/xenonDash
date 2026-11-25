@@ -248,19 +248,8 @@ REX_HOOK_RAW(__imp__KeGetCurrentProcessType) {
   if (dash::xamrt::InXamImage(lr)) ctx.r3.u64 = 2;
 }
 
-// KeBugCheckEx / KeBugCheck : journalisation du code et de l'appelant avant le traitement du SDK (diagnostic de
-// l'initialisation de XAM recompilé, qui appelle KeBugCheckEx quand une étape obligatoire échoue).
-REX_HOOK_RAW(__imp__KeBugCheckEx) {
-  static PPCFunc* fn = dash::SdkFunction("__imp__KeBugCheckEx");
-  REXLOG_ERROR("[kernel] KeBugCheckEx(0x{:X}, 0x{:X}, 0x{:X}, 0x{:X}, 0x{:X}) depuis lr=0x{:08X}", ctx.r3.u32, ctx.r4.u32,
-               ctx.r5.u32, ctx.r6.u32, ctx.r7.u32, static_cast<uint32_t>(ctx.lr));
-  fn(ctx, base);
-}
-REX_HOOK_RAW(__imp__KeBugCheck) {
-  static PPCFunc* fn = dash::SdkFunction("__imp__KeBugCheck");
-  REXLOG_ERROR("[kernel] KeBugCheck(0x{:X}) depuis lr=0x{:08X}", ctx.r3.u32, static_cast<uint32_t>(ctx.lr));
-  fn(ctx, base);
-}
+// KeBugCheck / KeBugCheckEx : plus de crochet ici. Le SDK (xboxkrnl_debug.cpp) arrête le programme au niveau critique
+// avec le code, les paramètres, l'appelant invité (lr) et le fil : « [FATAL] *** STOP: 0x… » dans dash.log, puis abort().
 
 // XexLoadImage : XAM charge ses modules d'interface par leur nom nu ("hud.xex", "signin.xex", "vk.xex"...), que la console
 // cherche dans la flash. Le SDK résout un nom nu dans le dossier du module exécutable (ici \Device\Harddisk0\Partition1,

@@ -96,14 +96,26 @@ Voir [compilation.md](compilation.md) : SDK, conteneur, build de test, AppImage.
 - Glyphe `U+E00A` (Gamerscore) : présent dans `XenonSCLatin.xtt` (13604), absent de `XenonJKLatin` et
   `XenonCLatin` (6770). Résolu par `src/dash_font_patch.cpp` (police principale JKLatin → SCLatin ; `DASH_FONT_PATCH=0`
   désactive). Voir `docs/technique.md` (puce « Glyphe Gamerscore », section 13604).
-- Le fork du SDK est le sous-module `third_party/xenondash-sdk` (branche `unified`) ; après
-  modification : reconstruire, réinstaller dans `sdk/`, commiter le sous-module PUIS le dépôt.
+- Le fork du SDK est le sous-module `third_party/xenondash-sdk` (branche `dash-13604-recompilateur` pour 13604 ;
+  `unified` est plus ancienne) ; après modification : reconstruire, réinstaller dans `sdk/`, commiter le sous-module PUIS
+  le dépôt. Le SDK installé est compilé dans le conteneur (clang 20 + libstdc++ 14 : étape SDK de
+  `tools/container/in_container.sh`), le Dashboard sur l'hôte. Dans un worktree, `third_party/xenondash-sdk` peut être une
+  simple copie sans git : `git init`, puis `git fetch` du commit épinglé ET des étiquettes `v*` depuis un dépôt du SDK qui
+  les a (celui du worktree kinect13604 : forgejo n'a pas d'étiquettes), puis `git reset` sur ce commit (les fichiers ne
+  bougent pas). Sans les étiquettes, la version devient `0.10.0.0-dev.unknown` au lieu de `0.10.0.N-dev.g<commit>`.
 - **Stubs du SDK qui n'écrivent pas leurs sorties** : `REX_EXPORT_STUB` laisse r3 inchangé (souvent le pointeur de
   sortie, donc « succès » pour l'appelant) et n'écrit rien : l'appelant lit des résidus de pile invitée, et tout
   changement de pile (fibres, ordre des appels) change l'écran. Cas résolu le 2026-11-25 : liste des résolutions des
   Paramètres vide (`HalGetCurrentAVPack`, `VdGetDisplayDiscoveryData`, `VdQueryRealVideoMode`, voir
   `dashboards/2.0.13604.0-xam/src/kernel_video_output.cpp`). Devant un écran qui varie d'un build à l'autre,
   chercher d'abord les `STUB` du journal sur le chemin.
+- **KeBugCheck est fatal** (SDK `7f60045f`, 2026-11-25) : `[FATAL] *** STOP: 0x<code> (p1, p2, p3, p4), appelant
+  lr=0x…, fil …` au niveau critique dans `dash.log`, puis `abort()` (code de sortie -6, SIGABRT). Avant, l'appel revenait
+  et le code invité continuait (erreurs secondaires sans lien avec la cause). Le lr est l'adresse de retour de l'appel :
+  `python3 tools/ghidra/xd_ghidra.py decompile <module> 0x<lr>` donne la fonction appelante. Le recompilateur termine
+  aussi le bloc après un `bl` vers KeBugCheck ou KeBugCheckEx (`return;` dans le code généré) : avant, une fonction
+  absorbait le code qui suit l'appel (`sub_819BF2D0`, départ d'une fibre de XAM, contenait une copie non accrochée de la
+  bascule de fibre `sub_819BF2E0`).
 - Les instrumentations dans le code GÉNÉRÉ (`dashboards/*/generated/**`) sont non versionnées et
   perdues à la régénération — y mettre des sondes temporaires seulement ; le correctif durable va
   dans `common/src`, `native_gpu` ou le SDK.
