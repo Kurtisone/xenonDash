@@ -1,0 +1,27 @@
+# Symboles de XAM (xam.xex) 2.0.13604 (Dashboard Kinect) : noms et commentaires issus de notre analyse, aucun symbole Microsoft.
+# Lu par tools/ghidra/xd_ghidra.py (projet Ghidra : noms et commentaires d'en-tête) et tools/function_inventory.py (colonne « nom »).
+# Colonnes séparées par des tabulations : adresse, nom (vide = garder le nom automatique : export, import ou sub_XXXXXXXX),
+# commentaire. Une adresse hors code devient une étiquette de donnée. Ne nommer que ce qui est établi (mesure, code lu) ;
+# une hypothèse se signale dans le commentaire.
+# Les 1345 exports de XAM sont nommés automatiquement (table d'exports du XEX et ordinaux du SDK) : ne pas les recopier ici.
+adresse	nom	commentaire
+0x81872230		Boucle d'image du HUD, commandée par le bit 0x8 de XeKeysGetStatus (r28) : ce bit doit rester absent.
+0x81891CF0		Planifie le fil de chargement de huduiskin (cible 0x818A2C98).
+0x8189CA48		Chargement de huduiskin (partie graphique) ; gardes sub_8194E200 puis sub_81949DE0 (un négatif fait sortir).
+0x818A1DF8		Écrit le champ de garde de la boucle d'image du HUD (+164 := 1) ; sans appelant direct (appel indirect).
+0x818A2500	XamHud_FrameLoopBody	Corps de la boucle d'image du HUD ; lit le champ de garde 0x81BFCB8C (base 0x81BFCAE8 + 164).
+0x818A2C98	XamHud_LoadSkinThread	Fil de chargement de huduiskin.xex : appelle sub_8189CA48 si sub_8189EBE0 renvoie une valeur positive ou nulle (allocation sub_818BB140, puis sub_8186E020 et sub_8187F8D8, XexLoadImage suit).
+0x818A2F90		Garde de planification du module huduiskin : si l'un de ses deux appels renvoie un négatif, sub_818A2C98 n'est jamais planifié.
+0x818B58E8		Lit le bit 0x8 de XeKeysGetStatus (non modifiée : seul l'envoi du message de sub_818C1188 est court-circuité).
+0x818C1188		Au démarrage, envoie le message 0x00020023 (boîte « Game Error ») à l'application 254 par sub_8187BA98 si le bit 0x8 de XeKeysGetStatus est absent.
+0x818C4240	XamInput_GetStateCore	Cœur de XamInputGetState (port, drapeaux, &état) ; drapeau système 0x80000000 : celui de signin.xex (voir src_xam_patch/xam_input_patch.cpp).
+0x818CAD20		XGetAVPack : saut direct vers HalGetCurrentAVPack (stub du SDK, remplacé par dashboards/2.0.13604.0-xam/src/kernel_video_output.cpp).
+0x818CAD28		Réglage XConfig (catégorie 3, n° 11, 4 octets ; 0x10001 s'il est nul), ou 2 si HalGetCurrentAVPack vaut 2.
+0x818CD070		Ouvre \Device\DeviceAuth (authentification des périphériques de stockage) ; neutralisée (xam_overrides.toml, src/xam_neutralize.cpp).
+0x819BE580	XamFiberQueue_Resume	Reprend la fibre d'une requête (r4, fibre en +0xC) par XamFiber_SwitchTo(fibre, obj+0x60, obj+0x64) ; si la requête est terminée (type 0xF en +0x24), la libère (sub_819BE0E8) et décrémente le compte obj+0x3C sous la section critique obj+0x18 (obj+0x40 = 1 à zéro). Décompilé par Ghidra (2026-11-25).
+0x819BE610	XamFiberQueue_Pump	Une passe du répartiteur de requêtes à fibres (r3 = objet) : vide la file des requêtes prêtes (tête désignée par obj+0x10, LIST_ENTRY à +24 de la requête) par XamFiberQueue_Resume ; parcourt les requêtes en attente (liste obj+0x34, type = +12 & 0x0F000000 : 1 E/S XMsg, 2 minuterie GetTickCount, 3 rappel, 4 E/S de fichier, 5) ; échange les files obj+0x10/obj+0x14 sous la section critique obj+0x18 ; si tout est vide renvoie 0, sinon dort obj+0x78 ms (si obj+0x48 & 1 est nul) et renvoie 1. Tournait sur l'adresse 0 (fil à 100 %) quand la bascule de fibre rendait une pile invitée vide (src_xam_patch/xam_fiber_switch.cpp). Décompilé par Ghidra (2026-11-25).
+0x819BEEE8	XamFiber_Create	Création d'une fibre de XAM : pose le LR invité de départ 0x819BF2D0 (XamFiber_Start).
+0x819BF0A8	XamFiber_Delete	Suppression d'une fibre de XAM ; accrochée par src_xam_patch/xam_fiber_switch.cpp (libère la fibre hôte).
+0x819BF160	XamFiber_SwitchTo	Bascule vers la fibre r3 si elle n'est pas la fibre courante (KTHREAD+0x164) : si sa pile n'est pas celle de r4, MmUnmapMemory de l'ancienne vue puis MmDoubleMapMemory de min(r5, taille) pages de r4 au sommet de sa zone de pile ; contrôle de débordement (RaiseException 0xC00000FD) ; puis XamFiber_Switch. Seul appelant de XamFiber_Switch ; une fibre suspendue y revient (LR invité 0x819BF248). MmDoubleMapMemory et MmUnmapMemory sont des stubs du SDK : ici aucune pile n'est remappée (à vérifier si XAM dépend de l'alias). Décompilé par Ghidra (2026-11-25).
+0x819BF2D0	XamFiber_Start	Départ d'une fibre neuve, contexte invité déjà chargé (r1 = pile de la fibre, r31 = routine de départ).
+0x819BF2E0	XamFiber_Switch	Change de fibre : sauvegarde le contexte courant (KTHREAD+356), charge celui de la fibre r3 (r14-r31 à +168, f14-f31, v64-v127, CR à +312, LR à +44, r1 à +64) puis saute à KeSetCurrentStackPointers. Remplacée par src_xam_patch/xam_fiber_switch.cpp (vraie bascule de pile hôte).

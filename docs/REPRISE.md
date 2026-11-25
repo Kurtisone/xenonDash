@@ -46,6 +46,9 @@ Voir [compilation.md](compilation.md) : SDK, conteneur, build de test, AppImage.
 - Avant de coder : établir la cause avec preuves (gdb en batch, watchpoints sur les alias mémoire,
   journaux avec `--log_flush_interval=1`, traces par `REX_HOOK_RAW`). Le code PowerPC se lit avec
   `tools/ppc_dis.py` ; les fonctions D3D se retrouvent par motif avec `tools/d3d_match.py`.
+- **Ghidra** : `tools/ghidra/xd_ghidra.py decompile xam <fonction>` donne le C décompilé d'une fonction de XAM ou de
+  dash.xex avec les noms partagés de `symbols/2.0.13604.0/` (voir [ghidra.md](ghidra.md)) ; y consigner tout nom établi.
+  `tools/function_inventory.py` affiche les mêmes noms.
 - **Chaque hypothèse doit être mesurée avant d'être annoncée, et une hypothèse réfutée doit être
   retirée du dossier** (des sessions entières ont été perdues sur des hypothèses non réfutées à temps).
 - Vérifier chaque résultat visuel par **capture regardée** (Xvfb + lavapipe), jamais par le seul

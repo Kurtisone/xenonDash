@@ -1,0 +1,20 @@
+# Symboles de dash.xex 2.0.13604 (Dashboard Kinect) : noms et commentaires issus de notre analyse, aucun symbole Microsoft.
+# Lu par tools/ghidra/xd_ghidra.py (projet Ghidra : noms et commentaires d'en-tête) et tools/function_inventory.py (colonne « nom »).
+# Colonnes séparées par des tabulations : adresse, nom (vide = garder le nom automatique : export, import ou sub_XXXXXXXX),
+# commentaire. Une adresse hors code devient une étiquette de donnée. Ne nommer que ce qui est établi (mesure, code lu) ;
+# une hypothèse se signale dans le commentaire.
+adresse	nom	commentaire
+0x9201D2D4	g_HdtvVideoModes	4 modes HDTV (entrées de 8 octets : largeur, hauteur, +4 texte, +6 indicateurs) : 640x480, 1280x720, 1920x1080, 1920x-1080.
+0x9201D330	g_VgaVideoModes	10 modes PC (VGA), +4 = 712 : 640x480, 848x480, 1024x768, 1280x720, 1280x768, 1280x1024, 1360x768, 1440x900, 1680x1050, 1920x-1080.
+0x9217F360	memset	memset (r3 = destination, r4 = octet, r5 = taille).
+0x9217FB40	memcpy	memcpy (r3 = destination, renvoyée ; r4 = source ; r5 = taille).
+0x921E4C88	Dash_RegisterXuiTypeface	Enregistre un typeface XUI (descripteur : +0 nom, +4 localisateur) ; accrochée par src/dash_font_patch.cpp.
+0x9225CB30	Dash_VideoModeEnumCallback	Rappel de VdEnumerateVideoModes : mode M (+2 largeur, +4 hauteur, +7 = 3 : en tête, +8 fréquence, seulement ~60 Hz ; +12 bit 0x4 entrelacé) ; doit figurer dans la liste blanche des 10 modes ; renvoie 0 pour arrêter (20 modes ou type 4).
+0x9225D0F8	Dash_ReadEdid	Lit l'EDID : tampon de 128 octets mis à zéro, VdReadEEDIDBlock(0), puis les blocs d'extension (nombre à +126).
+0x9225D640	Dash_GetVideoModeDescriptor	Descripteur de liste selon la prise AV (4/6/8 : liste dynamique g_VideoModeList ; 0/3/5 : statique 0x9201D320 ou 0x9201D2F4 ; sinon 0x80004005) ; repère le mode réel (VdQueryRealVideoMode) par sub_9225CEA8.
+0x9225D778	Dash_BuildVideoModeList	Construit g_VideoModeList d'après VdGetDisplayDiscoveryData (35 octets) : liaison (+29) 1 -> type 4, g_VgaVideoModes ; 2/3 -> types 0/2, g_HdtvVideoModes si +4 & 0x100 (sinon 1/3, rien) ; autre valeur : type précédent (0x92953B54).
+0x9225DDA8		Lit les données de découverte de l'affichage : liaison (+29) == 3 et bit 0 de +4.
+0x9225E410	Dash_FillResolutionEntries	Liste des résolutions : XGetAVPack ; si g_VideoModeList est vide, Dash_BuildVideoModeList puis VdEnumerateVideoModes(Dash_VideoModeEnumCallback) ; prises 3/4/6/8 : Dash_GetVideoModeDescriptor puis sub_92269710, sinon entrées fixes (textes 452/665).
+0x92267978		Lit la taille physique de l'écran (octets +21/+22 des données de découverte, en cm) ; r3 = 1 si elle est connue.
+0x928407F0	Dash_SelectFonts	Choisit les polices principale et secondaire (Xenon{JK,SC,C}Latin.xtt) selon XGetGameRegion (258) et la langue (8).
+0x92953B48	g_VideoModeList	Tête de la liste dynamique des modes : {1, nombre (+4), 0x92979580 (+8), type (+12, 5 au départ)}.

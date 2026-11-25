@@ -15,6 +15,7 @@ Pour **utiliser** XenonDash (installation, jeux, contrôles, dépannage) : le [R
 | [ngpu_core.md](ngpu_core.md) | Noyau de rendu natif (Vulkan) commun, façades D3D du Dashboard 6770, du Dashboard 13604 et du HUD de XAM, shaders, parité mesurée |
 | [rendu_natif.md](rendu_natif.md) | Étude de faisabilité et jalons du rendu D3D natif (historique) |
 | [recettes.md](recettes.md) | Recettes de jeux, moteur `tools/recipe_build.py`, cache, GPU nul |
+| [ghidra.md](ghidra.md) | Projet Ghidra de XAM et de dash.xex (13604) : import sans auto-analyse, noms (ReXGlue, imports, exports de XAM, `symbols/`), décompilation, test sur `sub_819BE610` |
 | [recompilateur_generique.md](recompilateur_generique.md) | Recompilation d'un jeu sans recette : découverte des fonctions, fonctions D3D par motif, signatures, limites |
 | [bibliotheque.md](bibliotheque.md) | Formats de jeux lus (dossier, XEX, ISO, STFS, GOD), inventaire du dossier de jeux, `games.auto.toml` |
 | [nxe_jeux.md](nxe_jeux.md) | Parcours des jeux dans le Dashboard Kinect (2.0.13604) : registre fusionné, Game Library, Play Game, progression, AppImage |
