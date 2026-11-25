@@ -771,6 +771,21 @@ extern "C" void hudd3d_call(uint32_t addr, PPCContext& ctx, uint8_t* base, void 
     const int nc = backtrace(s_cadres_d3d, 4096);
     std::fprintf(stderr, "[ngpu-diag] d3d_pile=%d addr=%08X n=%llu\n", nc, addr, static_cast<unsigned long long>(n));
   }
+  {  // mesure seule : comptage des adresses appelées, vidé toutes les 200000 entrées (top 5)
+    static std::unordered_map<uint32_t, uint64_t> s_compte;
+    static std::mutex s_compte_mtx;  // plusieurs fils appellent hudd3d_call
+    std::lock_guard<std::mutex> verrou(s_compte_mtx);
+    s_compte[addr]++;
+    if (n % 200000 == 0) {
+      std::vector<std::pair<uint64_t, uint32_t>> v;
+      for (const auto& kv : s_compte) v.emplace_back(kv.second, kv.first);
+      std::sort(v.rbegin(), v.rend());
+      for (size_t i = 0; i < v.size() && i < 5; ++i)
+        std::fprintf(stderr, "[ngpu-diag] d3d_top %08X x%llu (sur %llu)\n", v[i].second,
+                     static_cast<unsigned long long>(v[i].first), static_cast<unsigned long long>(n));
+      s_compte.clear();
+    }
+  }
   // Trace ciblee : seules les adresses que Handle traite (D3D 2099 du HUD) sont interessantes.
   // Les 1348 fonctions de xam.xex passent aussi par ici, d'ou le bruit.
   if (trace) {
