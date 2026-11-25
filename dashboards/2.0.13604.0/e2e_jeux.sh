@@ -1,5 +1,5 @@
 #!/bin/sh
-# Test de bout en bout du Dashboard NXE 13604 en AppImage : dossier de jeux -> Game Library -> A -> recompilation avec
+# Test de bout en bout du Dashboard Kinect 13604 en AppImage : dossier de jeux -> Game Library -> A -> recompilation avec
 # progression -> jeu natif -> retour au Dashboard (docs/nxe_jeux.md). Xvfb + lavapipe, HOME temporaire, import du firmware.
 #
 # usage : E2E_GAME=<dossier ou ISO du jeu> [E2E_OUT=<captures>] [E2E_HOME=<HOME de test>] [E2E_DISPLAY=94] \

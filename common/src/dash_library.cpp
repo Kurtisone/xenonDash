@@ -203,7 +203,7 @@ REX_HOOK_RAW(__imp__XamContentLaunchImageInternal) {
   ctx.r3.u64 = 0x80004005u;  // E_FAIL
 }
 
-// NXE/Metro : variante Ex (contenu, indicateurs, masque) de « Play Game » ; même traitement.
+// Kinect/Metro : variante Ex (contenu, indicateurs, masque) de « Play Game » ; même traitement.
 REX_HOOK_RAW(__imp__XamContentLaunchImageInternalEx) {
   uint32_t content = ctx.r3.u32;
   REXLOG_INFO("[dash] XamContentLaunchImageInternalEx(contenu={:#x}, indicateurs={:#x}, {:#x})", content, ctx.r4.u32,

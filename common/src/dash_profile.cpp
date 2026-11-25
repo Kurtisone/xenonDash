@@ -393,7 +393,7 @@ void ApplyProfileSettings() {
   for (uint32_t id : {kGamerType, kUnknown3A}) {
     if (!profile->GetSetting(id)) profile->AddSetting(std::make_unique<Profile::Int32Setting>(id, 0));
   }
-  // Réglages lus toutes les 5 s par le hub NXE/Metro pour décider si le profil est connecté (sans eux le SDK fait
+  // Réglages lus toutes les 5 s par le hub Kinect/Metro pour décider si le profil est connecté (sans eux le SDK fait
   // échouer toute la requête : « Sign In / 1 Profile Found ») : 0x63E80044 (binaire, 0x3E8 octets), 0x7008004F (date),
   // 0x61180050 (binaire, 0x118 octets). Valeurs « vides » (profil sans données Live).
   profile->AddSetting(std::make_unique<Profile::BinarySetting>(0x63E80044, std::vector<uint8_t>(0x3E8, 0)));
@@ -447,7 +447,7 @@ u32 XamBuildLegacySystemResourceLocator_entry(mapped_wstring filename, mapped_vo
 REX_HOOK(__imp__XamBuildLegacySystemResourceLocator,
          dash::resources::XamBuildLegacySystemResourceLocator_entry)
 
-// XamPackageManagerGetFilePathW(nom, tampon, taille_en_caractères) : le Dashboard NXE/Metro (17559) résout ses
+// XamPackageManagerGetFilePathW(nom, tampon, taille_en_caractères) : le Dashboard Metro (17559) résout ses
 // « langpack://<nom> » (dashcomm.xzp, consoles.xzp, network.xzp...) par le gestionnaire de paquets de XAM. Les ressources
 // du Dashboard sont fournies comme fichiers de la flash (media:\<nom>.xzp) ; on renvoie ce chemin.
 REX_HOOK_RAW(__imp__XamPackageManagerGetFilePathW) {

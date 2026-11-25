@@ -1,4 +1,4 @@
 [submodule "third_party/xenondash-sdk"]
 	path = third_party/xenondash-sdk
 	url = forgejo:kurtisone/xenondash-sdk.git
-	branch = xenondash
+	branch = dash-13604-recompilateur

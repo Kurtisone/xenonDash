@@ -243,7 +243,7 @@ def stage_assets(a, ctx):
 
 
 def extract_dash_resources(ctx, assets, flash):
-    """Ressources XZP embarquées dans dash.xex (dashcomm, consoles, network, slots, hubui... pour NXE/Metro) : le
+    """Ressources XZP embarquées dans dash.xex (dashcomm, consoles, network, slots, hubui... pour Kinect/Metro) : le
     Dashboard les demande par « langpack://L..<nom>.xzp » (XamPackageManagerGetFilePathW -> media:\\<nom>.xzp). Elles sont
     déjà au format natif (XUIZ) : copiées telles quelles dans la flash (sans écraser un fichier existant). Le
     Dashboard 17559 ouvre aussi media:\\en-US\\shrdres.xzp : on y place un lien vers shrdres.xzp."""
@@ -678,7 +678,7 @@ def main():
     ap.add_argument("--work", help="dossier de travail (défaut : work/port/<version>)")
     ap.add_argument("--flash-dir", help="modules/polices complets de la version (archive XeBuilds, ex. firmware/xebuild-6770)")
     ap.add_argument("--fonts-dir", help="dossier de polices XenonCLatin.xtt/XenonJKLatin.xtt (substitution quand la mise à "
-                    "jour n'en fournit que des correctifs .xttp, ex. NXE 13604 : celles de 6770, firmware/xebuild-6770)")
+                    "jour n'en fournit que des correctifs .xttp, ex. Kinect 13604 : celles de 6770, firmware/xebuild-6770)")
     ap.add_argument("--shrdres", help="shrdres.xzp déjà converti pour cette version")
     ap.add_argument("--shrdres-xam", default=None,
                     help="xam.xex d'une mise à jour complète d'où tirer shrdres (défaut : firmware/17559/$flash_xam.xex)")

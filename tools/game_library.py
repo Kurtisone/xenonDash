@@ -36,7 +36,7 @@ Deposez ici vos jeux Xbox 360, tels quels, dans n'importe quel sous-dossier :
   - une arborescence de disque dur (<TitleID>/<type>/<paquet>).
 
 Le format est reconnu par le contenu des fichiers, pas par leur extension. Les liens symboliques sont suivis.
-Aucun fichier n'est copie ni modifie. Le Dashboard NXE (Games Library > My Games) voit les jeux au lancement
+Aucun fichier n'est copie ni modifie. Le Dashboard Kinect 13604 (Game Library > My Games) voit les jeux au lancement
 (l'inventaire est refait automatiquement ; seuls les fichiers nouveaux ou changes sont relus).
 
 Les sauvegardes, contenus telechargeables (DLC), mises a jour de titre ou du systeme ne sont pas des jeux : ils

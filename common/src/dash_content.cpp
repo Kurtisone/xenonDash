@@ -193,7 +193,7 @@ void FillData(T* d, const Item& it) {
 // --- Énumération agrégée (tous les jeux ou un jeu) ---------------------------------
 
 // Élément réel : XCONTENT_AGGREGATE_DATA (0x148 octets) suivi de la taille du paquet (BE64, +0x148),
-// que le Dashboard affiche (« File Size ») ; il copie 512 octets par élément. Le Dashboard NXE (13604) lit aussi la fin de
+// que le Dashboard affiche (« File Size ») ; il copie 512 octets par élément. Le Dashboard Kinect (13604) lit aussi la fin de
 // ces 512 octets (mot de 16 bits à +506 : la Game Library ignore l'élément si ses bits 0 ou 1 sont posés, sub_922ADC88) :
 // l'élément fait donc 512 octets, à zéro au-delà de la taille (un élément plus court laissait lire la pile de l'appelant).
 constexpr size_t kAggregateItemSize = 0x200;

@@ -29,7 +29,7 @@ u32 XUsbcamGetState_entry() {
   return 0;  // 0 = non connectée
 }
 
-// KeGetImagePageTableEntry : le Dashboard NXE (17559) valide ses pointeurs de code avec le bit 0 (« page valide »)
+// KeGetImagePageTableEntry : le Dashboard Metro (17559) valide ses pointeurs de code avec le bit 0 (« page valide »)
 // de l'entrée de table de pages ; l'implémentation du SDK y met l'indice de page (bit 0 aléatoire) -> KeBugCheck(0xF7).
 // On renvoie une entrée valide pour toute adresse d'image XEX (0x80000000-0x9FFFFFFF).
 u32 KeGetImagePageTableEntry_entry(u32 address) {
@@ -37,14 +37,14 @@ u32 KeGetImagePageTableEntry_entry(u32 address) {
   return (0x40000000u | ((address >> 12) << 1) | 1u) & 0x400FFFFFu;
 }
 
-// KeQueryInterruptTime : temps depuis le démarrage en unités de 100 ns. Le SDK en fait un stub (0) : le Dashboard NXE
+// KeQueryInterruptTime : temps depuis le démarrage en unités de 100 ns. Le SDK en fait un stub (0) : le Dashboard Metro
 // 17559 boucle alors indéfiniment sur son horloge (sub_921AFF68).
 u64 KeQueryInterruptTime_entry() {
   using namespace std::chrono;
   return static_cast<u64>(duration_cast<nanoseconds>(steady_clock::now().time_since_epoch()).count() / 100);
 }
 
-// Fonctions XAM que le SDK laisse en « STUB » (r3 inchangé = valeur de retour aléatoire). Le Dashboard NXE/Metro (17559)
+// Fonctions XAM que le SDK laisse en « STUB » (r3 inchangé = valeur de retour aléatoire). Le Dashboard Metro (17559)
 // les interroge en boucle (état Kinect, contexte du Dashboard, langue) : on renvoie des valeurs saines.
 std::atomic<u32> g_dash_context{0};
 
@@ -68,7 +68,7 @@ REX_HOOK_RAW(__imp__XamGetLanguageLocaleFallbackString) {
   }
   ctx.r3.u64 = a;
 }
-// Polices du Dashboard NXE/Metro : XamGetLanguageTypeface(langue, taille, tampon) écrit le localisateur de la police de
+// Polices des Dashboards Kinect/Metro : XamGetLanguageTypeface(langue, taille, tampon) écrit le localisateur de la police de
 // la langue ; XamGetLanguageTypefacePatch(langue) renvoie un pointeur vers le localisateur du correctif. La seule police
 // de la mise à jour 17559 présente dans la flash est SegoeXbox-Light.xtt (media:\) : on l'utilise pour toutes les langues.
 namespace dash::stubs {

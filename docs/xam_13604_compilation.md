@@ -2,7 +2,7 @@
 
 > **État courant (2026-11-21, nuit) — lire ceci d'abord ; la suite du document est le journal
 > historique (sections datées).** La chaîne est **opérationnelle** : XAM 13604 recompilé se charge
-> et se rend (hub NXE, boîtes système, création de profil), 258/258 + 34/34 shaders traduits,
+> et se rend (hub Kinect, boîtes système, création de profil), 258/258 + 34/34 shaders traduits,
 > AppImage unique `XenonDash-Kinect.AppImage` testée sur la machine de l'utilisateur. Derniers
 > correctifs : boîte modale du boot éliminée (`XeKeysGetStatus` → 0xC), simulation de disque
 > supprimée entièrement, « freeze » de la sortie de Game Library corrigé (appel indirect non

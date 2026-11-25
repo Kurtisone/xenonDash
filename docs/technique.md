@@ -196,7 +196,7 @@ et `p6_2.0.13604.0.png` (AppImage).
   (`XamUserGetUserTenure`, `XamUserGetSubscriptionType`, `XamProfileFindAccount`, `XamUserGetIndexFromXUID`,
   `GetMembershipTierFromXUID`, `GetOnlineCountry/LanguageFromXUID`, `GetAge/AgeGroup`, `IsParentalControlled`, `IsPartial`,
   `IsUnsafeProgrammingAllowed`, `FlushLogonQueue` : profil local hors ligne, `xuid_online = 0`, succès) ;
-  `XamLoaderLaunchTitleForReason` et `XamContentLaunchImageInternalEx` (variantes NXE/Metro du lancement) ajoutées.
+  `XamLoaderLaunchTitleForReason` et `XamContentLaunchImageInternalEx` (variantes Kinect/Metro du lancement) ajoutées.
 - *Résultat 13604* : « Joueur / 155 » (Gamerscore) en haut à droite, tuile du profil (gamertag, Gamerscore, « Latest Games »
   avec l'icône de Skate, avatar par défaut) dans My Xbox ; bouton de disque « Play Skate » (icône) — à l'époque avec
   `games.toml` (`disc = true`, simulation **supprimée depuis**) ; **Game Library > Recent Games** affiche « Skate, Xbox 360 Game, 70/1000 » (avec `library = true`) et les
@@ -227,7 +227,7 @@ prototype fonctionnel du chargement de XAM recompilé dans le même processus** 
 
 `tools/port_dashboard.sh firmware/17559 2.0.17559.0` : extraction, codegen (**38 105 fonctions**, 28 cibles non résolues,
 516 fonctions par pointeur, ~80 s par itération, 5 itérations), compilation (11 stubs d'imports inconnus). Le Dashboard
-17559 est un Dashboard NXE/Metro (image de 16,9 Mo avec 38 ressources XEX embarquées : `dashlua`, `hubui`, `contui`...).
+17559 est un Dashboard Metro (image de 16,9 Mo avec 38 ressources XEX embarquées : `dashlua`, `hubui`, `contui`...).
 Il importe **516 fonctions XAM** et **284 fonctions noyau** (`dash_init.cpp`).
 
 Blocages levés (les trois premiers et les stubs sont dans `common/` ; DPC et HMAC dans le SDK) :

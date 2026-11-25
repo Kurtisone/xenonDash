@@ -1,7 +1,7 @@
-// dash - état de connexion (« sign-in ») et compte du profil local, pour les Dashboards NXE et Metro.
+// dash - état de connexion (« sign-in ») et compte du profil local, pour les Dashboards Kinect et Metro.
 //
 // Le SDK laisse en stub (r3 inchangé = valeur de retour aléatoire) la plupart des fonctions XamUser* /
-// XamProfile* que le hub NXE/Metro interroge pour décider si un profil est connecté (tuile « Sign In /
+// XamProfile* que le hub Kinect/Metro interroge pour décider si un profil est connecté (tuile « Sign In /
 // 1 Profile Found » sinon). Ici : un profil local, hors ligne (connecté localement, sans Xbox LIVE),
 // cohérent avec XamUserGetSigninState (1 = connecté localement) du SDK.
 //

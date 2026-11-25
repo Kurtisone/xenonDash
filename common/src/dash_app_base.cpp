@@ -81,7 +81,7 @@ void SetDefaultShaderDirs(const std::filesystem::path& data_root) {
 // Montée en lecture seule depuis <game_data_root>/flash, à remplir avec le contenu extrait du dump NAND.
 void DashAppBase::OnPostSetup() {
   SetDefaultShaderDirs(game_data_root());
-  // Dashboards NXE (17559) : les ressources XEX (dashlua...) sont des pages « lecture seule » de l'image, mais le
+  // Dashboard Metro (17559) : les ressources XEX (dashlua...) sont des pages « lecture seule » de l'image, mais le
   // Dashboard y écrit (sur console ces pages sont accessibles en écriture) : tout l'exécutable passe en lecture/écriture
   // (le code n'est pas concerné : il est recompilé).
   if (auto mod = runtime()->kernel_state()->GetExecutableModule()) {

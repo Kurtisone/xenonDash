@@ -524,7 +524,7 @@ void Notify(const std::string& title, const std::string& body) {
   }
 }
 
-// Pendant une construction (ou après un refus) le hub NXE reste noir : il a pris l'appel de lancement pour un lancement réel (il
+// Pendant une construction (ou après un refus) le hub Kinect reste noir : il a pris l'appel de lancement pour un lancement réel (il
 // n'attend pas de retour). Le Dashboard est donc relancé tout de suite ; l'état est passé à la nouvelle instance par
 // <données>/current_build.json (construction en cours : pid, cache ; ou message d'échec à afficher une fois).
 fs::path BuildStatePath() { return AutoRegistryPath().parent_path().parent_path() / "current_build.json"; }
@@ -947,7 +947,7 @@ REX_HOOK_RAW(__imp__XamLoaderLaunchTitleEx) {
   ctx.r3.u64 = 0x80004005u;  // E_FAIL : le jeu n'a pas été lancé (construction en cours, refus ou jeu inconnu)
 }
 
-// NXE (13604) / Metro (17559) : « Play Game » du disque passe par XamLoaderLaunchTitleForReason(chemin ou NULL, raison...)
+// Kinect (13604) / Metro (17559) : « Play Game » du disque passe par XamLoaderLaunchTitleForReason(chemin ou NULL, raison...)
 // (NULL = lancer le disque). Même traitement que XamLoaderLaunchTitle.
 REX_HOOK_RAW(__imp__XamLoaderLaunchTitleForReason) {
   REXLOG_INFO("[dash] XamLoaderLaunchTitleForReason(r3={:#x} r4={:#x} r5={:#x} r6={:#x})", ctx.r3.u64, ctx.r4.u64,
@@ -980,7 +980,7 @@ REX_HOOK_RAW(__imp__XamLoaderGetMediaInfo) {
   ctx.r3.u64 = 0;
 }
 
-// NXE : XamLoaderGetMediaInfoEx(&a, &b, &c) — le hub l'interroge avant toute action sur le disque (tuile « Play »,
+// Kinect (13604) : XamLoaderGetMediaInfoEx(&a, &b, &c) — le hub l'interroge avant toute action sur le disque (tuile « Play »,
 // A, Eject) : la 3e sortie est comparée à 0 et -2 (« pas de média »). Simulation de disque supprimée : a = b = 0
 // (« aucun média », c = 0 ; 0xFFFFFFFE faisait traiter la Games Library comme vide). Un vrai lecteur optique
 // sera câblé ici plus tard.
