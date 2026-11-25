@@ -783,6 +783,10 @@ extern "C" void hudd3d_call(uint32_t addr, PPCContext& ctx, uint8_t* base, void 
       for (size_t i = 0; i < v.size() && i < 5; ++i)
         std::fprintf(stderr, "[ngpu-diag] d3d_top %08X x%llu (sur %llu)\n", v[i].second,
                      static_cast<unsigned long long>(v[i].first), static_cast<unsigned long long>(n));
+      // soumissions de fin d'image du HUD (kSubmit) et débuts de sommets : à comparer aux images présentées
+      std::fprintf(stderr, "[ngpu-diag] d3d_fin_image=%llu d3d_debut_sommets=%llu (sur %llu)\n",
+                   static_cast<unsigned long long>(s_compte[0x819CC490u]),
+                   static_cast<unsigned long long>(s_compte[0x819C8E38u]), static_cast<unsigned long long>(n));
       s_compte.clear();
     }
   }
