@@ -923,6 +923,25 @@ extern "C" void hudd3d_call(uint32_t addr, PPCContext& ctx, uint8_t* base, void 
       sortie_sbe580.noeud = noeud;
     }
   }
+  if (addr == 0x819BEB48 || addr == 0x819BEAF0 || addr == 0x819BEDA8) {  // mesure seule : entrées de la chaîne de création de la tâche
+    static std::atomic<int> s_b48{0}, s_af0{0}, s_da8{0};
+    std::atomic<int>& cpt = addr == 0x819BEB48 ? s_b48 : addr == 0x819BEAF0 ? s_af0 : s_da8;
+    if (cpt.fetch_add(1) < 30) {
+      char nom[32];
+      std::snprintf(nom, sizeof nom, "?");
+      pthread_getname_np(pthread_self(), nom, sizeof nom);
+      if (addr == 0x819BEB48) {
+        uint32_t v;
+        std::memcpy(&v, base + 0x81C06274, 4);
+        std::fprintf(stderr, "[ngpu-diag] beb48_entree r3=0x%08X lr=0x%08X fil=%s g=0x%08X\n", ctx.r3.u32,
+                     static_cast<uint32_t>(ctx.lr), nom, __builtin_bswap32(v));
+      } else if (addr == 0x819BEAF0) {
+        std::fprintf(stderr, "[ngpu-diag] beaf0_entree r3=0x%08X r6=0x%08X fil=%s\n", ctx.r3.u32, ctx.r6.u32, nom);
+      } else {
+        std::fprintf(stderr, "[ngpu-diag] beda8_entree r5=0x%08X r6=0x%08X\n", ctx.r5.u32, ctx.r6.u32);
+      }
+    }
+  }
   if (addr == 0x819BE580) {  // mesure seule : itérations de la boucle de vidage de sub_819BE610 (un appel par itération)
     static std::atomic<uint64_t> s_vidage{0};
     const uint64_t k = ++s_vidage;
