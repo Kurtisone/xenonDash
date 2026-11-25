@@ -125,7 +125,7 @@ if(TARGET dash_xam)
     target_sources(dash_xam PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src_xam_patch/xam_input_patch.cpp)
     # Diagnostic de la boucle d'image du HUD (DASH_HUD_LOOP_TRACE=1), sans effet sinon.
     target_sources(dash_xam PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src_xam_patch/xam_hud_trace.cpp)
-    # Changement de fibre interne de XAM (sub_819BF2E0) : bascule réelle de pile hôte (rex::thread::Fiber).
+    # Changement de fibre interne de XAM (sub_819BF2E0) : bascule réelle de pile hôte (ucontext, pile mmap avec page de garde).
     target_sources(dash_xam PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src_xam_patch/xam_fiber_switch.cpp)
 endif()
 
