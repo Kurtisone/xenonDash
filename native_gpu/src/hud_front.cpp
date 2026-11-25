@@ -754,6 +754,10 @@ bool HudActive() {
 
 // Point d'entree des crochets de XAM (src_xam_d3d/xam_d3d_hooks.cpp). hudd3d_probe : diagnostics (src/hud_d3d_trace.cpp du projet).
 extern "C" bool hudd3d_probe(uint32_t addr, PPCContext& ctx, uint8_t* base, void (*orig)(PPCContext&, uint8_t*));
+// mesure seule : temps cumulé (ns) passé dans hudd3d_call par adresse, inclut les appels imbriqués
+static std::unordered_map<uint32_t, uint64_t> g_d3d_ns;
+static std::mutex g_d3d_ns_mtx;
+
 extern "C" void hudd3d_call(uint32_t addr, PPCContext& ctx, uint8_t* base, void (*orig)(PPCContext&, uint8_t*)) {
   static const bool enabled = std::getenv("DASH_HUD_DISABLE") == nullptr && std::getenv("DASH_NGPU_DISABLE") == nullptr;
   if (!enabled) {
@@ -766,6 +770,16 @@ extern "C" void hudd3d_call(uint32_t addr, PPCContext& ctx, uint8_t* base, void 
   static const bool trace = std::getenv("DASH_HUD_TRACE") != nullptr;
   static std::atomic<uint64_t> calls{0};
   const uint64_t n = ++calls;
+  struct MesureTemps {  // mesure seule : ajoute le temps de cet appel à g_d3d_ns à la sortie de la fonction
+    uint32_t a;
+    std::chrono::steady_clock::time_point t0;
+    ~MesureTemps() {
+      const auto ns = static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(
+                                                std::chrono::steady_clock::now() - t0).count());
+      std::lock_guard<std::mutex> verrou(g_d3d_ns_mtx);
+      g_d3d_ns[a] += ns;
+    }
+  } mesure_temps{addr, std::chrono::steady_clock::now()};
   if (n % 5000 == 0) {  // mesure seule : profondeur de pile au point d'appel, toutes les 5000 entrées
     static void* s_cadres_d3d[4096];
     const int nc = backtrace(s_cadres_d3d, 4096);
@@ -787,6 +801,21 @@ extern "C" void hudd3d_call(uint32_t addr, PPCContext& ctx, uint8_t* base, void 
       std::fprintf(stderr, "[ngpu-diag] d3d_fin_image=%llu d3d_debut_sommets=%llu (sur %llu)\n",
                    static_cast<unsigned long long>(s_compte[0x819CC490u]),
                    static_cast<unsigned long long>(s_compte[0x819C8E38u]), static_cast<unsigned long long>(n));
+      {  // temps cumulé par adresse (top 5), avec le nombre d'appels de la fenêtre
+        std::vector<std::pair<uint64_t, uint32_t>> t;
+        {
+          std::lock_guard<std::mutex> verrou(g_d3d_ns_mtx);
+          for (const auto& kv : g_d3d_ns) t.emplace_back(kv.second, kv.first);
+          g_d3d_ns.clear();
+        }
+        std::sort(t.rbegin(), t.rend());
+        for (size_t i = 0; i < t.size() && i < 5; ++i) {
+          const uint64_t c = s_compte[t[i].second];
+          std::fprintf(stderr, "[ngpu-diag] d3d_temps %08X %.1f ms (x%llu, %.1f us/appel)\n", t[i].second,
+                       static_cast<double>(t[i].first) / 1e6, static_cast<unsigned long long>(c),
+                       c ? static_cast<double>(t[i].first) / 1e3 / static_cast<double>(c) : 0.0);
+        }
+      }
       s_compte.clear();
     }
   }
