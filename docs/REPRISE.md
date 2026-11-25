@@ -54,8 +54,23 @@ Voir [compilation.md](compilation.md) : SDK, conteneur, build de test, AppImage.
 - Vérifier chaque résultat visuel par **capture regardée** (Xvfb + lavapipe), jamais par le seul
   journal. Écrans X dédiés par tâche (:92, :94, …) ; `ulimit -c 0` avant dash ; `XKEYS_HOLD=0.12`.
 - `tools/banc.py` : banc pas à pas (`start`, `keys`, `shot`, `wait`, `cpu`, `grep`, `stop`) qui lance la variante -xam
-  comme l'AppImage, sur une COPIE du dossier de données (profils de l'utilisateur intacts), écran dédié, arrêt par PID.
+  comme l'AppImage, sur une COPIE du dossier de données (profils de l'utilisateur intacts) et une COPIE de la
+  bibliothèque de jeux (`XENONDASH_LIBRARY_DIR` : sans elle, le scan du démarrage réécrit
+  `~/.local/share/xenondash/library` avec le dossier de jeux du banc), écran dédié sans pointeur de souris (`Xvfb
+  -nocursor` : sinon il apparaît ou non au centre des captures selon l'instant), arrêt par PID.
   `cpu` donne la charge par fil : écarter les fils `llvmpipe-*` (rendu logiciel de lavapipe).
+- `tools/banc_suite.py run` : suite de non-régression sur ce banc, verdict OK/KO (code de sortie 0/1), ~4 min. Un
+  parcours fixe (Welcome, My Xbox, Game Library aller-retour, Console Settings, Screen Resolution, Guide, Sign In, Guide
+  connecté) : captures comparées aux références, journal (aucun `*** STOP` ni `[fibre]`, découverte de l'affichage
+  présente) et charge par fil une fois le Guide fermé. Le rendu lavapipe est presque déterministe (écart nul entre deux
+  exécutions une fois masqués l'horloge du Guide et le logo Xbox animé) : les tolérances sont serrées et un texte changé
+  fait échouer le point. Vérifié en provoquant les deux régressions connues : `--env DASH_VIDEO_DISCOVERY=0` (KO
+  Console Settings et Screen Resolution, découverte absente du journal), `--env DASH_XAM_FIBER_FIX=0` (KO charge, un
+  fil à 100 %).
+  Références, tolérances, instantané des données, liens vers les jeux et bibliothèque scannée hors du dépôt :
+  `<copie principale>/work/banc/refs/2.0.13604.0-xam`. Après un changement VOULU de l'interface : deux `run`, regarder
+  les captures, puis `refs <exécution> --calib <autre exécution>` ; `init` refait l'instantané (données, jeux,
+  bibliothèque).
 - Shaders du rendu natif : `DASH_NGPU_SHADERS`, `DASH_HUD_SHADERS` (sinon `<game_data_root>/shaders/{dash,hud}`,
   générés à l'import de l'AppImage). **Tous traduits** : 258/258 dash et 34/34 HUD (correctifs
   `patches/xenosrecomp/0005` à `0008` + `ngpu_core/src/renderer.cpp` ; détail dans `docs/technique.md`).

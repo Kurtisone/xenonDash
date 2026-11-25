@@ -2,12 +2,14 @@
 """Banc visuel du Dashboard 13604 (variante -xam) sous Xvfb + lavapipe, piloté pas à pas.
 
 Lance le Dashboard comme l'AppImage (rendu natif, XAM recompilé en mode 2, parcours profil XAM), sur un écran
-Xvfb dédié, avec une COPIE du dossier de données : les profils et le journal de l'utilisateur ne sont pas touchés.
+Xvfb dédié, avec une COPIE du dossier de données et une COPIE de la bibliothèque de jeux (scan du démarrage) : les
+profils, le journal et la bibliothèque de l'utilisateur ne sont pas touchés.
 Chaque exécution a son dossier (captures, journaux, PID) ; les processus ne sont arrêtés que par leur PID.
 
 Sous-commandes :
-  start <nom> [--data D] [--build B] [--display N] [--env K=V ...] [--arg --x=y ...] [--boot S]
-        démarre Xvfb puis dash, attend S secondes (60 par défaut), donne le focus à la fenêtre, capture <nom>_0.png
+  start <nom> [--data D] [--build B] [--display N] [--env K=V ...] [--arg --x=y ...] [--boot S] [--library L]
+        démarre Xvfb puis dash, attend S secondes (60 par défaut), donne le focus à la fenêtre, capture <nom>_0.png ;
+        la bibliothèque L (défaut ~/.local/share/xenondash/library) est copiée dans <dossier>/bibliotheque
   keys  <nom> <touche>... [--pause S]   envoie les touches (tools/xkeys.py), attend S s (3), capture la suivante
   shot  <nom> [étiquette]               capture immédiate
   wait  <nom> <motif> [--timeout S]     attend (S s au plus, 120 par défaut) une ligne NOUVELLE du journal qui contient le motif
@@ -116,6 +118,13 @@ def log_lines(st):
     return n
 
 
+def user_library():
+    """Bibliothèque de jeux de l'utilisateur, même règle que LibraryDir() de dash_launch.cpp."""
+    if os.environ.get("XENONDASH_LIBRARY_DIR"):
+        return os.environ["XENONDASH_LIBRARY_DIR"]
+    return os.path.join(os.environ.get("XDG_DATA_HOME") or os.path.expanduser("~/.local/share"), "xenondash", "library")
+
+
 def cmd_start(a):
     d = run_dir(a.name)
     if os.path.exists(os.path.join(d, "state.json")):
@@ -132,7 +141,7 @@ def cmd_start(a):
             sys.exit(f"absent : {p}")
     if os.path.exists(f"/tmp/.X11-unix/X{a.display}") or os.path.exists(f"/tmp/.X{a.display}-lock"):
         sys.exit(f"l'écran :{a.display} est déjà pris (choisir --display)")
-    xvfb = subprocess.Popen(["Xvfb", f":{a.display}", "-screen", "0", "1280x720x24", "-fbdir", os.path.join(d, "fb"), "-nolisten", "tcp"],
+    xvfb = subprocess.Popen(["Xvfb", f":{a.display}", "-screen", "0", "1280x720x24", "-nocursor", "-fbdir", os.path.join(d, "fb"), "-nolisten", "tcp"],
                             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
     for _ in range(50):
         if os.path.exists(os.path.join(d, "fb", "Xvfb_screen0")):
@@ -152,6 +161,15 @@ def cmd_start(a):
         "XENONDASH_GAMES_DIR": os.path.expanduser(os.environ.get("XENONDASH_GAMES_DIR", "~/XenonDash/Games")),
         "XKEYS_HOLD": "0.12",
     })
+    # Bibliothèque de jeux : le scan du démarrage (XENONDASH_AUTOSCAN) écrit games.auto.toml, library.json et icons/
+    # dans XENONDASH_LIBRARY_DIR, sinon dans celle de l'utilisateur (~/.local/share/xenondash/library), qu'une exécution
+    # avec un autre dossier de jeux réécrivait. Copie propre à l'exécution, amorcée depuis --library (par défaut la
+    # bibliothèque de l'utilisateur, lue seulement) pour que le scan reste incrémental (cache par chemin).
+    lib = os.path.join(d, "bibliotheque")
+    seed = os.path.abspath(getattr(a, "library", None) or user_library())
+    if os.path.isdir(seed):
+        shutil.copytree(seed, lib, symlinks=True)
+    env["XENONDASH_LIBRARY_DIR"] = lib
     for kv in a.env or []:
         k, _, v = kv.partition("=")
         env[k] = v
@@ -315,6 +333,7 @@ def main():
     p.add_argument("--env", action="append")
     p.add_argument("--arg", action="append")
     p.add_argument("--boot", type=int, default=60)
+    p.add_argument("--library", help="bibliothèque copiée pour l'exécution (défaut : celle de l'utilisateur)")
     p.set_defaults(fn=cmd_start)
     p = sp.add_parser("keys")
     p.add_argument("name")
