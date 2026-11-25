@@ -50,6 +50,9 @@ Voir [compilation.md](compilation.md) : SDK, conteneur, build de test, AppImage.
   retirée du dossier** (des sessions entières ont été perdues sur des hypothèses non réfutées à temps).
 - Vérifier chaque résultat visuel par **capture regardée** (Xvfb + lavapipe), jamais par le seul
   journal. Écrans X dédiés par tâche (:92, :94, …) ; `ulimit -c 0` avant dash ; `XKEYS_HOLD=0.12`.
+- `tools/banc.py` : banc pas à pas (`start`, `keys`, `shot`, `wait`, `cpu`, `grep`, `stop`) qui lance la variante -xam
+  comme l'AppImage, sur une COPIE du dossier de données (profils de l'utilisateur intacts), écran dédié, arrêt par PID.
+  `cpu` donne la charge par fil : écarter les fils `llvmpipe-*` (rendu logiciel de lavapipe).
 - Shaders du rendu natif : `DASH_NGPU_SHADERS`, `DASH_HUD_SHADERS` (sinon `<game_data_root>/shaders/{dash,hud}`,
   générés à l'import de l'AppImage). **Tous traduits** : 258/258 dash et 34/34 HUD (correctifs
   `patches/xenosrecomp/0005` à `0008` + `ngpu_core/src/renderer.cpp` ; détail dans `docs/technique.md`).
