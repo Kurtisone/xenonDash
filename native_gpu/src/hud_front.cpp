@@ -848,6 +848,27 @@ extern "C" void hudd3d_call(uint32_t addr, PPCContext& ctx, uint8_t* base, void 
     orig(ctx, base);
     return;
   }
+  if (addr == 0x819BE610) {  // mesure seule : liste chainee a obj+52 a l'entree de sub_819BE610 (une fois par 5 s)
+    static std::atomic<int64_t> s_prochain{0};
+    const int64_t now = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
+    int64_t att = s_prochain.load();
+    if (now >= att && s_prochain.compare_exchange_strong(att, now + 5000)) {
+      auto lit = [base](uint32_t a) { uint32_t v; std::memcpy(&v, base + a, 4); return __builtin_bswap32(v); };
+      const uint32_t obj = ctx.r3.u32, tete = obj + 52;
+      std::string chaine;
+      char tmp[16];
+      uint32_t noeud = tete;
+      const char* fin = "cycle_ou_longue";
+      for (int i = 0; i < 16; ++i) {
+        std::snprintf(tmp, sizeof tmp, "%s0x%08X", i ? ">" : "", noeud);
+        chaine += tmp;
+        const uint32_t suiv = lit(noeud);
+        if (suiv == tete) { fin = "termine"; break; }
+        noeud = suiv;
+      }
+      std::fprintf(stderr, "[ngpu-diag] liste52 obj=0x%08X tete=0x%08X chaine=%s fin=%s\n", obj, tete, chaine.c_str(), fin);
+    }
+  }
   if (addr == 0x819BE580) {  // mesure seule : itérations de la boucle de vidage de sub_819BE610 (un appel par itération)
     static std::atomic<uint64_t> s_vidage{0};
     const uint64_t k = ++s_vidage;
