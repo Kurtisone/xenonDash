@@ -13,6 +13,7 @@
 // format 0x102A0E0x convertis par tools/hud_shaders.py), un seul peripherique, pas de GPU nul a fournir (le HUD n'attend rien du
 // GPU), cadence limitee a 60 Hz a la soumission (la boucle d'image du HUD tourne sinon a ~2400 images/s, faute de vsync).
 
+#include <dirent.h>
 #include <execinfo.h>
 #include <pthread.h>
 #include <sys/stat.h>
@@ -768,6 +769,15 @@ extern "C" bool hudd3d_probe(uint32_t addr, PPCContext& ctx, uint8_t* base, void
 // mesure seule : temps cumulé (ns) passé dans hudd3d_call par adresse, inclut les appels imbriqués
 static std::unordered_map<uint32_t, uint64_t> g_d3d_ns;
 static std::mutex g_d3d_ns_mtx;
+// mesure seule : par fil (nom), temps invité entre deux appels (g_gap_ns) et temps passé dans hudd3d_call (g_hook_ns)
+static std::unordered_map<std::string, uint64_t> g_gap_ns, g_hook_ns;
+static std::mutex g_gap_mtx;
+static thread_local std::chrono::steady_clock::time_point t_fin_appel;
+static thread_local bool t_fin_valide = false;
+// mesure seule : temps des appels imbriqués du niveau courant, et temps exclusif (sans les imbriqués)
+static thread_local uint64_t t_enfants_ns = 0;
+static std::unordered_map<uint32_t, uint64_t> g_excl_ns;
+static std::unordered_map<std::string, uint64_t> g_excl_thr;
 
 extern "C" void hudd3d_call(uint32_t addr, PPCContext& ctx, uint8_t* base, void (*orig)(PPCContext&, uint8_t*)) {
   static const bool enabled = std::getenv("DASH_HUD_DISABLE") == nullptr && std::getenv("DASH_NGPU_DISABLE") == nullptr;
@@ -781,16 +791,38 @@ extern "C" void hudd3d_call(uint32_t addr, PPCContext& ctx, uint8_t* base, void 
   static const bool trace = std::getenv("DASH_HUD_TRACE") != nullptr;
   static std::atomic<uint64_t> calls{0};
   const uint64_t n = ++calls;
-  struct MesureTemps {  // mesure seule : ajoute le temps de cet appel à g_d3d_ns à la sortie de la fonction
+  struct MesureTemps {  // mesure seule : temps de l'appel (g_d3d_ns) et temps invité depuis l'appel précédent du même fil
     uint32_t a;
     std::chrono::steady_clock::time_point t0;
-    ~MesureTemps() {
-      const auto ns = static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(
-                                                std::chrono::steady_clock::now() - t0).count());
-      std::lock_guard<std::mutex> verrou(g_d3d_ns_mtx);
-      g_d3d_ns[a] += ns;
+    char nom[32];
+    uint64_t enfants_parent = 0;
+    MesureTemps(uint32_t adr) : a(adr), t0(std::chrono::steady_clock::now()) {
+      std::snprintf(nom, sizeof nom, "?");
+      pthread_getname_np(pthread_self(), nom, sizeof nom);
+      enfants_parent = t_enfants_ns;
+      t_enfants_ns = 0;
+      if (t_fin_valide) {
+        const auto gap = static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(t0 - t_fin_appel).count());
+        std::lock_guard<std::mutex> verrou(g_gap_mtx);
+        g_gap_ns[nom] += gap;
+      }
     }
-  } mesure_temps{addr, std::chrono::steady_clock::now()};
+    ~MesureTemps() {
+      const auto fin = std::chrono::steady_clock::now();
+      const auto ns = static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(fin - t0).count());
+      const uint64_t excl = ns > t_enfants_ns ? ns - t_enfants_ns : 0;
+      t_enfants_ns = enfants_parent + ns;
+      {
+        std::lock_guard<std::mutex> verrou(g_d3d_ns_mtx);
+        g_d3d_ns[a] += ns;
+        g_hook_ns[nom] += ns;
+        g_excl_ns[a] += excl;
+        g_excl_thr[nom] += excl;
+      }
+      t_fin_appel = fin;
+      t_fin_valide = true;
+    }
+  } mesure_temps{addr};
   if (n % 5000 == 0) {  // mesure seule : profondeur de pile au point d'appel, toutes les 5000 entrées
     static void* s_cadres_d3d[4096];
     const int nc = backtrace(s_cadres_d3d, 4096);
@@ -826,6 +858,94 @@ extern "C" void hudd3d_call(uint32_t addr, PPCContext& ctx, uint8_t* base, void 
                        static_cast<double>(t[i].first) / 1e6, static_cast<unsigned long long>(c),
                        c ? static_cast<double>(t[i].first) / 1e3 / static_cast<double>(c) : 0.0);
         }
+      }
+      {  // par fil : temps invité entre appels (gap) et temps dans hudd3d_call (hook), top 4 par gap
+        std::vector<std::pair<uint64_t, std::string>> gaps;
+        std::unordered_map<std::string, uint64_t> hooks;
+        {
+          std::lock_guard<std::mutex> verrou(g_gap_mtx);
+          for (const auto& kv : g_gap_ns) gaps.emplace_back(kv.second, kv.first);
+          g_gap_ns.clear();
+        }
+        {
+          std::lock_guard<std::mutex> verrou(g_d3d_ns_mtx);
+          hooks = g_hook_ns;
+          g_hook_ns.clear();
+        }
+        std::sort(gaps.rbegin(), gaps.rend());
+        for (size_t i = 0; i < gaps.size() && i < 4; ++i)
+          std::fprintf(stderr, "[ngpu-diag] fil=%s gap_invite_ms=%.1f hook_ms=%.1f (sur %llu appels)\n", gaps[i].second.c_str(),
+                       static_cast<double>(gaps[i].first) / 1e6, static_cast<double>(hooks[gaps[i].second]) / 1e6,
+                       static_cast<unsigned long long>(n));
+      }
+      {  // temps EXCLUSIF (sans les appels imbriqués) : top 5 adresses et top 3 fils
+        std::vector<std::pair<uint64_t, uint32_t>> ex;
+        std::vector<std::pair<uint64_t, std::string>> ext;
+        {
+          std::lock_guard<std::mutex> verrou(g_d3d_ns_mtx);
+          for (const auto& kv : g_excl_ns) ex.emplace_back(kv.second, kv.first);
+          for (const auto& kv : g_excl_thr) ext.emplace_back(kv.second, kv.first);
+          g_excl_ns.clear();
+          g_excl_thr.clear();
+        }
+        std::sort(ex.rbegin(), ex.rend());
+        std::sort(ext.rbegin(), ext.rend());
+        for (size_t i = 0; i < ex.size() && i < 5; ++i) {
+          const uint64_t c = s_compte[ex[i].second];
+          std::fprintf(stderr, "[ngpu-diag] excl %08X %.1f ms (x%llu, %.1f us/appel)\n", ex[i].second,
+                       static_cast<double>(ex[i].first) / 1e6, static_cast<unsigned long long>(c),
+                       c ? static_cast<double>(ex[i].first) / 1e3 / static_cast<double>(c) : 0.0);
+        }
+        for (size_t i = 0; i < ext.size() && i < 3; ++i)
+          std::fprintf(stderr, "[ngpu-diag] excl_fil=%s %.1f ms (sur %llu appels)\n", ext[i].second.c_str(),
+                       static_cast<double>(ext[i].first) / 1e6, static_cast<unsigned long long>(n));
+      }
+      {  // temps CPU réel par fil (utime+stime depuis /proc), écart depuis la fenêtre précédente, top 4
+        static std::unordered_map<long, uint64_t> s_cpu_prec;
+        std::vector<std::pair<uint64_t, std::string>> cpu;
+        std::unordered_map<long, uint64_t> s_cpu_now;
+        if (DIR* dir = opendir("/proc/self/task")) {
+          while (const dirent* ent = readdir(dir)) {
+            if (ent->d_name[0] == '.') continue;
+            const long tid = std::strtol(ent->d_name, nullptr, 10);
+            char chemin[96];
+            std::snprintf(chemin, sizeof chemin, "/proc/self/task/%ld/stat", tid);
+            if (FILE* f = std::fopen(chemin, "r")) {
+              char ligne[512];
+              if (std::fgets(ligne, sizeof ligne, f)) {
+                const char* p = std::strrchr(ligne, ')');  // le nom peut contenir des espaces
+                // champs 14 (utime) et 15 (stime), après le nom entre parenthèses
+                if (p) {
+                  unsigned long ut = 0, st = 0;
+                  char etat2 = 0;
+                  int f3, f4, f5, f6, f7;
+                  unsigned long f8, f9, f10, f11, f12;
+                  std::sscanf(p + 2, "%c %d %d %d %d %d %lu %lu %lu %lu %lu %lu %lu", &etat2, &f3, &f4, &f5, &f6, &f7, &f8,
+                              &f9, &f10, &f11, &f12, &ut, &st);
+                  s_cpu_now[tid] = ut + st;
+                }
+              }
+              std::fclose(f);
+            }
+          }
+          closedir(dir);
+        }
+        for (const auto& kv : s_cpu_now) {
+          const uint64_t d = kv.second - (s_cpu_prec.count(kv.first) ? s_cpu_prec[kv.first] : 0);
+          char nomf[64] = "?";
+          char chemin[96];
+          std::snprintf(chemin, sizeof chemin, "/proc/self/task/%ld/comm", kv.first);
+          if (FILE* f = std::fopen(chemin, "r")) {
+            if (std::fgets(nomf, sizeof nomf, f)) nomf[std::strcspn(nomf, "\n")] = 0;
+            std::fclose(f);
+          }
+          cpu.emplace_back(d, std::string(nomf) + "#" + std::to_string(kv.first));
+        }
+        s_cpu_prec = s_cpu_now;
+        std::sort(cpu.rbegin(), cpu.rend());
+        for (size_t i = 0; i < cpu.size() && i < 4; ++i)
+          std::fprintf(stderr, "[ngpu-diag] cpu_fil=%s %llu ticks (1 tick = 10 ms, fenêtre)\n", cpu[i].second.c_str(),
+                       static_cast<unsigned long long>(cpu[i].first));
       }
       s_compte.clear();
     }
