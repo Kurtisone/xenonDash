@@ -1,7 +1,7 @@
 # Reprise du projet par une autre session ou un autre modèle
 
 Ce document permet de reprendre le travail sans l'historique de conversation. Dernière mise à jour :
-2026-11-24. **État bref** : boot propre, hub NXE navigable au clavier, Game Library stable, boîtes système
+2026-11-24. **État bref** : boot propre, hub Kinect navigable au clavier, Game Library stable, boîtes système
 rendues, disque complètement supprimé, une seule AppImage `XenonDash-Kinect.AppImage`. Le Guide s'ouvre avec ses
 onglets (banc). Création de profil, connexion par Sign In sans code d'accès et gamertag sur le XMB fonctionnent
 (banc). **Avatar du hub** : le profil choisit un avatar prédéfini, et l'avatar s'affiche en couleur sur le XMB
@@ -92,6 +92,12 @@ Voir [compilation.md](compilation.md) : SDK, conteneur, build de test, AppImage.
   désactive). Voir `docs/technique.md` (puce « Glyphe Gamerscore », section 13604).
 - Le fork du SDK est le sous-module `third_party/xenondash-sdk` (branche `unified`) ; après
   modification : reconstruire, réinstaller dans `sdk/`, commiter le sous-module PUIS le dépôt.
+- **Stubs du SDK qui n'écrivent pas leurs sorties** : `REX_EXPORT_STUB` laisse r3 inchangé (souvent le pointeur de
+  sortie, donc « succès » pour l'appelant) et n'écrit rien : l'appelant lit des résidus de pile invitée, et tout
+  changement de pile (fibres, ordre des appels) change l'écran. Cas résolu le 2026-11-25 : liste des résolutions des
+  Paramètres vide (`HalGetCurrentAVPack`, `VdGetDisplayDiscoveryData`, `VdQueryRealVideoMode`, voir
+  `dashboards/2.0.13604.0-xam/src/kernel_video_output.cpp`). Devant un écran qui varie d'un build à l'autre,
+  chercher d'abord les `STUB` du journal sur le chemin.
 - Les instrumentations dans le code GÉNÉRÉ (`dashboards/*/generated/**`) sont non versionnées et
   perdues à la régénération — y mettre des sondes temporaires seulement ; le correctif durable va
   dans `common/src`, `native_gpu` ou le SDK.
@@ -101,6 +107,9 @@ Voir [compilation.md](compilation.md) : SDK, conteneur, build de test, AppImage.
 - **Profil** (palier N4) : création de profil, connexion par Sign In sans code d'accès, et gamertag sur le XMB fonctionnent au banc. Profil local hors ligne, aucune clé de console.
 - **Guide** : s'ouvre avec ses onglets (banc, 2026-11-24). Chaîne d'ouverture et mesures : [xam_etat.md](xam_etat.md).
 - **Imports à risque** : `XeKeysVerifyRSASignature` (TRUE en dur, accepté), `XexLoadExecutable` (nom lu vide : ne pas le faire échouer avant de corriger la lecture). Détail : [xam_etat.md](xam_etat.md).
+- **Fibres de XAM** (`src_xam_patch/xam_fiber_switch.cpp`) : `sub_819BF2E0` bascule vraiment de pile hôte (fibre
+  ucontext, pile mmap gardée). Sans ce correctif, un fil tourne à 99 % d'un cœur dès le démarrage ; avec, aucun fil
+  invité au-dessus de 28 % (banc, 2026-11-25). `DASH_XAM_FIBER_FIX=0` le désactive (comparaison).
 - **Correctifs récents** : liste complète dans [xam_etat.md](xam_etat.md) et dans le journal git.
 
 ## Avatar
