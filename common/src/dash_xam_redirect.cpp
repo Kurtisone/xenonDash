@@ -126,6 +126,19 @@ void Dispatch(Slot& s, PPCContext& ctx, uint8_t* base) {
     if (hud || wait_release.load()) {
       if (is_key) {
         if (hud) {
+          // La file de frappes du HLE (pilote clavier du SDK, jusqu'à 256 frappes) est vidée et jetée : XAM lit ses touches par
+          // xinputd, pas par cette file. Laissées en attente, les frappes faites dans le Guide étaient livrées au Dashboard à sa
+          // fermeture, dès que la première frappe relâchée levait l'attente : le A qui connecte le profil ouvrait ensuite la tuile
+          // sélectionnée (System Settings, Getting Started ; mesure du 2026-11-25).
+          const uint64_t user = ctx.r3.u64, flags = ctx.r4.u64, out = ctx.r5.u64;
+          for (int i = 0; i < 256; ++i) {
+            ctx.r3.u64 = user;
+            ctx.r4.u64 = flags;
+            ctx.r5.u64 = out;
+            DispatchImpl(s, ctx, base);
+            if (ctx.r3.u32 != 0) break;  // ERROR_EMPTY (ou manette absente) : file vide
+          }
+          if (out) std::memset(base + uint32_t(out), 0, 8);  // X_INPUT_KEYSTROKE : rien de lisible pour le Dashboard
           ctx.r3.u64 = 0x10D2;  // ERROR_EMPTY
           return;
         }
@@ -295,6 +308,20 @@ void DispatchImpl(Slot& s, PPCContext& ctx, uint8_t* base) {
   const uint64_t n = s.calls.fetch_add(1) + 1;
   if (n == 1 || n % 1000 == 0) {
     REXLOG_INFO("[xamredir] {} : appel {} par {}", s.name, n, fn ? "XAM recompilé" : "HLE");
+  }
+  // Connexion/déconnexion demandée par le Dashboard (XamUserLogon(XUID[4], drapeaux, overlapped)) : chaque appel, avec l'appelant et
+  // les XUID (tous nuls = déconnexion de tous). Rare ; sert à remonter au chemin du hub qui déconnecte un profil.
+  if (std::string_view(s.name) == "XamUserLogon" || std::string_view(s.name) == "XamUserLogonEx") {
+    const uint32_t xuids = ctx.r3.u32;
+    std::string list;
+    char b[24];
+    for (uint32_t i = 0; xuids && i < 4; ++i) {
+      std::snprintf(b, sizeof b, "%s%016llX", i ? " " : "",
+                    (unsigned long long)__builtin_bswap64(*reinterpret_cast<const uint64_t*>(base + xuids + 8 * i)));
+      list += b;
+    }
+    REXLOG_INFO("[xamredir] {}([{}], drapeaux {:08X}, overlapped {:08X}) lr={:08X}", s.name, list, ctx.r4.u32, ctx.r5.u32,
+                static_cast<uint32_t>(ctx.lr));
   }
   if (fn) {
     fn(ctx, base);
@@ -1165,6 +1192,14 @@ REX_HOOK_RAW(__imp__XamIsUIActive) {
 // a le bit 0x2 et si XamPackageManagerGetFileSize (HLE, 0) trouve l'éditeur.
 REX_HOOK_RAW(__imp__XamLaunchAvatarEditor) {
   static dash::xamredir::ModuleImport imp{"XamLaunchAvatarEditor", 2011};
+  dash::xamredir::CallModuleImport(imp, ctx, base);
+}
+// XamIsIptvEnabled (ordinal 1301) : export réel de XAM recompilé (0x818B86E0, bit 0x1000 de RETAIL_FLAGS 3/0x000C lu par
+// ExGetXConfigSetting), repli sur le HLE du SDK (même règle) sans XAM recompilé. Condition EcoMediaroomEnabled de dash.xex
+// (sub_922FA490, cas 7) : le stub du SDK n'écrivait pas r3 (resté = adresse de l'objet condition, lue comme un succès) et My Xbox
+// montrait un emplacement Mediaroom vide (mesure du 2026-11-26).
+REX_HOOK_RAW(__imp__XamIsIptvEnabled) {
+  static dash::xamredir::ModuleImport imp{"XamIsIptvEnabled", 1301};
   dash::xamredir::CallModuleImport(imp, ctx, base);
 }
 // XamPackageManagerGetExperienceMode (ordinal 1606) de dash.xex : export réel de XAM recompilé (sub_818BC250) au lieu du HLE du SDK
