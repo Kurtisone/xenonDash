@@ -1,5 +1,5 @@
 #!/bin/sh
-# Test de bout en bout de l'AppImage native 2.0.13604.0 (docs/ngpu_core.md, §8 et « Génération à l'import ») :
+# Test de bout en bout de l'AppImage native 2.0.13604.0 (docs/ngpu_core.md, « Shaders » et « Build, test, diagnostic ») :
 #   1. reconstruction de l'AppImage (tools/make_appimage.sh 2.0.13604.0-xam) ;
 #   2. HOME et TMPDIR de test sous E2E_DIR (défaut : $TMPDIR/xenondash-e2e-natif) ; aucune variable DASH_NGPU_SHADERS / DASH_HUD_SHADERS ;
 #   3. premier lancement : import de firmware/2.0.13604.0 (+ modules XeBuilds, xam 17559 pour shrdres) puis Dashboard sous Xvfb + lavapipe ;
@@ -12,7 +12,7 @@ ulimit -c 0
 V=2.0.13604.0-xam; FW=2.0.13604.0; XB=xebuild-6770; T=${1:-90}; DN=${2:-92}
 R=$(cd "$(dirname "$0")/../.." && pwd)
 W=${E2E_DIR:-${TMPDIR:-/tmp}/xenondash-e2e-natif}
-AI=$R/out/appimage/XenonDash-$V-x86_64.AppImage
+AI=$R/out/appimage/XenonDash-Kinect.AppImage  # nom unique produit par tools/make_appimage.sh
 H=$W/home; FB=$W/fb; P=$W/preuves
 rm -rf "$H" "$FB" "$P"; mkdir -p "$H/tmp" "$FB" "$P"
 LOG=$W/e2e.log

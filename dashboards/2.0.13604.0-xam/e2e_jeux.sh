@@ -1,6 +1,6 @@
 #!/bin/sh
 # Test de bout en bout du Dashboard Kinect 13604 en AppImage : dossier de jeux -> Game Library -> A -> recompilation avec
-# progression -> jeu natif -> retour au Dashboard (docs/nxe_jeux.md). Xvfb + lavapipe, HOME temporaire, import du firmware.
+# progression -> jeu natif -> retour au Dashboard (docs/jeux.md). Xvfb + lavapipe, HOME temporaire, import du firmware.
 #
 # usage : E2E_GAME=<dossier ou ISO du jeu> [E2E_OUT=<captures>] [E2E_HOME=<HOME de test>] [E2E_DISPLAY=94] \
 #         [E2E_CACHE_FROM=<cache xenondash/games à copier : test rapide sans recompilation>] [E2E_CORES=0-5] \
@@ -11,7 +11,7 @@ set -u
 XB=${1:-xebuild-6770}
 R=$(cd "$(dirname "$0")/../.." && pwd)
 V=2.0.13604.0-xam; FW=2.0.13604.0  # variante (AppImage, dossier de données) ; dossier du firmware importé
-AI=$R/out/appimage/XenonDash-$V-x86_64.AppImage
+AI=$R/out/appimage/XenonDash-Kinect.AppImage  # nom unique produit par tools/make_appimage.sh
 GAME=${E2E_GAME:?E2E_GAME=<dossier du jeu>}
 OUT=${E2E_OUT:-$R/work/e2e-$V}; mkdir -p "$OUT"
 H=${E2E_HOME:-$R/work/e2e-home}; rm -rf "$H"; mkdir -p "$H/tmp" "$H/XenonDash/Games"
