@@ -746,7 +746,8 @@ Sous Xvfb, RADV ne peut pas présenter (pas de DRI3) : utiliser lavapipe :
   déchiffre ni avec la clé retail ni avec la clé devkit, mais avec la clé XEX1 (`tools/xex_rekey.py`).
 - Une exception C++ dans le Dashboard reste fatale (`RtlUnwind` non implémenté côté SDK, retour de
   *funclet* `catch` non géré) ; vue une fois, causée par le stub de `XamIsSystemTitleId`.
-- Stubs : `XamGetLanguage`, `XGetAudioFlags`, `HalGetCurrentAVPack`, `XamSetDashContext`, messages XMP.
+- Stubs : `XamGetLanguage`, `XGetAudioFlags`, `HalGetCurrentAVPack`, `XamSetDashContext`, messages XMP du HLE (ceux des
+  jeux seulement ; dans la variante `-xam`, les messages XMP du Dashboard vont à XAM recompilé).
 
 ## Licence
 

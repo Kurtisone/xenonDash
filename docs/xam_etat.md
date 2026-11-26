@@ -40,6 +40,13 @@ en +4) → chargeur `sub_8189BE20` (case 20) → ouvreur `sub_818A21B0`.
   présente, `[swap] lr=0x9218ED74`) et sur quoi le compositeur base la bascule.
 
 ## Correctifs récents (une ligne chacun, détail dans le journal git et `docs/xam_13604_compilation.md`)
+- **Messages XMP du Dashboard** (2026-11-26, `common/src/dash_xam_redirect.cpp`) : `XMsgInProcessCall`,
+  `XMsgSystemProcessCall`, `XMsgStartIORequest(Ex)` vers l'application 0xFA (lecteur multimédia) vont à XAM recompilé, dont
+  l'application XMP est enregistrée (table de `sub_81893EE0`, 0x81C06F78 - 0xB8 * id) et initialisée (objet en 0x81C07688) ;
+  les autres applications restent au HLE, et l'annulation d'une requête confiée à XAM part chez XAM. La Video Library
+  (`EcNavToVideoLibrary`, scène `MediaSourceSelection.xur` de `dashcommon.xzp`) envoie 0x0007002B pendant le chargement de
+  sa scène : le HLE (`xmp_app.cpp`, messages des jeux seulement) rendait X_E_FAIL, la scène échouait (0x8007065B) et le
+  Dashboard revenait au canal Welcome. `DASH_XMP_HLE=1` rend XMP au HLE (comparaison).
 - **`XamIsIptvEnabled`** (2026-11-26, SDK `67c029d4`, `common/src/dash_xam_redirect.cpp`) : export 1301 de XAM recompilé
   (RETAIL_FLAGS & 0x1000), repli HLE de même règle. Le stub laissait r3 (= `this`) et la condition `EcoMediaroomEnabled` du
   Dashboard ajoutait un emplacement Mediaroom vide dans My Xbox, entre Windows Media Center et Family Settings.

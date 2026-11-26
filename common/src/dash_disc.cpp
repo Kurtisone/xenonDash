@@ -30,9 +30,6 @@
 #include "dash_launch.h"
 
 namespace rex::kernel::xam {
-struct XMSGSTARTIOREQUEST_UNKNOWNARG;
-uint32_t xeXMsgStartIORequestEx(uint32_t app, uint32_t message, uint32_t overlapped_ptr, uint32_t buffer_ptr,
-                                uint32_t buffer_length, XMSGSTARTIOREQUEST_UNKNOWNARG* unknown);
 uint32_t xeXamNotifyCreateListener(uint64_t mask, uint32_t is_system, uint32_t max_version);
 }
 
@@ -124,11 +121,5 @@ REX_HOOK_RAW(__imp__XamNotifyCreateListener) {
   if ((mask & 0x23) == 0x23) dash::disc::ScheduleMediaNotification();
 }
 
-// XMsgStartIORequest(app, message, overlapped, buffer, longueur) et Ex (+ argument inconnu) : délégation au SDK.
-// (L'ancienne réponse « nom + icône du disque » de l'application 0xFB a disparu avec la simulation.)
-static void XMsgHook(PPCContext& ctx, uint8_t* base) {
-  uint32_t app = ctx.r3.u32, msg = ctx.r4.u32, ov = ctx.r5.u32, buf = ctx.r6.u32, len = ctx.r7.u32;
-  ctx.r3.u64 = rex::kernel::xam::xeXMsgStartIORequestEx(app, msg, ov, buf, len, nullptr);
-}
-REX_HOOK_RAW(__imp__XMsgStartIORequest) { XMsgHook(ctx, base); }
-REX_HOOK_RAW(__imp__XMsgStartIORequestEx) { XMsgHook(ctx, base); }
+// XMsgStartIORequest(Ex) : routés par dash_xam_redirect.cpp (XMP vers XAM recompilé, le reste au HLE du SDK). L'ancienne
+// réponse « nom + icône du disque » de l'application 0xFB a disparu avec la simulation de disque.

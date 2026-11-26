@@ -1158,7 +1158,96 @@ DASH_XAM_REDIRECT_HOOK(XamLoaderGetLaunchData)
 DASH_XAM_REDIRECT_HOOK(XamLoaderTerminateTitle)
 DASH_XAM_REDIRECT_HOOK(XamLoaderGetDvdTrayState)
 DASH_XAM_REDIRECT_HOOK(XamTaskCloseHandle)
-DASH_XAM_REDIRECT_HOOK(XMsgCancelIORequest)
+// ---- Lecteur multimédia de XAM (application 0xFA, XMP) ----
+// Les messages XMsg du Dashboard destinés à XMP vont à XAM recompilé : son application XMP est enregistrée (table des
+// applications de XAM, 0x81C06F78 - 0xB8 * id) et initialisée (objet du lecteur en 0x81C07688), alors que le HLE du SDK
+// (xmp_app.cpp, repris de Xenia) ne connaît que les messages des jeux. Mesure du 2026-11-26 : la Video Library
+// (EcNavToVideoLibrary, scène MediaSourceSelection.xur) envoie 0x0007002B pendant le chargement de sa scène ; le HLE rendait
+// X_E_FAIL, la scène échouait (0x8007065B) et le Dashboard revenait au canal Welcome. Les autres applications (0xFB, 0xFC,
+// 0xFE) restent au HLE. Une requête asynchrone confiée à XAM s'annule chez XAM : le HLE d'XMsgCancelIORequest n'annule rien
+// (il attend l'événement, que XAM ne signalerait peut-être jamais). Sans XAM recompilé, CallModuleImport se replie sur le
+// HLE. DASH_XMP_HLE=1 : XMP au HLE (comparaison).
+namespace {
+constexpr uint32_t kAppXmp = 0xFA;
+std::mutex g_xmp_mutex;
+std::vector<uint32_t> g_xmp_requests;  // XOVERLAPPED des requêtes asynchrones confiées à XAM
+
+bool XmpToXam(uint32_t app) {
+  static const bool hle = std::getenv("DASH_XMP_HLE") != nullptr;
+  return app == kAppXmp && !hle;
+}
+
+// Mémorise (xam = true) ou oublie la requête asynchrone de ce XOVERLAPPED : une adresse réutilisée pour une requête du HLE
+// ne doit plus être annulée chez XAM. La voie est relevée après l'appel (imp.guest) : avant le chargement de XAM recompilé,
+// CallModuleImport sert la requête par le HLE, et son annulation doit alors rester au HLE.
+void NoteXmpRequest(uint32_t overlapped, bool xam) {
+  if (!overlapped) return;
+  std::lock_guard lock(g_xmp_mutex);
+  auto it = std::find(g_xmp_requests.begin(), g_xmp_requests.end(), overlapped);
+  if (xam && it == g_xmp_requests.end()) g_xmp_requests.push_back(overlapped);
+  if (!xam && it != g_xmp_requests.end()) g_xmp_requests.erase(it);
+}
+
+bool TakeXmpRequest(uint32_t overlapped) {
+  std::lock_guard lock(g_xmp_mutex);
+  auto it = std::find(g_xmp_requests.begin(), g_xmp_requests.end(), overlapped);
+  if (it == g_xmp_requests.end()) return false;
+  g_xmp_requests.erase(it);
+  return true;
+}
+
+// Journal : les 16 premiers messages XMP, puis chaque message en échec une fois.
+void LogXmp(const char* fn, uint32_t message, uint32_t result, bool xam) {
+  static std::atomic<int> n{0};
+  static std::mutex m;
+  static std::vector<uint32_t> failed;
+  bool log = n.fetch_add(1) < 16;
+  if (!log && int32_t(result) < 0) {
+    std::lock_guard lock(m);
+    if (std::find(failed.begin(), failed.end(), message) == failed.end()) {
+      failed.push_back(message);
+      log = true;
+    }
+  }
+  if (log)
+    REXLOG_INFO("[xmp] {}(0xFA, 0x{:08X}) -> 0x{:08X} par {}", fn, message, result,
+                xam ? "XAM recompilé" : "HLE (XAM absent)");
+}
+}  // namespace
+
+#define DASH_XMP_XMSG_HOOK(fn, ordinal, overlapped_expr)                \
+  REX_HOOK_RAW(__imp__##fn) {                                           \
+    const uint32_t overlapped = (overlapped_expr), message = ctx.r4.u32; \
+    if (XmpToXam(ctx.r3.u32)) {                                         \
+      static dash::xamredir::ModuleImport imp{#fn, ordinal};            \
+      dash::xamredir::CallModuleImport(imp, ctx, base);                 \
+      NoteXmpRequest(overlapped, imp.guest.load());                     \
+      LogXmp(#fn, message, ctx.r3.u32, imp.guest.load());               \
+      return;                                                           \
+    }                                                                   \
+    NoteXmpRequest(overlapped, false);                                  \
+    static PPCFunc* const hle = dash::xamredir::FindHle("__imp__" #fn); \
+    if (hle) {                                                          \
+      hle(ctx, base);                                                   \
+    } else {                                                            \
+      ctx.r3.u64 = 0x80004005u;                                         \
+    }                                                                   \
+  }
+DASH_XMP_XMSG_HOOK(XMsgInProcessCall, 500, 0u)
+DASH_XMP_XMSG_HOOK(XMsgSystemProcessCall, 502, 0u)
+DASH_XMP_XMSG_HOOK(XMsgStartIORequest, 503, ctx.r5.u32)
+DASH_XMP_XMSG_HOOK(XMsgStartIORequestEx, 508, ctx.r5.u32)
+#undef DASH_XMP_XMSG_HOOK
+
+static dash::xamredir::Slot g_slot_XMsgCancelIORequest{"XMsgCancelIORequest"};
+REX_HOOK_RAW(__imp__XMsgCancelIORequest) {
+  if (TakeXmpRequest(ctx.r3.u32)) {  // requête confiée à XAM (XMP) : annulée chez XAM
+    static dash::xamredir::ModuleImport imp{"XMsgCancelIORequest", 504};
+    dash::xamredir::CallModuleImport(imp, ctx, base);
+    return;
+  }
+  dash::xamredir::Dispatch(g_slot_XMsgCancelIORequest, ctx, base);
+}
 DASH_XAM_REDIRECT_HOOK(XamUserGetXUID)
 DASH_XAM_REDIRECT_HOOK(XamUserLogon)
 DASH_XAM_REDIRECT_HOOK(XamUserLogonEx)  // ordinal 548 : appelée par dash.xex avant XamShowSigninUIp

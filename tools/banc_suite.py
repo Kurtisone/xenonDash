@@ -11,7 +11,9 @@ Points de contrôle (capture comparée à la référence) :
   myxbox         Up -> canal My Xbox (Open Tray, Sign In, Game Library...)
   gamelib        Right Right Return -> Game Library
   gamelib_back   Escape -> retour sur My Xbox
-  settings       Right x6, Return, Return -> Console Settings (réglage courant 1280 x 720, Widescreen, VGA)
+  videolib       Right Return -> Video Library, écran Select Source (scène MediaSourceSelection : messages XMP du Dashboard
+                 servis par XAM recompilé ; avant le 2026-11-26, retour au canal Welcome)
+  settings       Escape, Right x5, Return, Return -> Console Settings (réglage courant 1280 x 720, Widescreen, VGA)
   resolutions    Return Return -> Screen Resolution (640 x 480 à 1680 x 1050)
   guide          Escape x4, g -> Guide (Sign In (1 Profile), Create Profile...)
   signin         Down Return -> Sign In (profil de l'instantané, HDD)
@@ -59,7 +61,10 @@ STEPS = [
     (["Right", "Right"], 3, None),
     (["Return"], 8, "gamelib"),
     (["Escape"], 5, "gamelib_back"),
-    (["Right"] * 6, 3, None),  # Game Library -> System Settings (sans l'emplacement Mediaroom, masqué depuis le 2026-11-26)
+    (["Right"], 3, None),  # Game Library -> Video Library
+    (["Return"], 8, "videolib"),
+    (["Escape"], 5, None),  # retour sur My Xbox, Video Library choisie
+    (["Right"] * 5, 3, None),  # Video Library -> System Settings (sans l'emplacement Mediaroom, masqué depuis le 2026-11-26)
     (["Return"], 5, None),
     (["Return"], 5, "settings"),
     (["Return"], 5, None),
@@ -90,7 +95,7 @@ FLOOR_TOL = {"ecart_moyen": 0.3, "part_gt32": 0.0001, "zone_max": 1.0}
 # logo Xbox animé en bas à droite (pixels 1127-1168 x 610-651 changeants, écart jusqu'à 30), présent sur tous les écrans.
 CLOCK = (815, 172, 100, 26)
 LOGO = (1118, 600, 60, 60)
-MASKS = {cp: [LOGO] for cp in ("xmb", "myxbox", "gamelib", "gamelib_back", "settings", "resolutions")}
+MASKS = {cp: [LOGO] for cp in ("xmb", "myxbox", "gamelib", "gamelib_back", "videolib", "settings", "resolutions")}
 MASKS.update({cp: [LOGO, CLOCK] for cp in ("guide", "signin", "signed_in")})
 DEFAULT_GAMES = os.path.expanduser(os.environ.get("XENONDASH_GAMES_DIR", "~/XenonDash/Games"))
 

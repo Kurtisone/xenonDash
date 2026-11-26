@@ -68,8 +68,8 @@ Voir [compilation.md](compilation.md) : SDK, conteneur, build de test, AppImage.
   -nocursor` : sinon il apparaît ou non au centre des captures selon l'instant), arrêt par PID.
   `cpu` donne la charge par fil : écarter les fils `llvmpipe-*` (rendu logiciel de lavapipe).
 - `tools/banc_suite.py run` : suite de non-régression sur ce banc, verdict OK/KO (code de sortie 0/1), ~4 min. Un
-  parcours fixe (Welcome, My Xbox, Game Library aller-retour, Console Settings, Screen Resolution, Guide, Sign In, Guide
-  connecté) : captures comparées aux références, journal (aucun `*** STOP` ni `[fibre]`, découverte de l'affichage
+  parcours fixe (Welcome, My Xbox, Game Library aller-retour, Video Library (écran Select Source), Console Settings, Screen
+  Resolution, Guide, Sign In, Guide connecté) : captures comparées aux références, journal (aucun `*** STOP` ni `[fibre]`, découverte de l'affichage
   présente, aucune ligne `[error]` hors de la liste `ERROR_ALLOWED`, vide depuis le 2026-11-26 : une erreur est un défaut à
   corriger ou un cas normal à journaliser plus bas) et charge par fil une fois le Guide fermé. Le rendu lavapipe est presque déterministe (écart nul entre deux
   exécutions une fois masqués l'horloge du Guide et le logo Xbox animé) : les tolérances sont serrées et un texte changé
@@ -185,10 +185,12 @@ Voir [avatar_hub.md](avatar_hub.md) : chaîne de correctifs, état et réglage d
 4. **Écran de progression des jeux** : les boîtes XAM fonctionnent désormais — brancher la
    progression de construction (`dash_xam_hud_ui.cpp`, socle N5 déjà commité) dessus et vérifier à
    l'écran ; toasts et redirection des succès.
-5. **Video Library** : le lancement revient au hub. XAM (app 0xFE, message 0x0002B001) cherche le paquet par
-   `XamPackageManagerFindPackageContainingIndexedXEX`, en stub dans le SDK : gestionnaire de paquets à implémenter. Jusqu'au 2026-11-25,
-   la lancer après Getting Started déconnectait les profils et ouvrait la première configuration : cause corrigée (RMW de
-   RETAIL_FLAGS, voir [xam_etat.md](xam_etat.md)).
+5. **Bibliothèques média** : Video, Music et Picture Library ouvrent leur écran Select Source, et Downloaded Videos sa
+   bibliothèque (vide), depuis que les messages XMP du Dashboard vont à XAM recompilé (2026-11-26, voir
+   [xam_etat.md](xam_etat.md) ; point `videolib` de la suite). Le retour au hub venait du message XMP 0x0007002B, inconnu
+   du HLE du SDK, pas du gestionnaire de paquets : `XamPackageManagerFindPackageContainingIndexedXEX` (stub) n'est appelé
+   qu'une fois au démarrage, avant comme après la correction. Reste à voir : lecture d'un média (le banc n'en a aucun),
+   sources Computer (partage réseau), Portable Device et Current Disc (grisées sans périphérique).
 6. **Divers** : glyphe Gamerscore `U+E00A` (corrigé par `dash_font_patch.cpp`, voir `technique.md`) ; recompilateur générique pour XDK tardives
    (Trials Fusion : image noire, shaders hors `Set*Shader`) ; vrai lecteur optique exposé comme
    `\Device\CdRom0` (directive utilisateur) ; étirement 32:9 de l'AppImage (reporté à la demande de l'utilisateur).
