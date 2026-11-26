@@ -124,8 +124,8 @@ Voir [compilation.md](compilation.md) : SDK, conteneur, build de test, AppImage.
 - Glyphe `U+E00A` (Gamerscore) : présent dans `XenonSCLatin.xtt` (13604), absent de `XenonJKLatin` et
   `XenonCLatin` (6770). Résolu par `src/dash_font_patch.cpp` (police principale JKLatin → SCLatin ; `DASH_FONT_PATCH=0`
   désactive). Voir `docs/technique.md` (puce « Glyphe Gamerscore », section 13604).
-- Le fork du SDK est le sous-module `third_party/xenondash-sdk` (branche `dash-13604-recompilateur` pour 13604 ;
-  `unified` est plus ancienne) ; après modification : reconstruire, réinstaller dans `sdk/`, commiter le sous-module PUIS
+- Le fork du SDK est le sous-module `third_party/xenondash-sdk`, branche `main` (depuis le 2026-11-26, elle contient les
+  anciennes `dash-13604-recompilateur`, `unified` et `xenondash`) ; après modification : reconstruire, réinstaller dans `sdk/`, commiter le sous-module PUIS
   le dépôt. Le SDK installé est compilé dans le conteneur (clang 20 + libstdc++ 14 : étape SDK de
   `tools/container/in_container.sh`), le Dashboard sur l'hôte. Dans un worktree, `third_party/xenondash-sdk` peut être une
   simple copie sans git : `git init`, puis `git fetch` du commit épinglé ET des étiquettes `v*` depuis un dépôt du SDK qui

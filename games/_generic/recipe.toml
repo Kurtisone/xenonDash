@@ -8,7 +8,7 @@ name = "generic"
 generic = true
 
 [sdk]
-series = "unified"
+series = "main"             # branche du fork ReXGlue (information, non lue par les outils)
 
 [codegen]
 project = "xdgame"                   # les sources de la facade incluent generated/default/xdgame_init.h (via gen/xd_project.h)

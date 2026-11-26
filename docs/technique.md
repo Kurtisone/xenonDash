@@ -492,7 +492,7 @@ tools/recipe_build.py identify /chemin/vers/le/dossier/du/jeu     # TitleID, ver
 tools/recipe_build.py build    /chemin/vers/le/dossier/du/jeu     # construit le cache (~10 min) ; --force, --jobs N
 ```
 
-Prérequis : SDK installé dans `sdk/` (branche `unified`), `tools/build_xenosrecomp.sh` (XenosRecomp unifié), clang, cmake, ninja, python3 ; ≈ 40 Go libres conseillés
+Prérequis : SDK installé dans `sdk/` (branche `main` du fork, qui contient l'ancienne `unified`), `tools/build_xenosrecomp.sh` (XenosRecomp unifié), clang, cmake, ninja, python3 ; ≈ 40 Go libres conseillés
 (Skate : mesures dans docs/recettes.md). Le cache est `$XDG_DATA_HOME/xenondash/games/<TitleID>/<clé>/` (défaut `~/.local/share`) ; le jeu reste à sa place (référencé par chemin).
 Au premier lancement le Dashboard lance la construction (processus détaché, il reste utilisable, fenêtre de progression, journal `<cache>/build.log`) puis lance le jeu ; ensuite
 le binaire du cache est lancé directement (retour au Dashboard à la fin du jeu).

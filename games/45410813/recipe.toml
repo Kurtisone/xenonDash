@@ -6,7 +6,7 @@ title_id = "45410813"
 name = "Skate"
 
 [sdk]
-series = "unified"          # branche `unified` du fork ReXGlue (docs/fusion_ports.md section 8)
+series = "main"             # branche `main` du fork ReXGlue (contient l'ancienne `unified`, docs/fusion_ports.md section 8)
 
 # Verrou : hachage SHA-256 de l'image PE decodee (dechiffree, decompressee) du default.xex, verifie contre le XEX de l'utilisateur.
 # Hors de ces hachages : pas de recompilation (mode generique : P8, etape 6).
