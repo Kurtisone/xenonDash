@@ -61,8 +61,10 @@ Voir [compilation.md](compilation.md) : SDK, conteneur, build de test, AppImage.
   retirée du dossier** (des sessions entières ont été perdues sur des hypothèses non réfutées à temps).
 - Vérifier chaque résultat visuel par **capture regardée** (Xvfb + lavapipe), jamais par le seul
   journal. Écrans X dédiés par tâche (:92, :94, …) ; `ulimit -c 0` avant dash ; `XKEYS_HOLD=0.12`.
-- `tools/banc.py` : banc pas à pas (`start`, `keys`, `shot`, `wait`, `cpu`, `grep`, `stop`) qui lance la variante -xam
-  (ou une autre : `--build`, et `--unset DASH_XAM_MODULE --unset DASH_PROFILE_MODE` sans XAM recompilé) comme l'AppImage, sur une COPIE du dossier de données (profils de l'utilisateur intacts) et une COPIE de la
+- `tools/banc.py` : banc pas à pas (`start`, `keys`, `shot`, `wait`, `cpu`, `grep`, `stop`) qui lance le Dashboard Kinect
+  (`dashboards/2.0.13604.0-xam`, seule variante 13604 depuis le 2026-11-26 : XAM recompilé toujours actif) ou un autre
+  (`--build`, et `--unset DASH_XAM_MODULE --unset DASH_PROFILE_MODE` pour 6770 ou 17559, sans XAM recompilé) comme
+  l'AppImage, sur une COPIE du dossier de données (profils de l'utilisateur intacts) et une COPIE de la
   bibliothèque de jeux (`XENONDASH_LIBRARY_DIR` : sans elle, le scan du démarrage réécrit
   `~/.local/share/xenondash/library` avec le dossier de jeux du banc), écran dédié sans pointeur de souris (`Xvfb
   -nocursor` : sinon il apparaît ou non au centre des captures selon l'instant), arrêt par PID.

@@ -1,4 +1,5 @@
-# dash 2.0.13604.0 avec XAM 13604 recompilé (module ReXGlue, palier A) : projet de test, copie de 2.0.13604.0.
+# dash 2.0.13604.0 (Dashboard Kinect) avec XAM 13604 recompilé (modules ReXGlue) : seule variante 13604 depuis le 2026-11-26
+# (l'ancienne variante sans XAM, dont celle-ci était une copie, est supprimée ; ses overrides de dash.xex sont ici).
 #
 # Le boilerplate du SDK est dans generated/rexglue.cmake (écrit par `rexglue codegen`).
 
@@ -17,7 +18,7 @@ if(NOT XD_SKIP_GENERATED_CHECK)
     if(EXISTS ${_xd_stamp})
         file(READ ${CMAKE_CURRENT_SOURCE_DIR}/dash_manifest.toml _xd_man)
         string(REGEX MATCHALL "(^|\n)file_path = \"[^\"]+\"" _xd_fp "${_xd_man}")
-        set(_xd_rels dash_manifest.toml ../2.0.13604.0/dash_overrides.toml ../2.0.13604.0/overrides.toml)
+        set(_xd_rels dash_manifest.toml dash_overrides.toml overrides.toml)
         foreach(_m ${_xd_fp})
             string(REGEX REPLACE "^\n?file_path = \"([^\"]+)\"" "\\1" _r "${_m}")
             list(APPEND _xd_rels "${_r}")
@@ -143,7 +144,7 @@ endif()
 
 target_link_libraries(dash PRIVATE xenondash_common)
 
-# Rendu natif D3D (comme 2.0.13604.0) : Dashboard par native_gpu/front_profile.cpp, HUD de XAM par native_gpu/src/hud_front.cpp (palier N2).
+# Rendu natif D3D : Dashboard par native_gpu/front_profile.cpp, HUD de XAM par native_gpu/src/hud_front.cpp (palier N2).
 # Le rendu natif est le seul chemin (le repli présentateur SDK / ImGui a été retiré).
 set(NGPU_PROFILE 13604 CACHE STRING "Version du D3D invité (native_gpu/CMakeLists.txt)" FORCE)
 set(NGPU_HUD ON CACHE BOOL "Facade du HUD de XAM" FORCE)

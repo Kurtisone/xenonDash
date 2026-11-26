@@ -180,10 +180,10 @@ Corrections propres à cette version :
 État à l'écran (Xvfb + lavapipe, `DASH_ENV="MESA_VK_WSI_PRESENT_MODE=immediate VK_ICD_FILENAMES=…/lvp_icd.json"`,
 `XKEYS_HOLD=0.8`, `DASH_STEP=6` pour les transitions) : blade Welcome (Getting Started, Kinect, Family First), Xbox LIVE
 (« Join Xbox LIVE for Free », Game/Video Marketplace), My Xbox (Open Tray, Latest Games, Game Library, Video/Music Library),
-Game Library (Recent Games / Collections > All Games). Captures `dashboards/2.0.13604.0/runs/preuves/nxe_00..03_*.png`
+Game Library (Recent Games / Collections > All Games). Captures (variante supprimée le 2026-11-26) `dashboards/2.0.13604.0/runs/preuves/nxe_00..03_*.png`
 et `p6_2.0.13604.0.png` (AppImage).
 
-**AppImage** : `tools/make_appimage.sh 2.0.13604.0` (19 Mo) ; `TEST_DISPLAY=84 tools/test_appimage.sh 2.0.13604.0 xebuild-6770`
+**AppImage** : `tools/make_appimage.sh 2.0.13604.0-xam` (19 Mo pour l'ancienne variante) ; `TEST_DISPLAY=84 tools/test_appimage.sh 2.0.13604.0-xam xebuild-6770`
 (l'import prend le `$flash_xam.xex` de la mise à jour, polices de `xebuild-6770`) : Dashboard affiché, aucun `FATAL`.
 
 **Profil, Recent Games, jeux (phase P4b, fait)** :
@@ -202,7 +202,7 @@ et `p6_2.0.13604.0.png` (AppImage).
   `games.toml` (`disc = true`, simulation **supprimée depuis**) ; **Game Library > Recent Games** affiche « Skate, Xbox 360 Game, 70/1000 » (avec `library = true`) et les
   collections All Games / Full Games / Xbox 360 Games ; page du jeu (Gamerscore 70/1000, 5/44 succès et leurs images),
   **Achievements > View All** (écran natif du Dashboard) ; lancement de Skate (`--dash_launch=45410813`) puis retour au
-  Dashboard avec le profil intact (superviseur P5). Captures : `dashboards/2.0.13604.0/runs/preuves/profil_13604_*.png`.
+  Dashboard avec le profil intact (superviseur P5). Captures (variante supprimée le 2026-11-26) : `dashboards/2.0.13604.0/runs/preuves/profil_13604_*.png`.
 - *Non résolu* : le bouton « Play Game » de la page du jeu (et A sur le disque) n'appelle aucune fonction XAM journalisée
   (aucun `XamLoaderLaunchTitle*`/`XamContentLaunchImageInternal*`) : décision côté Lua du hub non identifiée ; utiliser F5
   ou `--dash_launch`. L'automatisation clavier sous lavapipe est instable (répétition de touches : une touche peut faire

@@ -33,7 +33,7 @@ Les quatre interfaces portent des noms d'usage communautaires ; les confondre fa
 | **Kinect** | **2.0.12611 – 2.0.13604** | Xbox 360 S et Kinect, tuiles, base du style Metro (2010–2011) |
 | Metro | 2.0.14699 – 2.0.17559 | Metro v1 puis v2 (2011–2019) |
 
-Dans ce dépôt, `dashboards/2.0.13604.0` porte donc le Dashboard **Kinect**. Aucune version NXE
+Dans ce dépôt, `dashboards/2.0.13604.0-xam` porte donc le Dashboard **Kinect** (seule variante depuis le 2026-11-26 ; l'ancienne `dashboards/2.0.13604.0`, sans XAM recompilé, est supprimée). Aucune version NXE
 proprement dite (7357–9199) n'est portée à ce jour ; le fichier `nxe_jeux.md` garde son nom
 (référencé dans le code) mais décrit bien la 13604.
 

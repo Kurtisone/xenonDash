@@ -68,7 +68,7 @@ de `FFFE07D1.gpd` (nom UTF-8 -> UTF-16, 0 succès, icône du scan servie par `Xa
 
 ## 4. AppImage autonome pour recompiler
 
-`tools/make_appimage.sh 2.0.13604.0` embarque, sous `usr/share/xenondash/` : outils Python (`tools/*.py`, `d3d_signatures/`, `templates/`, `xexinfo`), `games/` (recettes, sans `tests/`),
+`tools/make_appimage.sh 2.0.13604.0-xam` embarque, sous `usr/share/xenondash/` : outils Python (`tools/*.py`, `d3d_signatures/`, `templates/`, `xexinfo`), `games/` (recettes, sans `tests/`),
 `ngpu_core/`, `native_gpu/`, `patches/`, le SDK installé `sdk/` (rexglue, en-têtes, bibliothèques, cmake), XenosRecomp et `libdxcompiler.so`/`libdxil.so`. Les listes `TOOLS_DIRS` / `ROOT_DIRS` du script
 sont faites pour être étendues. `--no-build-tools` produit l'AppImage légère (sans recompilation de jeux).
 
@@ -82,7 +82,7 @@ Taille mesurée : **49,9 Mo** (AppImage complète, 142 Mo non compressés d'outi
 
 ## 5. Test de bout en bout
 
-`dashboards/2.0.13604.0/e2e_jeux.sh` (Xvfb `:94`, lavapipe, HOME temporaire, import du firmware, dossier de jeux avec un lien vers Skate, `taskset` 6 cœurs) : voir §6 pour les résultats.
+`dashboards/2.0.13604.0-xam/e2e_jeux.sh` (Xvfb `:94`, lavapipe, HOME temporaire, import du firmware, dossier de jeux avec un lien vers Skate, `taskset` 6 cœurs) : voir §6 pour les résultats.
 
 ## 6. Résultats mesurés et limites
 

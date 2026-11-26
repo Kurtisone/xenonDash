@@ -1,15 +1,15 @@
 #!/bin/sh
 # Test de bout en bout de l'AppImage native 2.0.13604.0 (docs/ngpu_core.md, §8 et « Génération à l'import ») :
-#   1. reconstruction de l'AppImage (tools/make_appimage.sh 2.0.13604.0) ;
+#   1. reconstruction de l'AppImage (tools/make_appimage.sh 2.0.13604.0-xam) ;
 #   2. HOME et TMPDIR de test sous E2E_DIR (défaut : $TMPDIR/xenondash-e2e-natif) ; aucune variable DASH_NGPU_SHADERS / DASH_HUD_SHADERS ;
 #   3. premier lancement : import de firmware/2.0.13604.0 (+ modules XeBuilds, xam 17559 pour shrdres) puis Dashboard sous Xvfb + lavapipe ;
 #   4. contrôles : aucune ligne « ERREUR SPIR-V » / « introuvable », aucun --gpu_plugin=xenos ; capture PNG ; durées ; tailles ; nombre de shaders.
 #   5. régénération seule (--regen-shaders), chronométrée.
-# usage: dashboards/2.0.13604.0/e2e_natif.sh [secondes_de_jeu] [numéro_d_affichage]   (défaut : 90 s, :92)
+# usage: dashboards/2.0.13604.0-xam/e2e_natif.sh [secondes_de_jeu] [numéro_d_affichage]   (défaut : 90 s, :92)
 # Ne tue que les processus lancés par ce script (par PID). Le dossier E2E_DIR n'est jamais le vrai ~/.local/share/xenondash.
 set -u
 ulimit -c 0
-V=2.0.13604.0; XB=xebuild-6770; T=${1:-90}; DN=${2:-92}
+V=2.0.13604.0-xam; FW=2.0.13604.0; XB=xebuild-6770; T=${1:-90}; DN=${2:-92}
 R=$(cd "$(dirname "$0")/../.." && pwd)
 W=${E2E_DIR:-${TMPDIR:-/tmp}/xenondash-e2e-natif}
 AI=$R/out/appimage/XenonDash-$V-x86_64.AppImage
@@ -34,7 +34,7 @@ sleep 1
 
 DATA=$H/.local/share/xenondash/$V
 t1=$(date +%s)
-"$AI" --import "$R/firmware/$V" --modules "$R/firmware/$XB" --shrdres-xam "$R/firmware/17559/\$flash_xam.xex" > "$W/run.out" 2>&1 & DP=$!
+"$AI" --import "$R/firmware/$FW" --modules "$R/firmware/$XB" --shrdres-xam "$R/firmware/17559/\$flash_xam.xex" > "$W/run.out" 2>&1 & DP=$!
 # Premier lancement : l'import se termine (ligne « import terminé » et génération des shaders), puis le Dashboard démarre
 i=0; while [ $i -lt 900 ] && kill -0 $DP 2>/dev/null && ! grep -q -E 'hud : .*shaders dans|ÉCHEC hud|non générés' "$W/run.out"; do sleep 2; i=$((i+2)); done
 log "import + génération des shaders : $(( $(date +%s) - t1 )) s"

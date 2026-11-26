@@ -11,8 +11,9 @@ Sous-commandes :
         [--library L] [--gdb [--gdb-pre P] [--gdb-x F]]
         démarre Xvfb puis dash, attend S secondes (60 par défaut), donne le focus à la fenêtre, capture <nom>_0.png ;
         la bibliothèque L (défaut ~/.local/share/xenondash/library) est copiée dans <dossier>/bibliotheque ; --unset
-        retire une variable de l'environnement de dash (variante sans XAM : --unset DASH_XAM_MODULE --unset
-        DASH_PROFILE_MODE, dont la seule présence active XAM recompilé) ; --gdb lance dash sous gdb, qui écrit dans
+        retire une variable de l'environnement de dash (Dashboards sans XAM recompilé, 6770 ou 17559 : --unset
+        DASH_XAM_MODULE --unset DASH_PROFILE_MODE, dont la seule présence active XAM recompilé ; le Dashboard Kinect,
+        variante unique, les remet lui-même) ; --gdb lance dash sous gdb, qui écrit dans
         out.log la pile du fil fautif, l'instruction et les registres de la faute quand un signal échappe au SDK
         (plantage sans autre trace), puis les commandes gdb du fichier F ; P est lu avant le lancement (points
         d'arrêt ou de surveillance)

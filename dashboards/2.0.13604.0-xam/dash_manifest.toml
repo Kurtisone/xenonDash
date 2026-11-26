@@ -6,8 +6,8 @@ game_root = "assets"
 [entrypoint]
 file_path = "assets/dash.xex"
 out_directory_path = "generated/dash"
-# Mêmes corrections que le Dashboard seul (projet 2.0.13604.0, non dupliquées)
-includes = ["../2.0.13604.0/dash_overrides.toml", "../2.0.13604.0/overrides.toml"]
+# Corrections du codegen de dash.xex (reprises de l'ancienne variante sans XAM, supprimée le 2026-11-26)
+includes = ["dash_overrides.toml", "overrides.toml"]
 
 # XAM 13604 recompilé comme module (DLL ReXGlue), chargé par le Dashboard en remplacement du XAM HLE (palier A)
 [[modules]]

@@ -30,8 +30,7 @@ def inputs_digest():
     dashboards/2.0.13604.0-xam/CMakeLists.txt : lignes « chemin:sha256 » triées, puis sha256 du texte."""
     man = open(MANIFEST, encoding="utf-8").read()
     rels = {"dash_manifest.toml"}
-    rels.update(f for f in os.listdir(P) if f.endswith("overrides.toml"))
-    rels.update(["../2.0.13604.0/dash_overrides.toml", "../2.0.13604.0/overrides.toml"])
+    rels.update(f for f in os.listdir(P) if f.endswith("overrides.toml"))  # dont dash_overrides.toml et overrides.toml
     rels.update(re.findall(r'(?m)^file_path = "([^"]+)"', man))
     lines = []
     for r in sorted(rels):

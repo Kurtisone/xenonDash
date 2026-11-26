@@ -4,13 +4,13 @@
 #
 # usage : E2E_GAME=<dossier ou ISO du jeu> [E2E_OUT=<captures>] [E2E_HOME=<HOME de test>] [E2E_DISPLAY=94] \
 #         [E2E_CACHE_FROM=<cache xenondash/games à copier : test rapide sans recompilation>] [E2E_CORES=0-5] \
-#         dashboards/2.0.13604.0/e2e_jeux.sh [xebuild-6770]
+#         dashboards/2.0.13604.0-xam/e2e_jeux.sh [xebuild-6770]
 # Le HOME de test doit être sur un disque (la construction de Skate demande 40 Go libres annoncés, ~0,6 Go réels : XD_MIN_DISK_GB
 # peut être abaissé). Ne touche ni ~/XenonDash ni ~/.local/share/xenondash.
 set -u
 XB=${1:-xebuild-6770}
 R=$(cd "$(dirname "$0")/../.." && pwd)
-V=2.0.13604.0
+V=2.0.13604.0-xam; FW=2.0.13604.0  # variante (AppImage, dossier de données) ; dossier du firmware importé
 AI=$R/out/appimage/XenonDash-$V-x86_64.AppImage
 GAME=${E2E_GAME:?E2E_GAME=<dossier du jeu>}
 OUT=${E2E_OUT:-$R/work/e2e-$V}; mkdir -p "$OUT"
@@ -35,7 +35,7 @@ export TMPDIR=$H/tmp HOME=$H XDG_DATA_HOME=$H/.local/share APPIMAGE_EXTRACT_AND_
        VK_ICD_FILENAMES=${VK_ICD_FILENAMES:-/usr/share/vulkan/icd.d/lvp_icd.json}
 unset XENONDASH_GAMES_DIR XDG_CONFIG_HOME
 log "lancement de l'AppImage (import du firmware au premier lancement)"
-taskset -c "$CORES" "$AI" --import "$R/firmware/$V" --modules "$R/firmware/$XB" --shrdres-xam "$R/firmware/17559/\$flash_xam.xex" \
+taskset -c "$CORES" "$AI" --import "$R/firmware/$FW" --modules "$R/firmware/$XB" --shrdres-xam "$R/firmware/17559/\$flash_xam.xex" \
   > "$OUT/appimage.out" 2>&1 & AP=$!
 wait_log() { # motif, délai max (s)
   t=0; until grep -a -q -E "$1" "$LOG" 2>/dev/null || [ $t -ge "$2" ]; do sleep 2; t=$((t+2)); kill -0 $AP 2>/dev/null || break; done

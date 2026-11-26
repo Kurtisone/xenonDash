@@ -152,7 +152,7 @@ tools/port_dashboard.sh firmware/2.0.6770.0 2.0.6770.0 --stages build,smoke     
 
 ## 8. Dashboard Kinect 2.0.13604 (palier N1, 2026-11-13) : rendu natif sans plugin `xenos`
 
-`-DDASH_NATIVE_GPU=ON` sur `dashboards/2.0.13604.0` : aucun plugin GPU, aucun lecteur de tampon de commandes ; le plugin `xenos` ne sert plus que d'**oracle**
+`-DDASH_NATIVE_GPU=ON` sur `dashboards/2.0.13604.0-xam` : aucun plugin GPU, aucun lecteur de tampon de commandes ; le plugin `xenos` ne sert plus que d'**oracle**
 (`DASH_NGPU_DISABLE=1 --gpu_plugin=xenos` dans un build natif, ou un build `-DDASH_NATIVE_GPU=OFF`). **Option ON par défaut** depuis l'AppImage native (§8.7) ;
 `-DDASH_NATIVE_GPU=OFF` n'inclut pas `native_gpu`.
 La variante `-xam` n'est pas touchée (ses fichiers non plus : `common/` n'est pas modifié par ce palier).
@@ -239,10 +239,10 @@ Navigation hors hub (Xbox LIVE : boîte de dialogue « temporarily unavailable �
 ```
 tools/build_xenosrecomp.sh
 python3 -I tools/dash_shaders.py extract <dash13604.pe> work/bins13604 && python3 -I tools/dash_shaders.py translate work/bins13604 work/shaders13604_keys
-cmake -S dashboards/2.0.13604.0 -B dashboards/2.0.13604.0/out/build/native -G Ninja -DCMAKE_BUILD_TYPE=RelWithDebInfo -DDASH_NATIVE_GPU=ON && cmake --build dashboards/2.0.13604.0/out/build/native -j6
-DASH_NGPU_SHADERS=work/shaders13604_keys dashboards/2.0.13604.0/out/build/native/dash --game_data_root=<assets>      # natif
+cmake -S dashboards/2.0.13604.0-xam -B dashboards/2.0.13604.0-xam/out/build/native -G Ninja -DCMAKE_BUILD_TYPE=RelWithDebInfo -DDASH_NATIVE_GPU=ON && cmake --build dashboards/2.0.13604.0-xam/out/build/native -j6
+DASH_NGPU_SHADERS=work/shaders13604_keys dashboards/2.0.13604.0-xam/out/build/native/dash --game_data_root=<assets>      # natif
 # sans DASH_NGPU_SHADERS : <game_data_root>/shaders/dash (produit à l'import, §8.7)
-python3 -I tools/d3d_match.py analyze dashboards/2.0.13604.0/assets/dash.xex | head                                      # supported: true
+python3 -I tools/d3d_match.py analyze dashboards/2.0.13604.0-xam/assets/dash.xex | head                                      # supported: true
 ```
 
 
@@ -262,7 +262,7 @@ Le HUD de XAM (boîtes de message, clavier, connexion) dessine avec la **copie d
 
 ### 8.7 AppImage native : shaders générés à l'import (2026-11-14)
 
-- **Build embarqué** : `tools/make_appimage.sh 2.0.13604.0` prend le build que le CMakeLists prévoit (option `DASH_NATIVE_GPU` ON : `out/build/native`), sans
+- **Build embarqué** : `tools/make_appimage.sh 2.0.13604.0-xam` prend le build que le CMakeLists prévoit (option `DASH_NATIVE_GPU` ON : `out/build/native`), sans
   `librexgpu-xenos.so` (le binaire natif n'en référence aucun). `usr/share/xenondash/gpu` vaut `native` et `AppRun` ne passe pas `--gpu_plugin=xenos`. Les AppImage
   2.0.6717.0 et 2.0.6770.0 restent émulées (`gpu` = `xenos`).
 - **Import** (`tools/appimage/xenondash_import.py --native-shaders`, lancé par `AppRun` pour un build natif) : après l'extraction STFS, deux parties.
@@ -275,7 +275,7 @@ Le HUD de XAM (boîtes de message, clavier, connexion) dessine avec la **copie d
 - **Repli au lancement** : `DASH_NGPU_SHADERS` / `DASH_HUD_SHADERS` restent prioritaires ; sinon `<game_data_root>/shaders/{dash,hud}` (fixé par `common/src/dash_app_base.cpp`).
   Dossier absent : **une** ligne `[ngpu] ERREUR shaders natifs du Dashboard introuvables dans … : lancer la régénération (XenonDash --regen-shaders)` (au lieu d'une ligne par
   shader) ; dossier présent mais incomplet : une ligne par shader absent.
-- **Mesures** (`dashboards/2.0.13604.0/e2e_natif.sh`, HOME de test, Xvfb + lavapipe, `firmware/2.0.13604.0` + `xebuild-6770` + 17559) :
+- **Mesures** (`dashboards/2.0.13604.0-xam/e2e_natif.sh`, mesures faites sur la variante supprimée le 2026-11-26, script déplacé et pas encore relancé sur -xam ; HOME de test, Xvfb + lavapipe, `firmware/2.0.13604.0` + `xebuild-6770` + 17559) :
   - import complet (extraction STFS comprise) et génération : **20 s** ; `--regen-shaders` seul : **18 s** ;
   - Dashboard : 258 conteneurs, 186 traduits (**175 fichiers `.spv`** distincts), 72 non traduits (64 plantages de XenosRecomp, 8 échecs dxc) ;
   - HUD : 34 conteneurs, **33** traduits (`.spv` + `.cont`), 1 échec (`817F9550_VS`, plantage XenosRecomp) ;

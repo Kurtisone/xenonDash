@@ -88,8 +88,8 @@ python3 tools/codegen_module.py work/xam13604proj <manifeste> xam work/xam13604.
   817E0000 81850000 383400 817E0400:8182DADC 81BE0000:81CBA840
 cp work/xam13604proj/xam_auto_overrides.toml work/xam13604proj/xam_overrides.toml dashboards/2.0.13604.0-xam/
 # 3. flash : xam.xex et lien dans assets/ du 13604 (fichiers Microsoft, ignorés par git)
-cp work/xam13604_rekey.xex dashboards/2.0.13604.0/assets/flash/xam.xex
-ln -s flash/xam.xex dashboards/2.0.13604.0/assets/xam.xex
+cp work/xam13604_rekey.xex dashboards/2.0.13604.0-xam/assets/flash/xam.xex
+ln -s flash/xam.xex dashboards/2.0.13604.0-xam/assets/xam.xex
 # 4. projet
 cd dashboards/2.0.13604.0-xam && ../../sdk/bin/rexglue codegen dash_manifest.toml
 python3 ../../tools/xam_unimpl_patch.py generated/xam   # crmove, crnot, vavguw (palier B)
@@ -109,9 +109,9 @@ du jeu) ; `game:\xam.xex` est lu depuis `assets/xam.xex`.
   xam_auto_overrides.toml, run_headless.sh, input_test.sh, src/), `common/src/dash_xam_runtime.{h,cpp}`,
   `tools/xam_unimpl_patch.py`, ce document.
 - Modifiés : `common/src/dash_app_base.cpp`, `common/src/kernel_stubs.cpp`, `common/CMakeLists.txt`.
-- Ignorés par git (assets Microsoft, build) : `dashboards/2.0.13604.0/assets/flash/xam.xex`, `dashboards/2.0.13604.0/assets/xam.xex`,
+- Ignorés par git (assets Microsoft, build) : `dashboards/2.0.13604.0-xam/assets/flash/xam.xex`, `dashboards/2.0.13604.0-xam/assets/xam.xex`,
   `work/xam13604*`, `work/xam13604proj/`.
-- Compilation vérifiée : `dashboards/2.0.13604.0` (HLE, rc=0 après les changements de `common/`) et `dashboards/2.0.13604.0-xam`.
+- Compilation vérifiée : `dashboards/2.0.13604.0-xam` (et, avant sa suppression le 2026-11-26, `dashboards/2.0.13604.0` en HLE, rc=0 après les changements de `common/`).
   Le 17559 et le 6770 n'ont pas été recompilés.
 
 ## Palier B : cause du hub noir et correctifs
@@ -214,7 +214,7 @@ Le recouvrement de la table de XAM avec dash.xex est corrigé. Le hub reste noir
 - `tests/unit/system/function_dispatcher_test.cpp` : 12/12 cas `[dispatcher]` (4 nouveaux : table relocalisée, défaut
   inchangé, recouvrements direct, par alias et hors tas refusés, alias déjà occupé). Suite complète : 212 cas sur 221 réussis ;
   les 5 échecs portent sur BitStream, le calendrier et Depfile (modules sans lien ; non vérifiés sur la base d'origine).
-- Compilés (rc 0) : `dashboards/2.0.13604.0-xam`, `dashboards/2.0.13604.0`, `dashboards/2.0.6770.0`.
+- Compilés (rc 0) : `dashboards/2.0.13604.0-xam`, `dashboards/2.0.13604.0` (variante supprimée le 2026-11-26), `dashboards/2.0.6770.0`.
 
 ### Résultat (`DASH_XAM_MODULE=2`, environnement de référence : `VK_ICD_FILENAMES` lavapipe, `HOME` et `XDG_DATA_HOME` de test)
 

@@ -933,7 +933,7 @@ La piste 1 est la plus directe : c'est de l'instrumentation, pas de la devinette
 - **Fautes / FATAL / fichiers manquants** : 0 / 0 / 0.
 - **Tables de dispatch** : 4 sur 9.
 - **Affichage** : noir — le Dashboard cesse de progresser après l'initialisation de XAM.
-- **Version 2.0.13604 sans XAM** : intacte, compile et fonctionne (vérifié `RC=0`).
+- **Version 2.0.13604 sans XAM** : intacte, compile et fonctionne (vérifié `RC=0`). (variante supprimée le 2026-11-26)
 
 ## Mesure du 2026-11-20 : la boucle de rendu du Dashboard existe et itère
 
