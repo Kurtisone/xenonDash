@@ -46,6 +46,14 @@ Voir [compilation.md](compilation.md) : SDK, conteneur, build de test, AppImage.
 - Avant de coder : établir la cause avec preuves (gdb en batch, watchpoints sur les alias mémoire,
   journaux avec `--log_flush_interval=1`, traces par `REX_HOOK_RAW`). Le code PowerPC se lit avec
   `tools/ppc_dis.py` ; les fonctions D3D se retrouvent par motif avec `tools/d3d_match.py`.
+- **Point d'arrêt matériel en écriture, dans le processus** (qui a écrit cette valeur ?) : `perf_event_open` avec
+  `PERF_TYPE_BREAKPOINT`, `HW_BREAKPOINT_W`, `bp_addr` = adresse HÔTE (base invitée + adresse), `sigtrap = 1`,
+  `remove_on_exec = 1`, `inherit = 1`, `inherit_thread = 1`, ouvert sur CHAQUE fil de `/proc/self/task` ; le gestionnaire de
+  SIGTRAP ne traite que `si_code == TRAP_PERF` (`backtrace_symbols_fd` : les `sub_…` du code généré sont des symboles
+  dynamiques) et chaîne les autres SIGTRAP au gestionnaire précédent. Marche avec `ptrace_scope = 1` et
+  `perf_event_paranoid = 2`, sous le banc, sans gdb ; pile dans `out.log`. Code temporaire dans
+  `dashboards/<variante>/src/` (pris par GLOB), à retirer ensuite. A trouvé en une exécution l'écriture de
+  `XamLoaderGetDvdTrayState` (prototype faux du SDK) dans une vtable du Dashboard (2026-11-26).
 - **Ghidra** : `tools/ghidra/xd_ghidra.py decompile xam <fonction>` donne le C décompilé d'une fonction de XAM ou de
   dash.xex avec les noms partagés de `symbols/2.0.13604.0/` (voir [ghidra.md](ghidra.md)) ; y consigner tout nom établi.
   `tools/function_inventory.py` affiche les mêmes noms.
@@ -62,7 +70,8 @@ Voir [compilation.md](compilation.md) : SDK, conteneur, build de test, AppImage.
 - `tools/banc_suite.py run` : suite de non-régression sur ce banc, verdict OK/KO (code de sortie 0/1), ~4 min. Un
   parcours fixe (Welcome, My Xbox, Game Library aller-retour, Console Settings, Screen Resolution, Guide, Sign In, Guide
   connecté) : captures comparées aux références, journal (aucun `*** STOP` ni `[fibre]`, découverte de l'affichage
-  présente) et charge par fil une fois le Guide fermé. Le rendu lavapipe est presque déterministe (écart nul entre deux
+  présente, aucune ligne `[error]` hors de la liste `ERROR_ALLOWED`, vide depuis le 2026-11-26 : une erreur est un défaut à
+  corriger ou un cas normal à journaliser plus bas) et charge par fil une fois le Guide fermé. Le rendu lavapipe est presque déterministe (écart nul entre deux
   exécutions une fois masqués l'horloge du Guide et le logo Xbox animé) : les tolérances sont serrées et un texte changé
   fait échouer le point. Vérifié en provoquant les deux régressions connues : `--env DASH_VIDEO_DISCOVERY=0` (KO
   Console Settings et Screen Resolution, découverte absente du journal), `--env DASH_XAM_FIBER_FIX=0` (KO charge, un
@@ -88,6 +97,10 @@ Voir [compilation.md](compilation.md) : SDK, conteneur, build de test, AppImage.
   `sdk/lib/` (installation depuis le worktree, 2026-11-24). Ne pas réutiliser une copie hors de ce dossier.
 - **Journal du Guide** : `DASH_GUIDE_TRACE=1` active le diagnostic de l'ouverture du Guide (13 lignes par ouverture,
   absentes par défaut).
+- **Journal de la connexion** : `DASH_LOGON_TRACE=1` suit la tâche de connexion de XAM (`sub_818B2BF8`, XamUserLogonEx) et ses
+  étapes (`src_xam_patch/xam_hud_trace.cpp`) ; chaque `XamUserLogon(Ex)` du Dashboard est journalisé par défaut avec ses XUID
+  et son appelant (`[xamredir]`, XUID tous nuls = déconnexion de tous). `DASH_HUD_RESOLVES=1` : chaque forme de Resolve du HUD
+  une fois (destination, pas, rectangle), pour voir quelles surfaces XAM compose.
 - Tas invités 0x8… et 0x9… : deux vues du même fichier (alias) ; le SDK sépare les tas par défaut
   (`REX_ALIAS_XEX_HEAPS=1` rétablit l'ancien mode). Table de fonctions d'un module : une
   `function_table_base` par module, sans recouvrement en adresses PHYSIQUES.
@@ -123,7 +136,15 @@ Voir [compilation.md](compilation.md) : SDK, conteneur, build de test, AppImage.
   changement de pile (fibres, ordre des appels) change l'écran. Cas résolu le 2026-11-25 : liste des résolutions des
   Paramètres vide (`HalGetCurrentAVPack`, `VdGetDisplayDiscoveryData`, `VdQueryRealVideoMode`, voir
   `dashboards/2.0.13604.0-xam/src/kernel_video_output.cpp`). Devant un écran qui varie d'un build à l'autre,
-  chercher d'abord les `STUB` du journal sur le chemin.
+  chercher d'abord les `STUB` du journal sur le chemin. Même piège sans argument : le stub laisse dans r3 la valeur de
+  l'appelant (souvent `this`, inférieur à 0x80000000), lue comme un HRESULT de succès (`XamIsIptvEnabled` : emplacement
+  Mediaroom vide dans My Xbox, 2026-11-26). Un prototype FAUX est pire qu'un stub : `XamLoaderGetDvdTrayState` (sans
+  argument) écrivait à travers r3 dans l'objet de l'appelant (appel indirect nul plus tard, loin de la cause).
+- **Fuseau horaire** : XConfig 3/1..7 vient du fuseau de l'hôte (`TZ` ou `/etc/localtime`, `common/src/host_timezone.h`),
+  rapproché de la table des fuseaux du Dashboard (`dash_timezone_table.cpp` : 0x929531A8, 77 entrées de 32 octets ; mêmes
+  biais et dates, nom de l'hôte préféré). Un nom absent de la table (« CET ») faisait réécrire GMT par le Dashboard au
+  démarrage : horloge du Guide en UTC. Sans entrée de mêmes règles, ou sans table enregistrée (autres variantes, non vérifié à
+  l'écran), les noms sont rendus vides et le Dashboard ne réécrit rien. Test : `common/tests/host_timezone_test.cpp`.
 - **KeBugCheck est fatal** (SDK `7f60045f`, 2026-11-25) : `[FATAL] *** STOP: 0x<code> (p1, p2, p3, p4), appelant
   lr=0x…, fil …` au niveau critique dans `dash.log`, puis `abort()` (code de sortie -6, SIGABRT). Avant, l'appel revenait
   et le code invité continuait (erreurs secondaires sans lien avec la cause). Le lr est l'adresse de retour de l'appel :
@@ -164,6 +185,10 @@ Voir [avatar_hub.md](avatar_hub.md) : chaîne de correctifs, état et réglage d
 4. **Écran de progression des jeux** : les boîtes XAM fonctionnent désormais — brancher la
    progression de construction (`dash_xam_hud_ui.cpp`, socle N5 déjà commité) dessus et vérifier à
    l'écran ; toasts et redirection des succès.
-5. **Divers** : glyphe Gamerscore `U+E00A` (corrigé par `dash_font_patch.cpp`, voir `technique.md`) ; recompilateur générique pour XDK tardives
+5. **Video Library** : le lancement revient au hub. XAM (app 0xFE, message 0x0002B001) cherche le paquet par
+   `XamPackageManagerFindPackageContainingIndexedXEX`, en stub dans le SDK : gestionnaire de paquets à implémenter. Jusqu'au 2026-11-25,
+   la lancer après Getting Started déconnectait les profils et ouvrait la première configuration : cause corrigée (RMW de
+   RETAIL_FLAGS, voir [xam_etat.md](xam_etat.md)).
+6. **Divers** : glyphe Gamerscore `U+E00A` (corrigé par `dash_font_patch.cpp`, voir `technique.md`) ; recompilateur générique pour XDK tardives
    (Trials Fusion : image noire, shaders hors `Set*Shader`) ; vrai lecteur optique exposé comme
    `\Device\CdRom0` (directive utilisateur) ; étirement 32:9 de l'AppImage (reporté à la demande de l'utilisateur).

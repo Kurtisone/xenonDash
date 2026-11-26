@@ -895,7 +895,11 @@ cd dashboards/2.0.13604.0-xam && cmake --preset linux-amd64-relwithdebinfo -DDAS
 DASH_GPU_ARG= DASH_NGPU_SHADERS=<d>/keys DASH_HUD_SHADERS=<dossier>/keys DASH_XAM_MODULE=2 \
 DASH_ENV="DASH_XAM_REDIRECT=XGetVideoMode,XamShowMessageBoxUI DASH_TEST_MSGBOX=8" ./run_headless.sh 25 essai        # Xvfb + lavapipe ; touches : tools/xkeys.py (XKEYS_HOLD=0.8)
 ```
-Diagnostics (variables d'environnement) : `DASH_HUD_EVLOG=<image>` (dessins, textures, sommets d'une image ; 0 = 60 premiers dessins), `DASH_HUD_DUMP=<image>:<f.ppm>` (overlay sur gris, alpha dans `<f>.a.pgm`), `DASH_HUD_STATS=1`, `DASH_HUD_DRAWRANGE=a:b`,
+Plan overlay : les notifications de XAM (toast « a signed out ») ne passent pas par l'overlay plein écran du HUD mais par le plan overlay du
+contrôleur d'affichage (registres D1OVL 0x1860-0x186B écrits en PM4 type 0 dans le tampon de `VdSetSystemCommandBuffer`, suivis par
+`common/src/kernel_video.cpp`) ; `native_gpu/src/hud_front.cpp` compose la dernière surface résolue à la fenêtre START-END du plan, sans
+prendre les entrées du Dashboard.
+Diagnostics (variables d'environnement) : `DASH_HUD_RESOLVES=1` (chaque forme de Resolve distincte, une fois), `DASH_HUD_EVLOG=<image>` (dessins, textures, sommets d'une image ; 0 = 60 premiers dessins), `DASH_HUD_DUMP=<image>:<f.ppm>` (overlay sur gris, alpha dans `<f>.a.pgm`), `DASH_HUD_STATS=1`, `DASH_HUD_DRAWRANGE=a:b`,
 `DASH_HUD_TEXDUMP=<préfixe>` (textures 8 bits), `DASH_HUD_NODRAW`, `DASH_HUD_NOIDLE` (rend toutes les images), `DASH_HUD_NOTIFY=1` (diffuse XN_SYS_UI aux titres ; **off par défaut** : la diffusion sur les pixels du chrome de chargement re-posait le bit « interface active » de XAM et bloquait tout le système UI — mesure du 2026-11-21, `xam_13604_compilation.md`), `DASH_HUD_NODIM_SKIP` (rend le quad d'atténuation tel quel : opaque), `DASH_HUD_DISABLE`,
 `DASH_HUD_D3D_TRACE|SEQ|SEQT|DEVDUMP|PROBE` (`src/hud_d3d_trace.cpp` : cadence des appels, séquence d'une image, mémoire du périphérique, objets shader).
 

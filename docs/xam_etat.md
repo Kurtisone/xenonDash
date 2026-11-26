@@ -40,9 +40,34 @@ en +4) → chargeur `sub_8189BE20` (case 20) → ouvreur `sub_818A21B0`.
   présente, `[swap] lr=0x9218ED74`) et sur quoi le compositeur base la bascule.
 
 ## Correctifs récents (une ligne chacun, détail dans le journal git et `docs/xam_13604_compilation.md`)
+- **`XamIsIptvEnabled`** (2026-11-26, SDK `67c029d4`, `common/src/dash_xam_redirect.cpp`) : export 1301 de XAM recompilé
+  (RETAIL_FLAGS & 0x1000), repli HLE de même règle. Le stub laissait r3 (= `this`) et la condition `EcoMediaroomEnabled` du
+  Dashboard ajoutait un emplacement Mediaroom vide dans My Xbox, entre Windows Media Center et Family Settings.
+- **Journal sans `[error]`** (2026-11-26, SDK `dec33681`) : périphériques absents (UpdateStorage0..15, Mass0, DASHUSER: sans
+  profil), modules optionnels (secexp, cert, xstudio), XLIVEBASE hors ligne et option XNetGetOpt inconnue : un avertissement
+  par cas, plus 150 erreurs par parcours. `tools/banc_suite.py` échoue sur toute nouvelle ligne `[error]`.
+- **`MmDoubleMapMemory` / `MmUnmapMemory`** (2026-11-26, SDK `3b5e29c0`) : vrai double mappage (la vue montre les mêmes pages
+  que la source, `Memory::MapAlias`/`UnmapAlias`) au lieu d'un stub.
+- **`XamLoaderGetDvdTrayState`** (2026-11-26, SDK `295feadb`) : sans argument, état du plateau dans r3 (0 fermé, 1 fermeture,
+  2 ouvert, 3 ouverture : `sub_81884580` de XAM). L'ancien prototype écrivait 2 à travers r3, dans la vtable du gestionnaire
+  de l'Async Loader du Dashboard : appel indirect nul plus tard dans `sub_922AA018` (lr 0x922AA0D8). Trouvé par point
+  d'arrêt matériel en écriture (méthode : [REPRISE.md](REPRISE.md)).
+- **Fuseau horaire** (2026-11-26, `common/src/kernel_xconfig.cpp`, `host_timezone.h`, `dash_timezone_table.cpp`) : XConfig
+  3/1..7 depuis le fuseau de l'hôte, rapproché de la table du Dashboard ; horloge du Guide à l'heure locale (11:23 PM pour
+  23:23 CET au banc) au lieu de l'UTC.
+- **RMW XConfig** (2026-11-25, `kernel_xconfig.cpp`) : `ExReadModifyWriteXConfigSettingUlong` part de la valeur du SDK quand
+  rien n'est rangé. Getting Started (RETAIL_FLAGS |= 0x08000000) effaçait le bit 0x40 « console configurée » : le lancement
+  suivant (Video Library) ouvrait la première configuration et déconnectait tous les profils.
+- **Frappes pendant le Guide** (2026-11-25, `dash_xam_redirect.cpp`) : la file de frappes du HLE est vidée tant que le HUD a
+  le focus ; le A qui connecte un profil ouvrait ensuite la tuile sélectionnée du Dashboard.
+- **Plan overlay D1OVL** (2026-11-25, `common/src/kernel_video.cpp`, `native_gpu/src/hud_front.cpp`) : XAM affiche ses
+  notifications (« a signed out ») sur le plan overlay du contrôleur d'affichage, programmé par écritures de registres
+  (PM4 type 0, D1OVL 0x1860-0x186B) dans le tampon de commandes système ; le compositeur les place à leur fenêtre (bas
+  centre, 244x90) au lieu d'étirer la surface en plein écran, et le Dashboard reste pilotable sous le toast.
 - **Trap non fatal** (SDK `function_dispatcher.cpp`, f2c7948) : un appel indirect invité vers 0
   (vtable jamais construite, ex. destructeur de la tâche Game Library `sub_922AA048`) avortait tout
-  le processus — c'était le « freeze » de la sortie de Game Library. Journal borné + `r3=0`.
+  le processus — c'était le « freeze » de la sortie de Game Library. Journal borné + `r3=0`. Cause de l'appel nul de
+  `sub_922AA018` trouvée le 2026-11-26 : vtable écrasée par `XamLoaderGetDvdTrayState` (voir plus haut).
 - **`NicGetLinkState`** : ne JAMAIS écrire à travers r4 (l'appelant réseau passe un r4 hérité non
   commité) — état « pas de lien » par r3=0 seulement.
 - **`XeKeysGetStatus`** : remplir la sortie (`*r3 = 0x4` par défaut, `DASH_XEKEYS_STATUS=<hex>` pour tester) — laissée
