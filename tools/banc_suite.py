@@ -11,7 +11,7 @@ Points de contrôle (capture comparée à la référence) :
   myxbox         Up -> canal My Xbox (Open Tray, Sign In, Game Library...)
   gamelib        Right Right Return -> Game Library
   gamelib_back   Escape -> retour sur My Xbox
-  settings       Right x7, Return, Return -> Console Settings (réglage courant 1280 x 720, Widescreen, VGA)
+  settings       Right x6, Return, Return -> Console Settings (réglage courant 1280 x 720, Widescreen, VGA)
   resolutions    Return Return -> Screen Resolution (640 x 480 à 1680 x 1050)
   guide          Escape x4, g -> Guide (Sign In (1 Profile), Create Profile...)
   signin         Down Return -> Sign In (profil de l'instantané, HDD)
@@ -59,7 +59,7 @@ STEPS = [
     (["Right", "Right"], 3, None),
     (["Return"], 8, "gamelib"),
     (["Escape"], 5, "gamelib_back"),
-    (["Right"] * 7, 3, None),
+    (["Right"] * 6, 3, None),  # Game Library -> System Settings (sans l'emplacement Mediaroom, masqué depuis le 2026-11-26)
     (["Return"], 5, None),
     (["Return"], 5, "settings"),
     (["Return"], 5, None),
@@ -96,6 +96,11 @@ DEFAULT_GAMES = os.path.expanduser(os.environ.get("XENONDASH_GAMES_DIR", "~/Xeno
 
 LOG_FORBIDDEN = [(r"\*\*\* STOP", "arrêt KeBugCheck"), (r"\[fibre\]", "avertissement des fibres de XAM")]
 LOG_REQUIRED = [(r"\[vd\] découverte de l'affichage", "découverte de l'affichage (liste des résolutions)")]
+# Lignes [error] admises (expressions régulières). Toute autre ligne [error] du journal fait échouer la suite : une erreur
+# est un défaut à corriger, ou un cas normal à journaliser plus bas, pas un bruit de fond. Liste vide depuis le 2026-11-26
+# (150 lignes avant : périphériques absents sondés par XAM, modules optionnels absents, service Live hors ligne, appel
+# indirect nul de l'Async Loader).
+ERROR_ALLOWED = []
 CPU_SECS = 10.0
 CPU_MAX = 60.0
 
@@ -273,7 +278,11 @@ def cmd_run(a):
             problems.append(f"journal : absent : {what}")
     if load[0] > CPU_MAX:
         problems.append(f"charge : fil {load[1]} à {load[0]:.0f} % d'un cœur (> {CPU_MAX:.0f} %)")
-    n_err = sum(1 for ln in text.splitlines() if "[error]" in ln)
+    errors = [ln for ln in text.splitlines() if "[error]" in ln]
+    n_err = len(errors)
+    unexpected = [ln for ln in errors if not any(re.search(rx, ln) for rx in ERROR_ALLOWED)]
+    if unexpected:
+        problems.append(f"journal : {len(unexpected)} ligne(s) [error] hors liste, ex. {unexpected[0][:160]}")
 
     tol = load_tol()
     rows = []
