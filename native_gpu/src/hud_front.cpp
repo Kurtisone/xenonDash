@@ -27,6 +27,7 @@
 #include <map>
 #include <memory>
 #include <mutex>
+#include <set>
 #include <string>
 #include <thread>
 #include <unordered_map>
@@ -43,6 +44,7 @@
 #include "write_watcher.h"
 #include "hud_xam13604.h"
 #include "dash_xam_redirect.h"
+#include "kernel_video.h"
 
 namespace {
 
@@ -91,6 +93,8 @@ struct Overlay {
   std::vector<uint8_t> rgba;
   uint32_t w = 0, h = 0;
   bool visible = false;  // au moins quelques pixels d'alpha notable
+  bool has_pixels = false;  // idem, avant le filtre de l'etat de XAM (masque UI, pile de scenes) : sert au plan overlay
+  uint32_t surface = 0;  // adresse physique de la surface relue (destination du dernier Resolve)
   float dim = 1.0f;      // facteur applique a toute l'image du Dashboard sous l'overlay (fond atténué), 1 = aucun
   uint64_t seq = 0;
 } g_overlay;
@@ -464,7 +468,7 @@ void PublishOverlay() {
   if (!g.dest || !g.core->renderer().ReadResolved(g.dest, rgba, w, h)) return;
   // La cible resolue est en ordre memoire BGRA : on la remet en RGBA une fois ici.
   for (size_t i = 0; i < size_t(w) * h; ++i) std::swap(rgba[4 * i], rgba[4 * i + 2]);
-  bool visible = false;
+  bool visible = false, has_pixels = false;
   {
     size_t pixels = 0;
     uint32_t amax = 0, x0 = w, y0 = h, x1 = 0, y1 = 0;
@@ -478,6 +482,7 @@ void PublishOverlay() {
     }
     // Visible : au moins quelques pixels notablement opaques (une image au repos peut garder des pixels d'alpha tres faible).
     visible = pixels >= 16 && amax >= 8;
+    has_pixels = visible;
     // Masque « interfaces systeme actives » de XAM (0x81BFCAE8 +0) : 0 -> 4 (boot) -> 0 (t=0,6 s, systeme UI pret), non nul quand le
     // Guide ou une boite est ouvert. A 0, ce que le HUD dessine encore est le chrome de la scene de boot de l'app 252 (barre + anneau
     // + fond atténué) que XAM laisse tourner : il ne doit ni s'afficher ni atténuer le hub. Meme signal que le portier des entrees
@@ -498,8 +503,8 @@ void PublishOverlay() {
     static const bool keep_chrome = std::getenv("DASH_HUD_CHROME") != nullptr;
     if (!keep_chrome && ui_mask == 0 && !above_rest) visible = false;
     if (std::getenv("DASH_HUD_STATS") && (g.frames % 60 == 1 || Evlog()))
-      std::fprintf(stderr, "[hud] overlay image %llu : %zu pixels non transparents, alpha max %u, boite %u,%u - %u,%u, masque UI %08X pile %u -> %s\n",
-                   (unsigned long long)g.frames, pixels, amax, x0, y0, x1, y1, ui_mask, depth, visible ? "visible" : "masque");
+      std::fprintf(stderr, "[hud] overlay image %llu : surface %08X %ux%u, %zu pixels non transparents, alpha max %u, boite %u,%u - %u,%u, masque UI %08X pile %u -> %s\n",
+                   (unsigned long long)g.frames, g.dest, w, h, pixels, amax, x0, y0, x1, y1, ui_mask, depth, visible ? "visible" : "masque");
   }
   if (const char* dm = std::getenv("DASH_HUD_DUMP")) {  // "<image>:<fichier.ppm>" : overlay sur fond gris (sans transparence) + alpha dans <fichier>.a.pgm
     char* colon = nullptr;
@@ -531,6 +536,8 @@ void PublishOverlay() {
     g_overlay.w = w;
     g_overlay.h = h;
     g_overlay.visible = visible;
+    g_overlay.has_pixels = has_pixels;
+    g_overlay.surface = g.dest;
     g_overlay.dim = visible ? g.frame_dim : 1.0f;
     ++g_overlay.seq;
   }
@@ -632,6 +639,20 @@ void Handle(uint32_t addr, PPCContext& ctx, uint8_t* base, void (*orig)(PPCConte
       ++g.resolves;
       const uint32_t dest = xenos::DeviceState{g.shadow}.Reg(0x2319);  // RB_COPY_DEST_BASE
       g.dest = dest;
+      // DASH_HUD_RESOLVES=1 : chaque forme de Resolve distincte (destination, pas/hauteur, rectangle, point), une fois, avec le
+      // numero d'image. Sert a voir quelles surfaces XAM compose (overlay plein ecran, toast...).
+      static const bool trace_resolves = std::getenv("DASH_HUD_RESOLVES") != nullptr;
+      if (trace_resolves) {
+        static std::set<std::string> seen;
+        const uint32_t pitch_reg = xenos::DeviceState{g.shadow}.Reg(0x231A);
+        char key[160];
+        std::snprintf(key, sizeof key, "dest=%08X pas=%u haut=%u rect=%d,%d,%d,%d point=%d,%d surf=%08X", dest, pitch_reg & 0x3FFF,
+                      (pitch_reg >> 16) & 0x3FFF, resolve.rect[0], resolve.rect[1], resolve.rect[2], resolve.rect[3],
+                      resolve.has_dest_point ? resolve.dest_x : -1, resolve.has_dest_point ? resolve.dest_y : -1,
+                      xenos::DeviceState{g.shadow}.Reg(0x2000));
+        if (seen.insert(key).second)
+          std::fprintf(stderr, "[hud] resolve image %llu : %s\n", (unsigned long long)g.frames, key);
+      }
       if (Evlog())
         std::fprintf(stderr, "[hud] resolve flags=%X rect=%d,%d,%d,%d point=%d,%d dest=%08X pitch=%08X surf=%08X color=%08X\n", flags, resolve.rect[0], resolve.rect[1],
                      resolve.rect[2], resolve.rect[3], resolve.dest_x, resolve.dest_y, dest, xenos::DeviceState{g.shadow}.Reg(0x231A),
@@ -706,10 +727,54 @@ void Handle(uint32_t addr, PPCContext& ctx, uint8_t* base, void (*orig)(PPCConte
 // Superpose l'overlay du HUD (alpha premultiplie) a l'image du Dashboard (pixels A2B10G10R10 empaquetes du noyau : R bits 0-9, G 10-19,
 // B 20-29) ; renvoie false (image inchangee) si le HUD n'a rien a montrer. Interpolation bilineaire de l'overlay (852x480) vers la taille
 // de l'image (1280x720).
+namespace {
+// Plan overlay du contrôleur d'affichage (kernel_video.cpp) : XAM y montre ses notifications. Il affiche la surface resolue telle
+// quelle (pas de mise a l'echelle) a sa fenetre du bureau, quel que soit l'etat des scenes de XAM. Appelant : verrou de g_overlay tenu.
+bool OverlayPlaneShown(const dash::vd::DisplayOverlay& plane) {
+  return plane.enabled && g_overlay.has_pixels && !g_overlay.rgba.empty() && ((plane.surface ^ g_overlay.surface) & 0x1FFFF000u) == 0 &&
+         plane.x1 > plane.x0 && plane.y1 > plane.y0;
+}
+
+// Superposition (alpha premultiplie) d'un pixel RGBA8 de l'overlay sur un pixel A2B10G10R10 du Dashboard.
+inline void Over(uint32_t& p, const float c[4]) {
+  const float alpha = c[3] / 255.0f;
+  const float r = (p & 1023), gch = ((p >> 10) & 1023), b = ((p >> 20) & 1023);
+  const uint32_t R = uint32_t(std::clamp(c[0] * (1023.0f / 255.0f) + r * (1 - alpha), 0.0f, 1023.0f) + 0.5f);
+  const uint32_t G = uint32_t(std::clamp(c[1] * (1023.0f / 255.0f) + gch * (1 - alpha), 0.0f, 1023.0f) + 0.5f);
+  const uint32_t B = uint32_t(std::clamp(c[2] * (1023.0f / 255.0f) + b * (1 - alpha), 0.0f, 1023.0f) + 0.5f);
+  p = (p & 0xC0000000u) | B << 20 | G << 10 | R;
+}
+
+// La fenetre est en pixels du bureau, c'est-a-dire du tampon d'affichage (display_width x display_height du mode video), que
+// l'image presentee reproduit : echelle 1 en 1280x720. Pixel du bureau (x, y) -> pixel de surface (x - x0, y - y0).
+void CompositePlane(uint32_t* pixels, uint32_t w, uint32_t h, const dash::vd::DisplayOverlay& plane) {
+  const uint32_t ow = g_overlay.w, oh = g_overlay.h;
+  const uint8_t* src = g_overlay.rgba.data();
+  const int32_t x0 = std::max(plane.x0, 0), y0 = std::max(plane.y0, 0);
+  const int32_t x1 = std::min({plane.x1, int32_t(w), plane.x0 + int32_t(ow)});
+  const int32_t y1 = std::min({plane.y1, int32_t(h), plane.y0 + int32_t(oh)});
+  for (int32_t y = y0; y < y1; ++y) {
+    const uint8_t* row = src + 4 * size_t(y - plane.y0) * ow;
+    for (int32_t x = x0; x < x1; ++x) {
+      const uint8_t* s = row + 4 * size_t(x - plane.x0);
+      if (!s[0] && !s[1] && !s[2] && !s[3]) continue;
+      const float c[4] = {float(s[0]), float(s[1]), float(s[2]), float(s[3])};
+      Over(pixels[size_t(y) * w + x], c);
+    }
+  }
+}
+}  // namespace
+
 namespace ngpu {
 bool HudComposite(uint32_t* pixels, uint32_t w, uint32_t h) {
+  const dash::vd::DisplayOverlay plane = dash::vd::GetDisplayOverlay();
   std::lock_guard<std::mutex> lock(g_overlay.mutex);
-  if (!g_overlay.visible || g_overlay.rgba.empty() || !w || !h) return false;
+  if (g_overlay.rgba.empty() || !w || !h) return false;
+  if (OverlayPlaneShown(plane)) {
+    CompositePlane(pixels, w, h, plane);
+    return true;
+  }
+  if (!g_overlay.visible) return false;
   const uint32_t ow = g_overlay.w, oh = g_overlay.h;
   const uint8_t* src = g_overlay.rgba.data();
   const float dim = g_overlay.dim;
@@ -737,18 +802,16 @@ bool HudComposite(uint32_t* pixels, uint32_t w, uint32_t h) {
         p = (p & 0xC0000000u) | uint32_t(b0 + 0.5f) << 20 | uint32_t(g0 + 0.5f) << 10 | uint32_t(r0 + 0.5f);
       }
       if (alpha <= 0.0f && c[0] <= 0.0f && c[1] <= 0.0f && c[2] <= 0.0f) continue;
-      const float r = (p & 1023), gch = ((p >> 10) & 1023), b = ((p >> 20) & 1023);
-      const uint32_t R = uint32_t(std::clamp(c[0] * (1023.0f / 255.0f) + r * (1 - alpha), 0.0f, 1023.0f) + 0.5f);
-      const uint32_t G = uint32_t(std::clamp(c[1] * (1023.0f / 255.0f) + gch * (1 - alpha), 0.0f, 1023.0f) + 0.5f);
-      const uint32_t B = uint32_t(std::clamp(c[2] * (1023.0f / 255.0f) + b * (1 - alpha), 0.0f, 1023.0f) + 0.5f);
-      p = (p & 0xC0000000u) | B << 20 | G << 10 | R;
+      Over(p, c);
     }
   }
   return true;
 }
+// Une notification sur le plan overlay ne prend pas les entrees (le Dashboard reste pilotable sous le toast) : seul le HUD plein ecran compte.
 bool HudActive() {
+  const dash::vd::DisplayOverlay plane = dash::vd::GetDisplayOverlay();
   std::lock_guard<std::mutex> lock(g_overlay.mutex);
-  return g_overlay.visible;
+  return g_overlay.visible && !OverlayPlaneShown(plane);
 }
 }  // namespace ngpu
 

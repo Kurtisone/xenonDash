@@ -6,6 +6,7 @@
 // de XAM ; les autres appelants gardent le stub du SDK. Le HUD n'écrit pas dans ce tampon par cet appel.
 
 #include <cstring>
+#include <iterator>
 
 #include <rex/hook.h>
 #include <rex/ppc/context.h>
@@ -23,13 +24,98 @@ REX_HOOK_RAW(__imp__VdQuerySystemCommandBuffer) {
 // VdSetSystemCommandBuffer(descripteur) : le SDK l'ignore (stub). XAM l'appelle à chaque image du HUD (rendu XUI de XAM
 // recompilé : commandes GPU dans un tampon système). DASH_TRACE_VD=<n> : journalise les n premiers descripteurs (14 mots)
 // et les premiers mots du tampon désigné (diagnostic, palier G).
+#include <algorithm>
 #include <atomic>
 #include <cstdio>
 #include <cstdlib>
+#include <mutex>
 #include <string>
 
 #include <rex/logging.h>
 #include <rex/system/kernel_state.h>
+
+#include "kernel_video.h"
+
+// Plan overlay du contrôleur d'affichage (registres AVIVO D1OVL, index 0x1860-0x186B). XAM n'affiche pas ses notifications par
+// le HUD plein écran : il résout le toast dans une petite surface et programme le plan overlay par des écritures de registres
+// (paquets PM4 de type 0, entre D1OVL_UPDATE = verrou et 0) à la fin du tampon de commandes système. Mesure du 2026-11-25 (toast
+// « a signed out ») : surface 0x1F463000, pas de 256, Resolve 244x90, fenêtre START (512,576) - END (756,666) sur le bureau
+// 1280x720, soit en bas au centre ; ENABLE = 0 six secondes plus tard. Sans ce suivi, le compositeur étirait la surface 244x90 en
+// plein écran (toast géant flou au milieu de l'écran).
+namespace dash::vd {
+namespace {
+constexpr uint32_t kOvlFirst = 0x1860, kOvlLast = 0x186B;  // D1OVL_ENABLE .. D1OVL_UPDATE
+std::mutex g_ovl_mutex;
+uint32_t g_ovl_regs[kOvlLast - kOvlFirst + 1] = {};
+
+DisplayOverlay Decode(const uint32_t* r) {
+  DisplayOverlay o;
+  o.enabled = r[0x1860 - kOvlFirst] & 1;
+  o.surface = r[0x1864 - kOvlFirst];
+  o.pitch = r[0x1866 - kOvlFirst] & 0x3FFF;
+  const uint32_t start = r[0x1869 - kOvlFirst], end = r[0x186A - kOvlFirst];
+  o.x0 = int32_t((start >> 16) & 0x1FFF);
+  o.y0 = int32_t(start & 0x1FFF);
+  o.x1 = int32_t((end >> 16) & 0x1FFF);
+  o.y1 = int32_t(end & 0x1FFF);
+  return o;
+}
+
+// Parcourt les paquets PM4 du tampon (mots big-endian, adresse physique) et retient les écritures des registres D1OVL.
+void TrackDisplayOverlay(const uint8_t* phys, uint32_t address, uint32_t words) {
+  auto rd = [&](uint32_t i) { return __builtin_bswap32(*reinterpret_cast<const uint32_t*>(phys + address + i * 4)); };
+  uint32_t regs[kOvlLast - kOvlFirst + 1];
+  bool touched = false;
+  {
+    std::lock_guard<std::mutex> lock(g_ovl_mutex);
+    std::copy(std::begin(g_ovl_regs), std::end(g_ovl_regs), regs);
+  }
+  for (uint32_t i = 0; i < words;) {
+    const uint32_t h = rd(i);
+    const uint32_t type = h >> 30;
+    if (type == 0) {  // écriture de registres : base (bits 0-14), même registre (bit 15), nombre - 1 (bits 16-29)
+      const uint32_t count = ((h >> 16) & 0x3FFF) + 1, reg = h & 0x7FFF;
+      const bool one = (h >> 15) & 1;
+      if (i + 1 + count > words) break;
+      const uint32_t last = one ? reg : reg + count - 1;
+      if (last >= kOvlFirst && reg <= kOvlLast) {
+        for (uint32_t k = 0; k < count; ++k) {
+          const uint32_t r = one ? reg : reg + k;
+          if (r >= kOvlFirst && r <= kOvlLast) {
+            regs[r - kOvlFirst] = rd(i + 1 + k);
+            touched = true;
+          }
+        }
+      }
+      i += 1 + count;
+    } else if (type == 1) {  // deux registres bas (index sur 11 bits) : jamais D1OVL
+      i += 3;
+    } else if (type == 2) {  // bourrage
+      i += 1;
+    } else {
+      i += 2 + ((h >> 16) & 0x3FFF);
+    }
+  }
+  if (!touched) return;
+  DisplayOverlay before, after;
+  {
+    std::lock_guard<std::mutex> lock(g_ovl_mutex);
+    before = Decode(g_ovl_regs);
+    std::copy(std::begin(regs), std::end(regs), g_ovl_regs);
+    after = Decode(g_ovl_regs);
+  }
+  if (before.enabled != after.enabled || (after.enabled && (before.surface != after.surface || before.x0 != after.x0 ||
+                                                            before.y0 != after.y0 || before.x1 != after.x1 || before.y1 != after.y1)))
+    REXLOG_INFO("[vd] plan overlay D1OVL {} : surface {:08X}, pas {}, fenêtre ({},{}) - ({},{})", after.enabled ? "activé" : "désactivé",
+                after.surface, after.pitch, after.x0, after.y0, after.x1, after.y1);
+}
+}  // namespace
+
+DisplayOverlay GetDisplayOverlay() {
+  std::lock_guard<std::mutex> lock(g_ovl_mutex);
+  return Decode(g_ovl_regs);
+}
+}  // namespace dash::vd
 
 REX_HOOK_RAW(__imp__VdSetSystemCommandBuffer) {
   static PPCFunc* sdk = dash::SdkFunction("__imp__VdSetSystemCommandBuffer");
@@ -40,6 +126,12 @@ REX_HOOK_RAW(__imp__VdSetSystemCommandBuffer) {
   static std::atomic<long> n{0};
   static std::atomic<uint64_t> total{0};
   total.fetch_add(1);
+  if (ctx.r3.u32) {  // descripteur : mot 0 = adresse physique du tampon, mot 1 = taille en mots
+    auto rdv = [&](uint32_t a) { return __builtin_bswap32(*reinterpret_cast<const uint32_t*>(base + a)); };
+    const uint32_t p = rdv(ctx.r3.u32), words = rdv(ctx.r3.u32 + 4);
+    if (p >= 0x10000 && p < 0x20000000u && words > 0 && words < 0x100000 && p + uint64_t(words) * 4 <= 0x20000000u)
+      dash::vd::TrackDisplayOverlay(rex::system::kernel_memory()->TranslatePhysical(0), p, words);
+  }
   if (max_trace > 0 && n.fetch_add(1) < max_trace && ctx.r3.u32) {
     auto rd = [&](uint32_t a) { return __builtin_bswap32(*reinterpret_cast<const uint32_t*>(base + a)); };
     std::string d;
