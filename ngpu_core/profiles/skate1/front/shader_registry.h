@@ -1,4 +1,4 @@
-// skate1 - native D3D layer: shader registry (see docs/native_d3d.md)
+// skate1 - native D3D layer: shader registry (see docs/ngpu_core.md)
 
 #pragma once
 

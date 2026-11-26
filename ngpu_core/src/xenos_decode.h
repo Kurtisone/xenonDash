@@ -4,7 +4,7 @@
 // plus bas est la disposition CANONIQUE du noyau : la facade d'une version de XDK qui n'a pas cette ombre la
 // synthetise (voir docs/ngpu_core.md). Texte d'origine ci-dessous.
 // skate1 - native D3D layer: decoding of the Xenos state the game's D3D keeps
-// in its device shadow (see docs/native_d3d.md). Header-only, shared by the
+// in its device shadow (see docs/ngpu_core.md). Header-only, shared by the
 // in-game renderer and tools/native_replay.
 
 #pragma once

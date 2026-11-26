@@ -12,7 +12,7 @@ compteurs de boucle, identifiant de sommet) lisent des constantes partagées (d�
 projets ne fournissent pas : elles ne sont actives que si XENOS_RECOMP_TRIALS est défini. Dans ce cas la sortie
 HLSL commence par `#define XENOS_TRIALS_EXT`, et les fonctions/constantes correspondantes de shader_common.h
 sont compilées. Sans la variable, la sortie ne contient aucune de ces extensions (Dashboard 360, Skate).
-Les clés de cache doivent inclure la version de XenosRecomp et ces variables (docs/fusion_ports.md §4.4).
+Les clés de cache doivent inclure la version de XenosRecomp et ces variables (docs/technique.md, « Noyau et HLE : correctifs et causes », XenosRecomp unifié).
 ---
  XenosRecomp/shader_common.h       | 10 +++++
  XenosRecomp/shader_recompiler.cpp | 70 +++++++++++++++++++++----------

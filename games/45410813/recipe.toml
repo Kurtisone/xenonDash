@@ -1,4 +1,4 @@
-# Recette de Skate (EA Black Box, 2007, TitleID 45410813) : voir docs/recettes.md.
+# Recette de Skate (EA Black Box, 2007, TitleID 45410813) : voir docs/jeux.md.
 # Reprise de Skate1Native (Kurtisone/Skate1Recompiled, GPL-3.0, commit 81805f51) : analyse (functions.toml), crochets (src/),
 # couche de rendu (native/, sur ngpu_core). Aucun octet du jeu : adresses, parametres et code de port seulement.
 schema = 1
@@ -6,7 +6,7 @@ title_id = "45410813"
 name = "Skate"
 
 [sdk]
-series = "main"             # branche `main` du fork ReXGlue (contient l'ancienne `unified`, docs/fusion_ports.md section 8)
+series = "main"             # branche `main` du fork ReXGlue (contient l'ancienne `unified`, docs/technique.md, « Noyau et HLE : correctifs et causes »)
 
 # Verrou : hachage SHA-256 de l'image PE decodee (dechiffree, decompressee) du default.xex, verifie contre le XEX de l'utilisateur.
 # Hors de ces hachages : pas de recompilation (mode generique : P8, etape 6).

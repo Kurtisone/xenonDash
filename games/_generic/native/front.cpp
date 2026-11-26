@@ -226,7 +226,7 @@ const uint8_t* FindShaderContainer(uint64_t key) {
 }
 
 // Microcode d'un shader absent du cache : conteneur ecrit dans le cache utilisateur (xd_profile::kMissingShaderDir) pour qu'une
-// reconstruction l'ajoute (boucle « jouer -> reconstruire », docs/recompilateur_generique.md) ; le dessin correspondant est saute.
+// reconstruction l'ajoute (boucle « jouer -> reconstruire », docs/jeux.md) ; le dessin correspondant est saute.
 void DumpMissingShader(uint64_t hash, bool pixel, const uint8_t* data, size_t size) {
   if (!xd_profile::kMissingShaderDir[0]) return;
   std::error_code ec;
@@ -665,7 +665,7 @@ void XdFrontStart(rex::Runtime* runtime) {
     g_renderer->LoadPipelineCache((runtime->cache_root() / "native_pipelines.bin").string());
   }
   // Rampe d'affichage : le D3D regle l'ecran par une rampe ecrite dans le tampon de commandes (non lu ici) ; approximation par une
-  // puissance (docs/ngpu_core.md section 4).
+  // puissance (docs/ngpu_core.md, « Façade 6770 », rampe d'affichage).
   const double power = REXCVAR_GET(native_gpu_gamma) / 100.0;
   if (power > 0.0 && power != 1.0) {
     uint32_t ramp[256];

@@ -1,5 +1,5 @@
 # Profil de rendu natif de Skate (XDK 2.0.5632) : ce que la facade (native/) et ngpu_core doivent savoir du jeu.
-# Adresses de la XDK D3D liee statiquement dans default.xex (docs de Skate1Native : docs/d3d_functions.md), cles de microcode
+# Adresses de la XDK D3D liee statiquement dans default.xex (docs de Skate1Native : docs/ngpu_core.md), cles de microcode
 # (XXH3-64) des vertex shaders d'interface. Aucun contenu du jeu : des adresses et des nombres.
 # tools/recipe_build.py en tire d3d_profile.generated.h et d3d_hooks.generated.inc (compiles avec le jeu).
 
@@ -43,7 +43,7 @@ address = "0x82CC7FF0"
 
 # GPU nul : sans emulation, personne ne lit le tampon de commandes ni n'ecrit les compteurs que la XDK D3D scrute. On publie
 # « tout est consomme » et on declenche nous-memes l'interruption de retour de balayage (vblank). Adresses retrouvees par
-# comparaison de motifs avec le D3D du Dashboard 6770 (docs/recettes.md) : memes fonctions, memes decalages (+10896/+10908).
+# comparaison de motifs avec le D3D du Dashboard 6770 (docs/jeux.md) : memes fonctions, memes decalages (+10896/+10908).
 [null_gpu]
 fence_ptr = 10896          # +decalage du pointeur vers le bloc de retour du GPU (identifiant ecrit en retour)
 fence_value = 10908        # +decalage de la derniere position emise

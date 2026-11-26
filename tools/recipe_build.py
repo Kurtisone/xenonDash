@@ -14,7 +14,7 @@ cache `$XDG_DATA_HOME/xenondash/games/<TitleID>/<cle>/` (defaut ~/.local/share).
 
 Etapes : identify, prepare, extract, scaffold, codegen, shaders, compile, bootstrap.
 La progression est ecrite dans `<cache>/progress.json` (et en lignes `[recipe] ...` sur la sortie) pour le Dashboard.
-Format de la recette et flux : docs/recettes.md et docs/fusion_ports.md section 5.
+Format de la recette et flux : docs/jeux.md et docs/technique.md.
 """
 import argparse
 import hashlib
@@ -815,7 +815,7 @@ class Build:
             if not os.path.isfile(p):
                 errs.append(f"{p} manquant : {hint}")
         if self.container:
-            errs.append("l'option conteneur (--container) est documentee (docs/recettes.md) mais non implementee ici")
+            errs.append("l'option conteneur (--container) est documentee (docs/jeux.md) mais non implementee ici")
         if errs:
             raise RecipeError("preparation impossible :\n  - " + "\n  - ".join(errs))
         log(f"{fd:.0f} Go libres, {mem_gb():.0f} Go de memoire, cache : {self.cache}")
@@ -1199,7 +1199,7 @@ class Build:
             m = re.search(pat_, text)
             if m and self.mode == "generic":
                 # fonction invoquee par pointeur que l'analyse statique n'a pas vue : declaree dans le cache utilisateur, a la prochaine
-                # construction le codegen l'inclut (boucle « jouer -> reconstruire », docs/recompilateur_generique.md)
+                # construction le codegen l'inclut (boucle « jouer -> reconstruire », docs/jeux.md)
                 # XD_BOOT_COLLECT=1 : regroupe toutes les adresses distinctes du journal (un seul codegen pour plusieurs). Defaut : la 1re seule.
                 addrs = sorted({int(x, 16) for x in re.findall(pat_, text)}) if os.environ.get("XD_BOOT_COLLECT") else [int(m.group(1), 16)]
                 up = user_functions_path(self.info["title_id"])

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // native_gpu : facade D3D du Dashboard 13604 (XDK 2.0.20158) sur le noyau de rendu commun ngpu_core. Aucun plugin GPU, aucune lecture
 // de tampon de commandes : les fonctions D3D de la XDK liees dans dash.xex sont crochetees, le noyau rend l'etat Xenos que le D3D
-// invite a deja ecrit dans son peripherique (docs/ngpu_core.md, section 13604).
+// invite a deja ecrit dans son peripherique (docs/ngpu_core.md, « Dashboard Kinect 13604 »).
 //
 // Origine : meme principe que front6770.cpp (Dashboard 6770) et que la facade generique games/_generic/native/front.cpp (reprise de la
 // couche D3D native de Skate1Native, Kurtisone/Skate1Recompiled, GPL-3.0, commit 81805f51), avec les differences de la XDK 20158 :
@@ -233,7 +233,7 @@ bool IsDevice(const uint8_t* base, uint32_t device) {
   return false;
 }
 
-// ---- ombre canonique : instantane du peripherique, adresses de textures de la region E corrigees (docs/rendu_natif.md §12.1) ----
+// ---- ombre canonique : instantane du peripherique, adresses de textures de la region E corrigees (docs/ngpu_core.md) ----
 void Snapshot(const uint8_t* base, uint8_t* out) {
   xenos::Canonicalize(Layout(), base + g.device, out);
   for (uint32_t slot = 0; slot < 32; ++slot) {

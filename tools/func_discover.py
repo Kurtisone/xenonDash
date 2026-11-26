@@ -10,7 +10,7 @@ appelees que par pointeur (vtables, tables de rappels, adresses construites par 
 Candidats
   data     mot aligne d'une section de donnees dont la valeur tombe dans .text ;
   code     adresse construite dans le code par `lis rX,hi` puis `addi|ori rY,rX,lo` (suivi lineaire des registres) ;
-Filtre « debut plausible » (mesure sur Skate et Trials Fusion, voir docs/recompilateur_generique.md)
+Filtre « debut plausible » (mesure sur Skate et Trials Fusion, voir docs/jeux.md)
   - le mot a cette adresse n'est ni nul ni lui-meme une adresse de code (table de saut absolue apres un `bctr`) ;
   - ce n'est pas un thunk d'import du XEX (table d'imports) : en faire une fonction remplace l'import du noyau par un STUB
     renvoyant 0 (cause du plantage de Skate generique pur, lot B2 : KeTlsSetValue, puis recursion infinie) ;

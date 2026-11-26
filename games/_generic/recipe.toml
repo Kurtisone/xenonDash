@@ -1,4 +1,4 @@
-# Recette GENERIQUE (recompilateur generique, P8 etape 6) : voir docs/recompilateur_generique.md.
+# Recette GENERIQUE (recompilateur generique, P8 etape 6) : voir docs/jeux.md.
 # Elle n'est pas liee a un jeu : tools/recipe_build.py l'applique a tout XEX sans recette de games/<TitleID>/ (ou dont le hachage de
 # l'image decodee n'est pas verrouille), en generant l'analyse (boucle de codegen), le profil D3D (tools/d3d_match.py) et les
 # crochets. Aucun octet du jeu ni de Microsoft, aucune liste de shaders propre a un jeu.

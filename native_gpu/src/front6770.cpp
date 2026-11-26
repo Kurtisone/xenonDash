@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // native_gpu : facade D3D du Dashboard 6770 sur le noyau de rendu commun ngpu_core (P8, docs/ngpu_core.md).
 //
-// Meme cartographie D3D que hooks_draw.cpp/hooks_frame.cpp (docs/rendu_natif.md §11), mais au lieu de dessiner par le
+// Meme cartographie D3D que hooks_draw.cpp/hooks_frame.cpp (docs/ngpu_core.md), mais au lieu de dessiner par le
 // backend Vulkan maison, chaque appel D3D suivi est traduit en appels du noyau (Renderer::Draw / Clear / Resolve /
 // EndFrame). Le noyau lit l'etat Xenos dans une « ombre de peripherique » (disposition du XDK 5632, xenos_decode.h) :
 // le D3D du 6770 n'a pas cette ombre (etat suivi par appel de fonction), la facade la SYNTHETISE a chaque dessin :
@@ -212,7 +212,7 @@ void BeginFrameIfNeeded() {
 // Le D3D du 6770 (XDK 2.0.5526) a la MEME disposition d'ombre que celui de Skate (5632) pour ce qui sert au noyau : fetch constants a
 // +0x480 (fusionnees avec l'etat d'echantillonnage par SetTexture/SetSamplerState), constantes de sommets a +0x780 et de pixels a
 // +0x1780 (vu dans le code de SetTexture 92123F20 et Set*ShaderConstantF), registres a +10368... L'ombre est donc un simple
-// instantane du peripherique ; seules les adresses de textures de la region E sont corrigees (+0x1000, docs/rendu_natif.md §12.1).
+// instantane du peripherique ; seules les adresses de textures de la region E sont corrigees (+0x1000, docs/ngpu_core.md).
 void BuildShadow(const uint8_t* base, uint32_t dev) {
   std::memcpy(g.shadow, base + dev, kShadowSize);
   static const bool point = std::getenv("DASH_NGPU_POINT") != nullptr;

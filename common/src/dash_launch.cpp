@@ -441,7 +441,7 @@ void RescanLibrary(bool wait, int timeout_s) {
   }
 }
 
-// ---- Jeux à recette : construction à la demande (docs/recettes.md) ----------------------------------------------------
+// ---- Jeux à recette : construction à la demande (docs/jeux.md) ----------------------------------------------------
 // `recipe = "<source>"` dans games.toml : au premier lancement, tools/recipe_build.py identifie le XEX, le recompile en natif
 // (cache ~/.local/share/xenondash/games/<TitleID>/<clé>/) puis le Dashboard lance le binaire du cache comme un jeu natif.
 // Le Dashboard reste vivant pendant la construction (écran de progression ImGui, journal, notify-send s'il existe) ;

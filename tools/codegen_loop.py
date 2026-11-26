@@ -153,7 +153,7 @@ def run_loop(rexglue, sdk_lib, proj, manifest, gen_dir, init_name, image, overri
                 named = {int(x, 16) for x in re.findall(ADDR, out)}
                 drop = [a for a in static if a in named]
                 if not drop:
-                    bisect = bool(os.environ.get("XD_CODEGEN_BISECT"))    # optionnel : voir docs/recompilateur_generique.md
+                    bisect = bool(os.environ.get("XD_CODEGEN_BISECT"))    # optionnel : voir docs/jeux.md
                     for kind in ("data-in", "code", "data"):
                         drop = sorted(a for a, k in static.items() if k == kind)
                         if drop:

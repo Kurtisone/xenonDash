@@ -1,5 +1,5 @@
 // xenondash common - périphériques attendus par XAM recompilé (module chargé par le Dashboard, voir docs/technique.md,
-// « Dashboard 2.0.17559 et XAM recompilé »).
+// « XAM recompilé »).
 //
 // Le point d'entrée de XAM (DLL_PROCESS_ATTACH) et ses threads système ouvrent des chemins du noyau : \SystemRoot,
 // \Device\Flash (traces et diagnostics), \Device\MU0, \Device\Harddisk0\Partition1. Sans eux, les objets de XAM ne sont

@@ -9,7 +9,7 @@
 
 Dossier de jeux : $XENONDASH_GAMES_DIR, sinon ~/XenonDash/Games. Sortie : ${XDG_DATA_HOME:-~/.local/share}/xenondash/library/.
 Aucun fichier de jeu n'est copié ni modifié : l'inventaire référence les sources par chemin absolu.
-Formats : voir tools/xcontainer.py et docs/bibliotheque.md.
+Formats : voir tools/xcontainer.py et docs/jeux.md.
 """
 import argparse
 import hashlib

@@ -122,7 +122,7 @@ DeleteFiber = 0x82B3FFB0
 SwitchToFiber = 0x82B48D10
 
 # XDK tardive (D3D9 2.0.21256), apprise sur Trials Fusion. Aucune adresse n'est une supposition du matcher seul ; chacune a deux
-# appuis independants : (1) la table des fonctions tracees a l'execution de TrialsReVolution (docs/native_port.md, « D3D entry
+# appuis independants : (1) la table des fonctions tracees a l'execution de TrialsReVolution (docs/ngpu_core.md, « D3D entry
 # points » : DrawIndexedVertices, DrawVertices, Resolve, ClearF, SetVertexShader, SetPixelShader, attente de barriere 8225B0A0) ou une
 # preuve de structure (Swap = seul appelant de VdSwap ; VblankHandler = appele par le rappel passe a VdSetGraphicsInterruptCallback ;
 # Create*Shader : conteneurs 0x102A11xx recus par ces crochets a l'execution, lot B), (2) la lecture du code, logique identique a
@@ -165,7 +165,7 @@ vertex_constants = ["BeginVertices", 1920, "imm"]
 pixel_constants = ["BeginVertices", 6016, "imm"]
 reg_copy_dest_base = ["Resolve", 10780, "disp"]
 
-# Dashboard 2.0.13604 (dash.xex), D3D9 2.0.20158 : adresses verifiees a la main (docs/ngpu_core.md, section 13604) par comparaison de code avec
+# Dashboard 2.0.13604 (dash.xex), D3D9 2.0.20158 : adresses verifiees a la main (docs/ngpu_core.md, « Dashboard Kinect 13604 ») par comparaison de code avec
 # la famille 5632/6132 (memes fonctions, XDK plus tardive), puis par l'execution (natif, parite mesuree). Le Resolve de reference est
 # l'ENVELOPPE publique 921A6908 (dev, drapeaux, rect, texture, point...) : la grande fonction 921A57B8 a deux arguments de plus
 # (ResolveInner, utile pour lire le registre RB_COPY_DEST_BASE). Les constructeurs sur place des shaders n'ont pas de role : leur

@@ -131,7 +131,7 @@ void DashAppBase::OnPostSetup() {
       };
       // Chargement ASYNCHRONE : le faire ici, sur le thread principal et avant le premier dessin,
       // bloquait le Dashboard (aucun appel D3D -> aucun device Vulkan -> ecran noir, voir
-      // docs/xam_13604_compilation.md). On rend la main et XAM s'installe pendant que la boucle de
+      // docs/xam_recompile.md). On rend la main et XAM s'installe pendant que la boucle de
       // rendu demarre. DASH_XAM_SYNC=1 retablit l'ancien comportement synchrone (diagnostic).
       const bool sync = std::getenv("DASH_XAM_SYNC") != nullptr;
       if (sync) {

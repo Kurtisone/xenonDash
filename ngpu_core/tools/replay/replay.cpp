@@ -2,7 +2,7 @@
 // ngpu_core - reprise de Skate1Native (Kurtisone/Skate1Recompiled, GPL-3.0), tools/native_replay/replay.cpp, commit 81805f51 ;
 // adaptee au noyau (profil et source de shaders de Skate : profiles/skate1). Les adresses D3D ci-dessous sont celles de
 // Skate (XDK 2.0.5632), a terme dans le profil de la recette. Texte d'origine : "skate1 - offline replay of a frame capture with the native renderer
-// (src/native_gpu/renderer.cpp, milestone B in docs/native_d3d.md).
+// (src/native_gpu/renderer.cpp, milestone B in docs/ngpu_core.md).
 //
 //   native_replay <capture.sk1c> <shader cache inputs dir> <out.ppm> [first last]
 //

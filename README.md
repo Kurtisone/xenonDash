@@ -3,111 +3,67 @@
 Le Dashboard de la Xbox 360 (l'interface Kinect : Welcome, Xbox LIVE, My Xbox, Game Library) qui tourne **nativement sous Linux**, sans émulateur,
 avec une bibliothèque de jeux qui se remplit toute seule et des jeux recompilés pour votre machine au premier lancement.
 
-> **Projet en développement.** Le Dashboard Kinect (2.0.13604) s'affiche et se pilote ; un seul jeu est validé de bout en bout (voir « Ce qui marche »).
+> **Projet en développement.** Le Dashboard Kinect (2.0.13604) s'affiche et se pilote ; un seul jeu est validé de bout en bout.
 > XenonDash n'est affilié ni à Microsoft ni à Xbox. Il ne contient **aucun fichier Microsoft ni aucun jeu** : vous fournissez les vôtres.
 
 ## Ce qu'il vous faut
 
-- Un PC **Linux x86-64** avec un **GPU compatible Vulkan** (pilotes à jour). 16 Go de mémoire vive recommandés pour recompiler les jeux.
-- Pour recompiler des jeux : `python3` (3.11 ou plus), `clang`, `cmake` et `ninja`. Sur Arch : `sudo pacman -S python clang cmake ninja`.
-- Pour importer le Dashboard : `python3` seul (`python3-cryptography` est facultatif pour le rechiffrement de `xam.xex` : utilisé s'il est présent, sinon libcrypto ou une implémentation en Python pur).
-- **FUSE 2** pour lancer un AppImage ; sinon lancez-le avec `APPIMAGE_EXTRACT_AND_RUN=1`.
-- **Vos propres fichiers** :
-  - la **mise à jour système officielle 2.0.13604** (le dossier `$SystemUpdate` ou le paquet `su20076000_00000000`), issue de votre console ou de l'archive publique du firmware ;
-  - (facultatif) un dossier de modules et de polices de la flash pour de meilleures polices : sans lui, des polices de remplacement sont utilisées ;
-  - vos jeux : ISO, dossiers extraits, jeux XBLA, Games on Demand.
+- Un PC **Linux x86-64** avec un **GPU Vulkan** (pilotes à jour) ; 16 Go de mémoire vive recommandés pour recompiler les jeux.
+- Pour recompiler des jeux : `python3` (3.11 ou plus), `clang`, `cmake`, `ninja` (Arch : `sudo pacman -S python clang cmake ninja`). Pour importer le Dashboard : `python3` seul.
+- **FUSE 2** pour lancer l'AppImage ; sinon `APPIMAGE_EXTRACT_AND_RUN=1`.
+- **Vos propres fichiers** : la mise à jour système officielle 2.0.13604 (dossier `$SystemUpdate` ou paquet `su20076000_00000000`), facultativement les modules et polices de la flash, et vos jeux.
 
 ## Installer et lancer
 
-1. Récupérez l'AppImage `XenonDash-Kinect.AppImage` et rendez-la exécutable (`chmod +x`).
-2. Lancez-la. **Au premier lancement**, elle vous demande (fenêtre `zenity` ou `kdialog` si installés, sinon dans le terminal) où se trouve la mise à jour système, l'importe, génère les shaders graphiques (une vingtaine de secondes)
-   et crée votre **dossier de jeux** : `~/XenonDash/Games`. Les lancements suivants démarrent directement.
-3. Les données (profil, importation, journal `dash.log`) sont dans `~/.local/share/xenondash/2.0.13604.0-xam/`.
+1. Récupérez `XenonDash-Kinect.AppImage` et rendez-la exécutable (`chmod +x`).
+2. Lancez-la. Au premier lancement, elle demande où se trouve la mise à jour système (fenêtre `zenity`/`kdialog`, sinon le terminal), l'importe, génère les shaders (une vingtaine de secondes)
+   et crée le dossier de jeux `~/XenonDash/Games`. Ensuite, elle démarre directement.
+3. Données (profil, import, journal `dash.log`) : `~/.local/share/xenondash/2.0.13604.0-xam/`.
 
-En ligne de commande, si vous préférez :
-
-```sh
-./XenonDash-Kinect.AppImage --import '/chemin/vers/$SystemUpdate'
-./XenonDash-Kinect.AppImage --help
-```
+En ligne de commande : `--import '/chemin/vers/$SystemUpdate'`, `--help`, `--reimport` (profils conservés), `--data-dir`, `--games-dir`, `--regen-shaders`.
 
 ## Ajouter des jeux
 
-Déposez vos jeux dans `~/XenonDash/Games` (ou dans le dossier indiqué par `XENONDASH_GAMES_DIR`) : dossier extrait contenant `default.xex`, fichier `.xex`, ISO, paquet XBLA,
-Games on Demand. Rien n'est copié ni modifié. Au démarrage, le Dashboard les repère (la touche **F6** relance l'analyse) et ils apparaissent dans la **Game Library** avec leur nom et leur icône.
+Déposez-les dans `~/XenonDash/Games` (ou `XENONDASH_GAMES_DIR`) : dossier extrait avec `default.xex`, `.xex`, ISO, paquet XBLA, Games on Demand. Rien n'est copié ni modifié.
+Le Dashboard les repère au démarrage (**F6** relance l'analyse) et ils apparaissent dans la **Game Library**.
 
-Pour lancer un jeu : Game Library, le jeu, **A**, puis **Play Game**. **Au premier lancement, le jeu est recompilé pour votre machine** (comptez 12 à 25 minutes et environ 1 Go d'espace disque par jeu) ;
-le jeu démarre ensuite tout seul, et le Dashboard revient quand vous le quittez. Les lancements suivants sont immédiats.
+Pour lancer : Game Library, le jeu, **A**, **Play Game**. Au premier lancement, le jeu est **recompilé pour votre machine** (12 à 25 minutes, environ 1 Go par jeu), puis démarre ; le Dashboard revient
+quand vous le quittez. Un jeu non rendu nativement est refusé avec une explication : aucun repli sur un émulateur. Journal : `~/.local/share/xenondash/games/<TitleID>/<clé>/build.log`.
 
-> **Limite actuelle** : l'écran de progression de la recompilation n'est pas encore affiché dans l'AppImage native (il dépendait d'une fenêtre qui n'existe pas encore avec le rendu natif). Pendant la
-> construction, le Dashboard peut sembler figé : patientez, suivez `~/.local/share/xenondash/games/<TitleID>/<clé>/build.log`, et une notification de bureau (`notify-send`) signale la fin si elle est disponible.
-
-Un jeu que XenonDash ne sait pas faire fonctionner nativement est **refusé avec une explication** : il n'y a pas de repli sur un émulateur.
-
-## Ce qui marche, et ce qui ne marche pas encore
+## Ce qui marche
 
 | | État |
 |---|---|
 | Dashboard Kinect : hub, My Xbox, Xbox LIVE (hors ligne), Game Library, succès, navigation | fonctionne |
-| Profil local « Joueur » créé automatiquement ; création de profil et connexion comme sur console (fenêtres XAM) | fonctionne (profil local hors ligne) |
-| **Bouton Guide** (touche `G`) : le Guide de la console (XAM recompilé) s'ouvre avec ses onglets et ses libellés | fonctionne (vérifié au banc) |
-| Création de profil comme sur une vraie console (clavier virtuel Xbox, fenêtre de connexion) | fonctionne (parcours XAM) |
-| Avatar du profil : choix d'un avatar prédéfini (Y ou « Modifier mon avatar »), affiché sur le XMB | fonctionne (vérifié au banc ; à confirmer sur Steam Deck) |
-| Icône Gamerscore à côté du gamertag | fonctionne (vérifié au banc) |
-| Éditeur d'avatar complet (vêtements, traits) | non disponible (nécessite le titre `AvatarEditor.xex`, non recompilé) |
-| Bibliothèque de jeux : dossiers, XEX, paquets XBLA | fonctionne |
-| Bibliothèque de jeux : ISO, Games on Demand | prévu, vérifié sur des fichiers de test seulement |
-| Jeux : **Skate** | fonctionne (testé de bout en bout ; la progression de la recompilation n'est pas visible, voir plus haut) |
-| Jeux : autres titres | à tester ; les jeux très différents de ceux déjà vus peuvent être refusés (ex. Trials Fusion : image noire, donc refusé) |
-| Xbox LIVE, achats, succès en ligne | indisponibles |
-| Dashboards Blades (2.0.6770, 2.0.6717) et Metro (2.0.17559) | non prioritaires pour l'instant |
+| Profil local, création de profil et connexion comme sur console (clavier virtuel, fenêtres XAM) | fonctionne (hors ligne) |
+| Bouton Guide (`G`), icône Gamerscore, avatar prédéfini sur le XMB (éditeur d'avatar complet : non disponible) | fonctionne (au banc ; à confirmer sur Steam Deck) |
+| Bibliothèque : dossiers, XEX, XBLA | fonctionne ; ISO et GOD vérifiés sur fichiers de test seulement |
+| Jeux : Skate | fonctionne ; autres titres à tester (Trials Fusion : image noire, refusé) |
+| Xbox LIVE, achats, succès en ligne ; Dashboards Blades (6770, 6717) et Metro (17559) | indisponibles ; non prioritaires |
 
 ## Contrôles
 
-**Manette** : toute manette reconnue par SDL (Xbox, DualShock, DualSense, ...) fonctionne directement.
+Manette SDL (Xbox, DualShock, DualSense...) directement. Clavier, positions QWERTY physiques (AZERTY : `A` à la place de `Q`) :
+| Touche | Manette | Touche | Manette |
+|---|---|---|---|
+| `Espace`, `Entrée` | **A** | `Q` / `E` | LB / RB |
+| `Retour arrière`, `Échap` | **B** | `1` / `3` | LT / RT |
+| `X` / `Y` | X / Y | `Tab` | Back |
+| Flèches | croix | `P` | **Start** (valide « Done ») |
+| `WASD` (AZERTY `ZQSD`) | stick gauche | `Shift` + flèches | stick droit |
+| `G` | **Guide** | `F6` | rescanner les jeux |
 
-**Clavier**, sur les positions QWERTY physiques (sur un clavier AZERTY, A est à la place de Q, Z à la place de W) :
-
-| Touche | Manette |
-|---|---|
-| `Espace` ou `Entrée` | **A** (valider) |
-| `Retour arrière` ou `Échap` | **B** (retour) |
-| `X` / `Y` | X / Y |
-| `Q` / `E` | LB / RB, pour changer d'onglet |
-| `1` / `3` | LT / RT |
-| `Tab` | Back |
-| `P` | **Start** (valide aussi « Done » sur le clavier virtuel) |
-| `W` `A` `S` `D` (AZERTY : `Z` `Q` `S` `D`) | Stick gauche |
-| `Shift` + flèches | Stick droit |
-| Flèches | Croix directionnelle |
-| `G` | **Bouton Guide** (Guide de la console, voir ci-dessous) |
-| `F6` | Rescanner le dossier de jeux |
-
-### Le bouton Guide
-
-`G` (ou le bouton Xbox de la manette) appelle le **Guide de la console** : c'est XAM recompilé qui
-le gère. Le Guide s'affiche avec ses onglets (Marketplace, Games, Media, Settings) et son menu.
-
-> **Attention** : `P` est **Start**, `Entrée` est **A**. Les touches ci-dessus suivent le mappage
-> du Dashboard (`common/src/dash_input.h`), qui remplace celui du SDK.
-
-Les touches se redéfinissent : `--keybind_a=Return,Space`, `--keybind_right_shoulder=E`, etc.
-Le nom d'une touche suit les *keysyms* X11 (`space`, `semicolon`, `apostrophe`, `Return`,
-`BackSpace`, `Tab`, `Escape`, `Down`...).
+`Entrée` envoie **A**, pas Start. Redéfinition : `--keybind_a=Return,Space`, `--keybind_right_shoulder=E` (noms X11 : `space`, `Return`, `BackSpace`, `Tab`, `Escape`, `Down`...).
 
 ## En cas de problème
 
-- **Écran noir au lancement** : `./XenonDash-Kinect.AppImage --regen-shaders` regénère les shaders ; vérifiez que les pilotes Vulkan sont installés (`vulkaninfo`).
-- **L'AppImage ne démarre pas** : `APPIMAGE_EXTRACT_AND_RUN=1 ./XenonDash-Kinect.AppImage`.
-- **Le jeu n'apparaît pas** : vérifiez le dossier (`~/XenonDash/Games`), appuyez sur F6, et regardez le journal `~/.local/share/xenondash/2.0.13604.0-xam/dash.log`.
-- **La construction d'un jeu échoue** : le Dashboard affiche un message et le journal de construction est `~/.local/share/xenondash/games/<TitleID>/<clé>/build.log`. Vérifiez `clang`, `cmake`, `ninja` et l'espace disque.
-- **Refaire l'import** : `--reimport` (vos profils sont conservés). `--data-dir` affiche le dossier de données, `--games-dir` le dossier de jeux.
+- **Écran noir** : `--regen-shaders` ; vérifiez Vulkan (`vulkaninfo`). **L'AppImage ne démarre pas** : `APPIMAGE_EXTRACT_AND_RUN=1 ./XenonDash-Kinect.AppImage`.
+- **Un jeu n'apparaît pas** : vérifiez le dossier, **F6**, puis `dash.log`. **La construction échoue** : `build.log`, `clang`, `cmake`, `ninja`, espace disque.
 
 ## Usage et licence
-
-XenonDash est distribué sous licence **GPL-3.0** (voir `LICENSE`). Les fichiers que vous importez et les programmes générés à partir d'eux (le Dashboard et les jeux recompilés)
-contiennent une traduction de code propriétaire : ils sont **réservés à votre usage personnel**, ne les partagez pas et ne les publiez pas. Utilisez uniquement du contenu dont vous êtes propriétaire.
+Licence **GPL-3.0** (`LICENSE`). Les fichiers importés et les programmes générés à partir d'eux (Dashboard et jeux recompilés) contiennent une traduction de code propriétaire : usage
+personnel uniquement, ne les partagez pas. Utilisez du contenu dont vous êtes propriétaire.
 
 ## Pour les développeurs
 
-Compiler depuis les sources, porter une autre version, comprendre la recompilation, le rendu natif, XAM : voir l'[index de la documentation](docs/INDEX.md).
+Compiler, porter une version, XAM, rendu natif, reprise du travail : [docs/REPRISE.md](docs/REPRISE.md) (carte de la documentation) et [PLAN.md](PLAN.md) (décisions, To-Do).

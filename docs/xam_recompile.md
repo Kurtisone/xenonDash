@@ -1,1172 +1,291 @@
-# XAM 13604 recompilé dans le processus du Dashboard (palier A)
+# XAM, HUD et modules XUI 13604 recompilés
 
-Suite de « Dashboard 2.0.17559 et XAM recompilé » (docs/technique.md, phase P4). Objectif du palier : `dashboards/2.0.13604.0-xam/`
-démarre avec `xam.xex` 13604 recompilé chargé comme module, le hub s'affiche, les threads système de XAM vivent.
+Dashboard Kinect 2.0.13604 (`dashboards/2.0.13604.0-xam/`, seule variante) : `xam.xex`, `hud.xex` et les modules XUI de la flash sont
+recompilés par ReXGlue et chargés dans le processus du Dashboard. Le rendu est natif (aucun plugin GPU, aucune émulation). Ce
+document remplace `xam_13604_compilation.md`, `xam_etat.md` et `avatar_hub.md` : les journaux datés et les pistes réfutées sont dans
+git (liste en fin de fichier). État courant : `docs/REPRISE.md`. Les mesures datent de novembre 2026, au banc (Xvfb + lavapipe).
 
-## État
+## 1. Architecture
 
-| Étape | État | Preuve |
+### Modules recompilés (`dash_manifest.toml`, entrées `[[modules]]`)
+
+| Module | Chemin invité | Base fixe | `function_table_base` | Rôle |
+|---|---|---|---|---|
+| `xam` | `game:\xam.xex` | `0x817E0000` (taille `0x570000`) | `0x84000000` | XAM : applications système, profils, UI, noyau de session |
+| `hud` | `game:\flash\hud.xex` | `0x913E0000` | `0x84800000` | HUD : boîtes, Guide, scène XUI (1133 fonctions) |
+| `vk` | `game:\flash\vk.xex` | `0x917D0000` | `0x84900000` | clavier virtuel |
+| `signin` | `game:\flash\signin.xex` | `0x90100000` | `0x84A00000` | connexion / « No Profiles Found » |
+| `createprofile` | `game:\flash\createprofile.xex` | `0x90100000` | `0x84B00000` | « Enter Profile Name » |
+| `gamerprofile` | `game:\flash\gamerprofile.xex` | `0x90100000` | `0x84C00000` | carte de joueur |
+| `deviceselector` | `game:\flash\deviceselector.xex` | `0x916D0000` | `0x84D00000` | sélecteur de périphérique (compilé, non essayé) |
+| `ximecore` | `game:\flash\ximecore.xex` | `0x91680000` | `0x84E00000` | éditeur de méthode de saisie (compilé, non essayé) |
+| `Guide_AvatarMiniCreator` | `\sep\20352400\Guide.AvatarMiniCreator.xex` | `0x90100000` | `0x84F00000` | choix d'avatar |
+
+`huduiskin.xex` n'est pas du code : archive de ressources (`XamStrings.xus`), chargée par le SDK comme « module de ressources ».
+`AvatarEditor.xex` (éditeur complet, 15 Mo) n'est pas recompilé.
+
+### Bases fixes et tables de fonctions
+- Les XEX ne sont pas relocalisables (la « `.reloc` » décodée n'est pas une table). `signin`, `createprofile`, `gamerprofile` et
+  `Guide_AvatarMiniCreator` partagent `0x90100000` : un seul est chargé à la fois, à la demande (sur console aussi).
+- Chaque table de fonctions est placée avec `function_table_base` (clé TOML de `[[modules]]`, ajoutée au codegen du SDK ; sans la clé :
+  fin de l'image). Par défaut la table de XAM tombait en `0x81D50000`, soit `0x82000000-0x82477098` : le début de dash.xex (les tas
+  `0x8` et `0x9` étaient deux vues du même fichier). Elle détruisait l'enregistrement d'import `0x92000D64` (FATAL de `DASH_XAM_MODULE=1`).
+- Le SDK sépare désormais les tas XEX `0x8` et `0x9` par défaut (`REX_ALIAS_XEX_HEAPS=1` rétablit l'alias). `vk` (`0x917D0000`)
+  recouvrait sinon l'image de XAM : le codegen lisait des tables de saut à zéro (SIGILL « switch case out of range »).
+- `UnloadUserModule` du SDK retrouve le module par une table de clés (`recompiled_module_keys_`) : le rechargement d'un XUI marche.
+- Plages physiques : dash.xex `0x82000000-0x82EA8000`, XAM `0x817E0000-0x81D50000`, HUD `0x813E0000-0x8142C000` ; tables sans recouvrement.
+
+### Régénération
+- `python3 tools/regen_xam_modules.py` (SDK installé dans `sdk/`, environ 2 min) : codegen par groupes `--target` (le codegen charge tous
+  les XEX avant d'analyser) : {xam, hud, vk, deviceselector, ximecore, signin}, puis createprofile, gamerprofile,
+  Guide_AvatarMiniCreator ; chemin ABSOLU du manifeste (sinon l'empreinte diffère et CMake régénère tout) ; puis
+  `tools/xam_unimpl_patch.py` (crmove `0x81936D14`, crnot `0x81936D28`, vavguw `0x81B19A48` ; le SDK 69764e99 les génère maintenant) et
+  `tools/gen_module_xam_imports.py` (fichiers `src_hud/`, `src_xui/`). À relancer après tout changement de manifeste ou d'overrides.
+- Les overrides par module (`<nom>_overrides.toml`, `<nom>_auto_overrides.toml`) viennent de `tools/codegen_module.py` ; XAM : 16 914
+  fonctions, 9 cibles non résolues, 83 fonctions par pointeur. Le code généré (`generated/`) n'est pas versionné ; les sondes qu'on y
+  met sont perdues à la régénération.
+- Un `rexglue codegen --target` isolé écrase `dll_targets.cmake` et `module_registry.cpp` : passer par le script. Le registre porte
+  des chemins normalisés (`flash/<nom>.xex`). `CMakeLists.txt` ajoute `generated/<dir>/dash_register.cpp` (le gabarit du SDK l'a retiré
+  en `e28335b`) et `ENABLE_EXPORTS ON` sur `dash` (la DLL appelle `xam_skip_device_auth`, `hudd3d_call`, `CallModuleImport`).
+- Fichiers (Microsoft, ignorés par git) : `assets/flash/xam.xex` et lien `assets/xam.xex` (`game:\xam.xex` est lu à la racine ; `assets`
+  est un lien de répertoire). `xam.xex` est chiffré avec la clé XEX1 : `tools/xex_rekey.py` (AES : `cryptography`, sinon libcrypto, sinon
+  Python pur ; `XEX_REKEY_AES=` force) le rechiffre en retail ; la version se lit par `tools/xexinfo/build/xexinfo` (`xboxkrnl v2.0.13604`).
+  Source correcte : `xeBuild-Data-13604.zip`. Le rechiffré doit être aux DEUX emplacements (flash ET racine des données) : code de
+  chargement 2 = hash de bloc invalide (mauvaise clé), pas fichier absent.
+
+### Chargement (`dash_app_base.cpp`, `dash_xam_runtime.{h,cpp}`)
+- `main.cpp` pose par défaut `DASH_XAM_MODULE=2` (module chargé et point d'entrée exécuté ; `1` = chargé sans point d'entrée) et
+  `DASH_PROFILE_MODE=xam` ; une valeur déjà posée l'emporte. Ordre : flash montée (`MountFlash`) avant XAM ; `Partition1`, `MU0`
+  et `\Device\CdRom0` (dossier vide) sur `DASH_XAM_STATE` (défaut `${XDG_DATA_HOME:-~/.local/share}/xenondash/xam`) ; `game:` sur la flash.
+- XAM se charge sur un thread système asynchrone (`RunInSystemProcess`, `XThread` du processus système ; `DASH_XAM_SYNC=1` : synchrone).
+  `KeGetCurrentProcessType()` rend 2 si `ctx.lr` est dans l'image de XAM ou des modules HUD (`InXamImage`, `0x90000000-0x91800000`).
+- Hook `XexLoadImage` : un nom nu demandé par XAM (`hud.xex`, `vk.xex`…) devient `game:\flash\<nom>` ; le module `Guide.AvatarMiniCreator`
+  est reconnu sous `\sep` et sous `\Device\Harddisk0\SystemExtPartition`, les autres XEX de cette partition sont refusés.
+- Modules de ressources (`huduiskin.xex`) : SDK `XexModule::is_resource_module()` ; `XexGetModuleSection` lit les ressources nommées.
+- XAM charge et décharge les XUI à la demande : `sub_8189BE20` (application 254) copie le nom dans l'état du HUD (`0x81BFCAE8 + 224`),
+  `sub_81894210` fait `XexLoadImage(nom, 0x40000008)`, `sub_818943E8` décharge ; le module termine par `XamAppUnloadSelf`.
+- `[[midasm_hook]]` de `xam_overrides.toml` : `sub_818CD070` (écoute `\Device\DeviceAuth`, sinon `KeBugCheck(0x29)`) est neutralisée
+  par `xam_skip_device_auth` (`src/xam_neutralize.cpp`). Applications de XAM : table statique `0x817E4B60` (0xFC xlivebase, 0xFD uvbase,
+  0xFB xgi, 0xFA musicplayer, 0xF7 LiveMessenger, 0xF5 ximecore, 0xF4 Community, 0xF2/0xF3 avatar, 0xF8 cert), enregistrées par `sub_818951C8`.
+- `KeBugCheck`/`KeBugCheckEx` journalisent (`[kernel] KeBugCheck… lr=`), puis arrêt fatal (SDK `7f60045f`) ; le recompilateur termine le bloc après le `bl`.
+
+### Redirection des imports du Dashboard (`common/src/dash_xam_redirect.{h,cpp}`)
+- Un hook `REX_HOOK_RAW(__imp__<Nom>)` par import `xam.xex` du Dashboard (macro `DASH_XAM_REDIRECT_HOOK`). `Dispatch` exécute l'export de
+  XAM recompilé de même ordinal (`GetProcAddressByOrdinal`, puis `FunctionDispatcher::GetFunction`) avec le même `ctx`, sinon le HLE du SDK.
+  Piège : `librexruntime.so` exporte aussi `__imp__<Nom>` ; le repli HLE passe par `dlsym(RTLD_NEXT)` (sinon récursion).
+- Liste par défaut (mode profil XAM) : `XGetVideoMode`, `XamUserGetXUID`, `XamUserGetSigninState`, `XamUserLogon(Ex)`,
+  `XamUserCheckPrivilege`, `XamUserIsOnlineEnabled`, `XamShowMessageBoxUI(Ex)`, `XamShowKeyboardUI`, `XamShowSigninUI(p)`,
+  `XamShowCreateProfileUI`, `XamShowDeviceSelectorUI`, `XamShowGamerCardUIForXUID`, `XamShowGuideUI`, les imports d'avatar
+  (`kAvatarImports`) ; `DASH_XAM_REDIRECT` ajoute, `DASH_XAM_NOREDIRECT` retire. Les accroches de `dash_profile.cpp` / `dash_user.cpp`
+  (`XamUserGetName`, `XamUserGetGamerTag`, `XamProfile*`, `XamReadTileEx`) passent la main à l'export de XAM (`DASH_XAM_FWD`).
+  Restent au HLE : `XamUserReadProfileSettings(Ex)`/`Write` (rediriger plante : `0x7008004F` lu comme pointeur), sauf la synchro du gamertag.
+- Les messages vers l'application 0xFA (XMP : `XMsgInProcessCall`, `XMsgSystemProcessCall`, `XMsgStartIORequest(Ex)`) vont à XAM ;
+  les autres applications restent au HLE (`DASH_XMP_HLE=1` : tout au HLE).
+- Les modules recompilés appellent `__imp__<Nom>` masqués générés (`gen_module_xam_imports.py`) qui appellent `CallModuleImport` : l'export de
+  XAM de même ordinal est exécuté ; sinon repli `dlsym(RTLD_DEFAULT)` avec avertissement. Les imports `xboxkrnl` restent au noyau du SDK.
+- Signatures : `XamShowMessageBoxUI` a 9 arguments (le 9e à `r1 + 0x54`) ; `XamShowGuideUI` un seul (`user_index`).
+- `XamUserGetSigninState` : `XN_SYS_SIGNINCHANGED` est rediffusé côté HLE (le Dashboard écoute les files du SDK, pas celles de XAM).
+- `AvatarEditorOption2` : `XamLaunchAvatarEditor` (ordinal 2011) ouvre `XamShowAvatarMiniCreatorUI(user, 2)` (ordinal 1700) ; ouverture
+  différée depuis le MiniCreator (un appel synchrone après `XamAppUnloadStack` renvoie 5).
+
+### Rendu natif du HUD (palier N2)
+- XAM embarque sa propre D3D9 2.0.2099.16 (celle du Dashboard : 2.0.20158) : groupes de registres décalés de 1088 octets, shaders à
+  `+12944` (pixel) et `+12948` (vertex). Adresses invitées (`native_gpu/profiles/hud_xam13604.h`) : `BeginVertices 819C8E38`,
+  `EndVertices 819C90B8`, `DrawVerticesUP 819C90D8`, `SetTexture 819C8C60`, `SetVertexShader 819C6BE8`, `SetPixelShader 819C69D0`,
+  `Resolve 819CA3E0`, soumission `819CC490` (`VdSetSystemCommandBuffer`), image du HUD `sub_818A1368` (← `sub_818A1B58` ← `sub_818A2500`).
+- Aucun PM4 exécuté : `src_xam_d3d/xam_d3d_hooks.cpp` (+ `xam_d3d_entries.inc`, 1347 adresses `819B0000-819F0000`) définit des `sub_<adresse>`
+  forts qui appellent `hudd3d_call` ; `native_gpu/src/hud_front.cpp` est la façade (second noyau `ngpu_core`, `ngpu_core` non modifié).
+  Cible effacée avant chaque image (D3D ne la vide jamais) ; soumission limitée à 60 Hz.
+- Surface 852x480 relue à la soumission, puis `ngpu::HudComposite` la compose sur l'image du Dashboard en 1280x720, alpha prémultiplié.
+  `ngpu::HudActive()` (16 pixels d'alpha >= 8) suspend les entrées du Dashboard jusqu'au relâchement des boutons.
+- Fond atténué : le premier dessin de l'image (quad plein écran, `vs 509E…`, `ps 4D19…`, `ColorFactor` 0,22) n'est pas rendu ; son facteur
+  multiplie l'image du Dashboard, dans la boîte englobante de l'overlay seulement (lecture déduite, non vérifiée sur console).
+- `VdRegisterXamGraphicsNotification` / `VdCallGraphicsNotificationRoutines` (`kernel_video.cpp`) : rappel `sub_818A04F8`, messages 2
+  (`X_DISPLAY_INFO`) puis 1 ; sans eux les sommets du quad étaient NaN. `VdQuerySystemCommandBuffer` rend 1 pour XAM.
+- Plan overlay D1OVL (registres `0x1860-0x186B`, PM4 type 0 dans le tampon système) : notifications (« a signed out ») composées à leur
+  fenêtre (244x90, bas centre) sans prendre les entrées.
+- Shaders : `tools/hud_shaders.py extract|translate` : 34 conteneurs `0x102A0E0x` (29 PS, 5 VS), 33/34 traduits (échec : VS `817F9550`,
+  jamais demandé). Nom = XXH3-64 du microcode, vfetch mis à zéro ; `DASH_HUD_SHADERS=<dossier>` (Dashboard : `DASH_NGPU_SHADERS`).
+- Le HUD tourne en continu dès l'image 2 : sans demande, il dessine le chrome de chargement (barre + anneau) ; `DASH_HUD_CHROME=1` l'affiche toujours.
+
+### Entrées (palier H, `common/src/kernel_xinputd.cpp`)
+- XAM découvre une manette par `DrvSetUserBindingCallback(0x818AD898)` ; un fil hôte annonce la manette virtuelle `0x10000001` (rappel
+  d'arrivée `0x81BE1E10 + 4 * type`), tableau des ports `0x81BFD948` (entrée `+8 + 8 * (7 * port + type)`). `XInputdGetCapabilities`
+  (manette standard), `XInputdReadState` (`InputSystem::GetState(0)` du SDK, port 0 seulement), `XInputdNotify` (sans effet).
+- `src_xam_patch/xam_input_patch.cpp` : `sub_818C4240` (cœur de `XamInputGetState`) lit la manette virtuelle quand XAM répond `0x48F`.
+- Le Dashboard et le HUD lisent le même `InputSystem` ; l'exclusivité est côté Dashboard (voir `HudActive`). Frappes du HLE vidées tant que
+  le HUD a le focus. Touches de test : `tools/xkeys.py` (`XKEYS_HOLD=0.12`).
+
+### Stockage du profil (palier N4)
+- XAM écrit un paquet CON (`Content\<XUID>\FFFE07D1\00010000\<XUID>`) et demande au pilote STFS du noyau de monter le volume. Pilote
+  minimal `common/src/kernel_stfs.cpp` dont le volume est un dossier hôte : `<game_data_root>/profiles/<XUID>/` (autres paquets :
+  `.stfs/`). Codes de `StfsControlDevice` : 0 début d'écriture, 1 fin, 2 vérification, 3 empreinte (36 octets, SHA-256 des fichiers), 4
+  validation, 5 état. Un paquet créé ici n'est lisible que par ce noyau.
+- Compte : `Account` = 24 octets (« XDASHOBF », longueur, CRC-32) + données en clair (`kernel_obfuscate.cpp`). En-tête signé par HMAC-SHA-256
+  avec une clé locale tirée au hasard (`<état XAM>/local_console.key`, `kernel_localkey.cpp`). XUID aléatoire hors ligne `0xE…`
+  (`sub_818AFAD0`). Aucune clé de console fabriquée, aucune protection contournée. Profil de test : supprimer `profiles/<XUID>` et `Content/<XUID>`.
+- `dash_auto_profile` (défaut `false`) : sans profil, `XamUserGetName`/`GetGamerTag` rendent une chaîne vide avec succès.
+
+### Partition système étendue (avatar)
+- `signin.xex` n'appelle `XamShowAvatarMiniCreatorUI` que si `XamPackageManagerGetFileSize("Guide.AvatarMiniCreator.xex")` est non nul ; XAM
+  lit son index dans `system.manifest` (signé) de `\Device\Harddisk0\SystemExtPartition\`. `MountSystemExtPartition` monte
+  `<données>/SystemExtPartition` sur `\Device\HostSystemExtPartition` avec un lien (le NullDevice du SDK masquerait un montage direct) ;
+  `XboxKrnlVersion` reprend celle du Dashboard.
+- `tools/appimage/xenondash_import.py` (`build_system_ext`) reconstruit l'arbre depuis `$SystemUpdate` (`system.manifest` à la racine ;
+  `FFFE07DF0000000{1,2,6,8}` dans `Content/0000000000000000/FFFE07DF/00008000/` ; `Xna_TitleLauncher.xex` dans `32000100/` ; le reste dans
+  `20352400/`) dans `<dst>.new`, puis remplace (atomique). `AppRun --system-ext-only` répare une installation sans partition.
+
+## 2. Paliers
+
+| Palier | Fait | Aujourd'hui |
 |---|---|---|
-| 1. Images décodées | fait | `work/xam13604.pe` reproduit à l'identique par `tools/xexinfo` (MD5 98d71f82...) ; `work/xam13604_rekey.xex` reproduit par `tools/xex_rekey.py` depuis le `$flash_xam.xex` de la mise à jour 13604 (`work/port/2.0.13604.0/extract/su20076000_00000000/`). |
-| 2. Codegen de XAM en module | fait | `tools/codegen_module.py` (projet de travail `work/xam13604proj/`, journal `codegen_module.log`) : 16 914 fonctions connues, 9 cibles non résolues, 83 fonctions par pointeur, 126 fichiers, 61 Mo. |
-| 3. Projet `dashboards/2.0.13604.0-xam/` | fait (compile) | codegen `rexglue` : 390 fichiers ; `libdash_xam.so` (33 Mo) et `dash` compilés. |
-| 4. Démarrage et blocage | partiel | voir ci-dessous. |
-| 5. Critère de fin | partiel | (a) hub : non atteint avec XAM chargé ; (b) threads système : atteints, sans `FATAL` pendant 90 s ; (c) liste ci-dessous. |
+| A | XAM décodé (`xex_rekey.py`, `xexinfo`), codegen module, projet 13604-xam. Correctifs : flash montée avant XAM, XAM dans le processus système (`RtlEnterCriticalSection` plantait), `IoDismountVolumeByName` = succès (boucle de 8,3 M de lignes) | en place |
+| B | Cause du hub noir : tables de fonctions de XAM superposées à dash.xex ; `xam_unimpl_patch.py` | corrigé par C |
+| C | `function_table_base`, `PPCImageInfo::table_base`, contrôle de recouvrement en adresses physiques (`GuestRangesOverlap`), `ReserveImageAlias` | en place (tas séparés depuis N3) |
+| D | Hub affiché avec XAM : `ObReferenceObjectByName` lisait mal l'`ANSI_STRING` (voir correctifs) | corrigé dans `common/` |
+| E | Mécanisme de redirection des imports (`dash_xam_redirect`), `XGetVideoMode` via XAM | en place ; liste étendue en N4 |
+| F | `XamShowMessageBoxUI` acceptée (`0x3E5` au lieu de `0x65B`) : 9 blocages de l'initialisation de XAM levés (voir correctifs) | en place |
+| G | `XeCryptRandom` constant → boucle de la 0xFA ; `hud.xex` recompilé (module `dash_hud`) ; imports du HUD vers XAM ; `DeviceAuth` neutralisé | HUD chargé et vivant |
+| H | Manette virtuelle `XInputd*` ; plantages sporadiques (en-tête d'événement périmé, `XThread` détruit trop tôt) | en place, 20 démarrages sans SIGSEGV |
+| N2 | Rendu natif du HUD (boîte de message par-dessus le hub) | en place |
+| N3 | `vk` et `createprofile` recompilés (huit modules) ; tas 0x8/0x9 séparés ; `regen_xam_modules.py` | en place |
+| N4 | Création de profil, connexion, premier lancement sans profil, par XAM recompilé et pilote STFS local | en place |
+| N5 | Boîtes du HUD appelables depuis l'hôte (`dash_xam_hud_ui.{cpp,h}`, thread invité unique, file sérialisée) ; progression de construction (`DASH_TEST_BUILDBOX`) | socle en place ; toasts, `XuiTextElementSetText` (ordinal 867) et `XamShowAchievementsUI` non faits |
+| Guide (20-26 nov.) | Chaîne d'ouverture du Guide, strings localisées, boîte « Unrecognized Disc » retirée | le Guide s'ouvre (section 5) |
 
-### Étape 4 : ce qui a été corrigé
+## 3. Correctifs et causes
 
-Les trois premiers essais tombaient sur le même endroit (threads système de XAM). Chaque correctif est dans `common/` ou dans
-le projet, sans toucher au SDK.
-
-1. **Ordre de montage** (`common/src/dash_app_base.cpp`) : la flash (`\SystemRoot`, `\Device\Flash`) était montée
-   après le chargement de XAM. Elle est désormais montée avant (`dash::xamrt::MountFlash`). Pour `DASH_XAM_MODULE`,
-   `\Device\Harddisk0\Partition1` et `\Device\MU0` sont montés sur `DASH_XAM_STATE` (défaut
-   `${XDG_DATA_HOME:-~/.local/share}/xenondash/xam`), `common/src/dash_xam_runtime.{h,cpp}`. Les erreurs
-   `\Device\Flash\sutrace.debug ... device not found` disparaissent. Insuffisant seul (crash SIGSEGV toujours là).
-2. **Processus système** (`dash::xamrt::RunInSystemProcess`) : `KeGetCurrentProcessType()` renvoie le type du processus
-   du thread. Le point d'entrée de XAM teste `== 2` (processus système) avant d'utiliser son état (`sub_8188FAB8`,
-   `KeTlsGetValue` sur l'index écrit par `sub_81891918`). `rex::system::XHostThread` place son thread dans le processus
-   titre (type 1), donc le repli renvoie un objet nul et `RtlEnterCriticalSection` plante. Le thread « XAM load » est
-   désormais un `XThread` créé avec `ks->GetSystemProcess()`. Le crash disparaît.
-3. **Démontage** (`common/src/kernel_stubs.cpp`) : `IoDismountVolumeByName` renvoyait une valeur non nulle (stub du SDK) ;
-   la machine d'état du stockage de XAM le rappelait sans fin (8,3 millions de lignes en 90 s). Surcharge : `STATUS_SUCCESS`.
-4. **Enregistrement du module** (`dashboards/2.0.13604.0-xam/CMakeLists.txt`) : voir « Régression du SDK » ci-dessous.
-
-### Régression du SDK (fork `third_party/xenondash-sdk`)
-
-Le commit `e28335b` (8 novembre) a retiré `{{ project }}_register.cpp` du gabarit `resources/templates/codegen/sources_cmake.inja`
-pour **tous** les projets. Pour une DLL module, `generated/xam/dash_register.cpp` (qui définit `ReXModule_Register` et
-`ReXModule_GetImageInfo`) n'est donc plus compilé : le chargement échoue avec « ReXModule_Register not found in 'dash_xam' ».
-Le 17559-xam, généré le 6 novembre, listait encore ce fichier.
-
-- Contournement dans le projet (`CMakeLists.txt` du 13604-xam) : `target_sources(dash_xam PRIVATE generated/xam/dash_register.cpp)`
-  après `include(generated/rexglue.cmake)`. À retirer quand le SDK le rétablit.
-- Correctif SDK (non appliqué) : dans `sources_cmake.inja`, réinsérer `{{ cmake_var("CMAKE_CURRENT_LIST_DIR") }}/{{ project }}_register.cpp`
-  quand `is_dll` est vrai.
-- À vérifier : le 17559-xam régénéré avec ce SDK aura le même problème.
-
-### Mesures (étape 4, runs sous Xvfb `:92` + lavapipe, captures et journaux hors dépôt)
-
-| Run | Réglage | Résultat |
-|---|---|---|
-| `m2a` | `DASH_XAM_MODULE=2`, module introuvable | hub affiché (`m2a.png`), `game:\xam.xex` absent |
-| `m2c` | module trouvé, thread hôte standard | SIGSEGV (139) à 33 s ; gdb : `RtlEnterCriticalSection_entry` appelé depuis `__imp__sub_818EE808` (`dash_recomp.29.cpp:6568`), pile : `sub_818BA678` (43.cpp:4197) ← `sub_818BA778` (23.cpp:4359) ← `sub_818BB140` (30.cpp:4387) ← `sub_8187AD20` (55.cpp:1537) ← `sub_81872460` (24.cpp:1389) ← `xstart` (53.cpp:1271) |
-| `m2d` | + devices | même SIGSEGV à 36 s |
-| `m2e` | + thread processus système | vivant à 90 s ; 9 threads système ; 8,3 M de lignes `IoDismountVolumeByName - stub` |
-| `m2f` | + démontage `STATUS_SUCCESS` | vivant à 90 s ; 212 lignes ; **écran noir** (`m2f.png`) |
-| `base2` | sans module (même binaire) | **hub affiché** (`base2.png`) |
-| `m1a` | `DASH_XAM_MODULE=1` (chargé, sans point d'entrée) | `FATAL` à 20 ms du chargement : appel à `0xFFFFFFFF` depuis `dash_recomp.35.cpp:844` (`bctrl`, lr `0x9219F084`) |
-
-Les fichiers XAM absents des périphériques factices sont journalisés en erreur sans arrêter XAM : `secexp.xex`
-(`\Device\Harddisk0\Partition1`), `xstudio.xex` (`\Device\Flash`), `systemupdate.xex` (`\Device\Mass0`).
-
-Gdb en batch : `gdb -batch` lancé avec le Dashboard puis SIGINT envoyé à gdb après 60 s (l'attache par `ptrace` est
-interdite par `ptrace_scope=1`). Pile à 60 s avec module : le thread principal du Dashboard est dans `ExCreateThread_entry`
-(destruction d'un `XThread`) ; les threads système de XAM dorment (`nanosleep`, `KeWaitForMultipleObjects`).
-
-## Blocages restants, classés
-
-1. **Écran noir avec XAM chargé** (`m2f`, `m2h`) alors que le hub s'affiche sans module (`base2`). Cause du `FATAL`
-   (`m1a`) établie ; cause du hub noir probable. Voir « Palier B ».
-2. **Instructions non implémentées dans XAM** : traitées par `tools/xam_unimpl_patch.py` (voir « Palier B »).
-3. **Redirection des imports** non commencée : le Dashboard appelle toujours le HLE (`__imp__Xam*`, `__imp__Xui*`). Le
-   module tourne à côté sans rien servir au Dashboard. Plan : générateur `REX_HOOK_RAW` par ordinal (docs/technique.md, palier 3).
-4. **Contenu des périphériques** : les fichiers attendus par XAM (`secexp.xex`, `xstudio.xex`, `systemupdate.xex`) ne sont
-   pas dans les répertoires d'état, qui sont vides au départ.
-5. **Variables et stubs noyau** : `xam:0x3db` (`g_XuiAutomation`), `xboxkrnl:0x157` (`XboxKrnlBaseVersion`) non
-   implémentées ; `EtxProducerRegister`, `KeSetPriorityClassThread`, `Drv*Callback`, `XeKeysGetStatus`, `NicGetLinkState`
-   en stub ; `set_priority: permission denied` (3 fois).
-6. **SDK** : régression du gabarit de registre (ci-dessus).
-
-## Reproduire
-
-```sh
-# 1. image décodée (work/, non versionnée)
-tools/xexinfo/build/xexinfo work/xam13604_rekey.xex work/xam13604.pe
-# 2. codegen module (projet de travail dans work/, manifeste xam13604_manifest.toml)
-python3 tools/codegen_module.py work/xam13604proj <manifeste> xam work/xam13604.pe \
-  817E0000 81850000 383400 817E0400:8182DADC 81BE0000:81CBA840
-cp work/xam13604proj/xam_auto_overrides.toml work/xam13604proj/xam_overrides.toml dashboards/2.0.13604.0-xam/
-# 3. flash : xam.xex et lien dans assets/ du 13604 (fichiers Microsoft, ignorés par git)
-cp work/xam13604_rekey.xex dashboards/2.0.13604.0-xam/assets/flash/xam.xex
-ln -s flash/xam.xex dashboards/2.0.13604.0-xam/assets/xam.xex
-# 4. projet
-cd dashboards/2.0.13604.0-xam && ../../sdk/bin/rexglue codegen dash_manifest.toml
-python3 ../../tools/xam_unimpl_patch.py generated/xam   # crmove, crnot, vavguw (palier B)
-cmake --preset linux-amd64-relwithdebinfo && cmake --build out/build/linux-amd64-relwithdebinfo -j 6
-# 5. lien du plugin GPU (manquant sinon : « GPU plugin 'xenos' not found »)
-ln -sf "$PWD/../../sdk/lib/librexgpu-xenos.so" out/build/linux-amd64-relwithdebinfo/librexgpu-xenos.so
-# 6. lancement (écran et captures choisis par variables)
-DASH_DISPLAY=92 DASH_RUNS=<dossier_hors_depot> DASH_XAM_MODULE=2 DASH_ENV="DASH_XAM_STATE=<dossier> ..." ./run_headless.sh 90 essai
-```
-
-Contraintes : `assets` du projet 13604-xam est un lien de répertoire (le SDK refuse les liens par fichier hors de la racine
-du jeu) ; `game:\xam.xex` est lu depuis `assets/xam.xex`.
-
-## Fichiers
-
-- Nouveaux : `dashboards/2.0.13604.0-xam/` (CMakeLists.txt, CMakePresets.json, dash_manifest.toml, xam_overrides.toml,
-  xam_auto_overrides.toml, run_headless.sh, input_test.sh, src/), `common/src/dash_xam_runtime.{h,cpp}`,
-  `tools/xam_unimpl_patch.py`, ce document.
-- Modifiés : `common/src/dash_app_base.cpp`, `common/src/kernel_stubs.cpp`, `common/CMakeLists.txt`.
-- Ignorés par git (assets Microsoft, build) : `dashboards/2.0.13604.0-xam/assets/flash/xam.xex`, `dashboards/2.0.13604.0-xam/assets/xam.xex`,
-  `work/xam13604*`, `work/xam13604proj/`.
-- Compilation vérifiée : `dashboards/2.0.13604.0-xam` (et, avant sa suppression le 2026-11-26, `dashboards/2.0.13604.0` en HLE, rc=0 après les changements de `common/`).
-  Le 17559 et le 6770 n'ont pas été recompilés.
-
-## Palier B : cause du hub noir et correctifs
-
-### Cause établie : tas 0x8 et 0x9 superposés, table de fonctions de XAM
-
-- Les tas `0x80000000` et `0x90000000` sont deux vues du même fichier partagé (`/proc/PID/maps` : hôte `0x180000000` et
-  `0x190000000` ont le même décalage fichier `0x80000000`). L'octet invité `0x92000D64` (dash.xex) est donc le même que
-  `0x82000D64`.
-- La table de fonctions de XAM est placée à `image_base + image_size` = `0x81D50000`, de taille
-  `2 × (code_size + 0x10000)` = `0x727098` : elle couvre `0x82000000-0x82477098`, soit le début de dash.xex en mémoire
-  physique. `Memory::InitializeFunctionTable` la remet à zéro (`Zero`), puis `SetFunction` y écrit des pointeurs de
-  fonctions hôte (8 octets par fonction).
-- Preuves (gdb en batch, `probe8.py`, watchpoint sur l'alias `0x182000D64`) : écrivain 1 = `memset` dans
-  `Memory::InitializeFunctionTable` (la case passe à 0) ; écrivain 2 = `Memory::SetFunction` appelé par
-  `ReXModule_Register` (la case passe à `FE7F0000`).
-- La case `0x92000D64` est un enregistrement d'import du Dashboard : `SetupLibraryImports` y écrit `0x30002000`
-  (variable de noyau), puis la table de XAM la détruit. Le `FATAL` de `DASH_XAM_MODULE=1` vient de l'appel de
-  journalisation `sub_9219F010` (`dash_recomp.35.cpp:780`), qui lit `[[0x92000D64]] + 24` ; la case vaut
-  `0xFFFFFFFF`, un pointeur hôte écrit par `SetFunction`.
-- Un watchpoint sur `0x192000D64` seul ne voit rien : les écritures passent par l'alias `0x182000D64`.
-- Le hub noir avec `DASH_XAM_MODULE=2` relève du même mécanisme (les 4,6 Mo de début de dash.xex sont écrasés). Non vérifié
-  isolément.
-
-### Essai de déplacement de la table (SDK, annulé)
-
-- Le déplacement de la table hors de l'alias (contrôle des pages des deux tas et des recouvrements entre tables, table
-  placée en `0x83E10000`) fonctionne au chargement, mais le code généré ne lit pas la table là où elle est déplacée :
-  `REX_LOOKUP_FUNC` (`generated/xam/dash_pch.h`) calcule `REX_IMAGE_BASE + REX_IMAGE_SIZE` en dur. Un appel indirect lit
-  alors les données de dash.xex : crash SIGSEGV à 49 s, dans la boucle d'initialisation de XAM (`sub_818FCDB0`,
-  `call *%rax`, cible `0x3e80002918b`).
-- Les réservations de pages ne suffisent pas : `BaseHeap::Reset` (`xex_module.cpp:526`) efface la table de pages du tas
-  à chaque chargement de XEX (la réservation de la table du Dashboard disparaît au chargement de dash.xex) ;
-  `AllocFixed` avec `Reserve|Commit` ne détecte pas les recouvrements ; les tas `0x8` ont des pages de 64 Ko, les tas `0x9`
-  de 4 Ko.
-- Le SDK est restauré à son état d'origine (`sdk/lib/librexruntime.so`, md5 `067250b8…`). Le diff de l'essai est gardé hors
-  dépôt.
-
-### Correctif (appliqué : voir « Palier C »)
-
-1. Codegen : remplacer `REX_IMAGE_BASE + REX_IMAGE_SIZE` de `REX_LOOKUP_FUNC` par `REX_TABLE_BASE`, émis par module
-   (`resources/templates/codegen/`), et ajouter `table_base` à `PPCImageInfo` (valeur par défaut : fin d'image, donc
-   compatible avec le Dashboard HLE et le 17559).
-2. `Memory::InitializeFunctionTable` : accepter `table_base`, vérifier le recouvrement en adresses physiques (bit 28)
-   avec les tables existantes et les images, réserver l'alias quand la page le permet, et ne pas se fier à la table de
-   pages seule (`Reset`).
-3. Régénérer `dashboards/2.0.13604.0-xam` avec un `table_base` libre physiquement (par exemple `0x84000000`).
-4. À vérifier ensuite : la plage alias de l'image XAM (`0x917E0000-0x91D50000`) n'est pas réservée dans le tas `0x9`. Le
-   Dashboard peut y allouer ; non vérifié.
-
-### Instructions non implémentées (fait)
-
-- `crmove` (0x81936D14), `crnot` (0x81936D28) et `vavguw` (0x81B19A48) : `tools/xam_unimpl_patch.py <generated/xam>` les
-  remplace dans le code généré par du C++ direct (`ctx.cr1.so = ctx.cr7.so;`, `ctx.cr0.eq = !ctx.cr0.eq;`, moyenne par
-  élément). Le SDK de la révision courante ne les génère pas. À relancer après chaque `rexglue codegen` du projet XAM.
-  Vérifié : compilation de `libdash_xam.so`, et aucun `Unimplemented PPC` en 90 s (ces chemins ne sont pas atteints
-  pendant les essais).
-
-### Critères du palier B
-
-| Critère | État |
+### Noyau et runtime (`common/`, `dashboards/2.0.13604.0-xam/`)
+| Correctif | Cause |
 |---|---|
-| Hub affiché avec `DASH_XAM_MODULE=2` | non atteint : écran noir (`m2h`) |
-| Pas de `FATAL`, threads système vivants, 60 s stables | atteint pour `m2h` (vivant 90 s, aucun `FATAL`) |
-| Instructions manquantes | fait (`tools/xam_unimpl_patch.py`) |
-| Redirection d'un import vers XAM recompilé | non fait (bloqué : le hub doit d'abord être corrigé) |
+| `ObReferenceObjectByName` (`kernel_stubs.cpp`) | le SDK lit l'`ANSI_STRING` comme une chaîne C et n'écrit pas `*objet` en échec : `sub_81883CB8` déréférence `0xBEBEBEBE` ou un objet ancien, ce qui libère le handle du thread du Dashboard (`~XThread` dans `ExCreateThread_entry`, `pthread_cond_destroy` bloqué : hub noir). Échec : `*objet = 0`, `STATUS_OBJECT_NAME_NOT_FOUND` |
+| `UsbdBootEnumerationDoneEvent` type 0 (`FixKernelVariables`) | créé en type 1 (auto-réarmement) : le premier fil (`sub_81872180`) consomme le signal ; `sub_81879B58` attendait `0x30000254` |
+| `DrvGetContentStorageNotification` = `0xC0000001` | stub à r3 inchangé : `sub_8185C5E0` bouclait à 100 % CPU |
+| minuteries invitées (`kernel_timers.cpp`) | `KeSetTimerEx`/`KeCancelTimer` stubs, objet `0x81BFB6F0` (type 9) refusé par `GetNativeObject` : `sub_81890DE8` recevait `0xC000000D` en boucle ; `KeSetTimerEx` transmet le DPC |
+| garde audio (`kernel_audio_guard.cpp`) | `AudioSystem::SubmitFrame` avec client nul pendant une désinscription ; `XAudioGetDucker*` stubs (f1 = 1.0, SIGFPE `sub_81BAB930`) |
+| `ObCreateObject`/`ObInsertObject`/`ObReference(Handle)` (`kernel_ob.cpp`) | stubs : `sub_8187D9A8` (type `'Nfto'`) recevait un objet nul, l'application 0xFD échouait. Corps jamais libéré |
+| `XboxHardwareInfo.Flags |= 0x200` | `sub_818A2F90` (HUD) n'est planifiée que si le bit est posé (valeur `0x220`) |
+| `KeGetCurrentProcessType` = 2 pour XAM | XAM existe en une instance, système ; l'état « titre » (id 238, tas de classe 0) n'existe pas |
+| `XeCryptRandom` (`kernel_random.cpp`) | le SDK fait `memset(0xFD)` : le tirage par rejet de `sub_81A71EE8(0, 0x89ABCDEF)` bouclait (156 024 appels en 30 s) ; ce n'étaient pas les clés |
+| `HalGetPowerUpCause` octet 4 bit 0 = 0 ; `XexLoadExecutable` = 0 | `sub_81892A60` lit `0x81BFB854+4` : bit à 1 = `VdDisplayFatalError` `0x12348` (lr `0x81872278`) ; `STATUS_DLL_NOT_FOUND` `0xC0000135` fatal en `sub_8187A038` (`0x12247`, lr `0x8187A2F8`) |
+| `NicGetLinkState`, `MtpdGetCurrentDevices` | stubs à r3 aléatoire : boucle réseau du HUD. `NicGetLinkState` : ne JAMAIS écrire par r4 (r4 hérité), r3 = 0 seulement |
+| `XeKeysGetStatus` | sortie `*r3 = 0x4` (`DASH_XEKEYS_STATUS`) : à 0, XAM ouvre la boîte « Game Error » ; à `0xC`, le fil du HUD ne démarre pas |
+| `kernel_event_guard.cpp` | XAM réutilise la mémoire d'objets sans `KeInitializeEvent` : signature `REX\0` périmée, `KeResetEvent` plante (`sub_81890650`) |
+| `ObReferenceObject`/`ExCreateThread`/auto-déréférencement (`kernel_ob.cpp`) | `ObReferenceObject` stub, drapeau `0x80` sans référence, `XThread::Exit` libère avant `Thread::Exit` : `XThread` détruit trop tôt. Fuite de quelques centaines d'octets par fil |
+| `VdSetSystemCommandBuffer`, `VdQuerySystemCommandBuffer` (`kernel_video.cpp`) | stub journalisé 371 443 fois ; l'interrogation sans pause tenait un fil à 100 % |
+| `game:` / `\Device\CdRom0` | `GAME:` → `\Device\CdRom0` (posé par XAM) pendait : `game:\flash\<nom>` échouait une fois sur deux ; CdRom0 monté sur un dossier VIDE ; SDK `766678d`, `0bc075f` : liens sensibles à la casse |
+| `XamPackageManagerGetExperienceMode` = 0 | stub à r3 résiduel (`DASH_XAM_EXPERIENCE_REDIRECT=1` : vers XAM) |
+| `XamIsIptvEnabled` (export 1301, `RETAIL_FLAGS & 0x1000`) | le stub laissait r3 ; `EcoMediaroomEnabled` ajoutait un emplacement Mediaroom vide dans My Xbox |
+| `XamLoaderGetDvdTrayState` sans argument (`sub_81884580`) | l'ancien prototype écrivait 2 par r3 dans la vtable de l'Async Loader : appel nul dans `sub_922AA018` (lr `0x922AA0D8`) ; trouvé par point d'arrêt matériel |
+| `MmDoubleMapMemory`/`MmUnmapMemory` | vrai double mappage (`Memory::MapAlias`/`UnmapAlias`) |
+| `NetDll_WSAStartupEx` = `NetDll_WSAStartup` | `signin.xex` l'appelle par `XexGetProcedureAddress(xam, 36)` ; le stub rendait 2 : « temporarily unavailable, 80004005 » |
+| `Rtl*String`, `ObTranslateSymbolicLink`, `NtOpenSymbolicLinkObject`, `XeKeysObfuscate`, `StfsCreateDevice`, `XeCryptMd5`, `Ex*XConfigSetting` | création de profil (voir ci-dessous) |
+| RMW XConfig (`kernel_xconfig.cpp`) | `ExReadModifyWriteXConfigSettingUlong` part de la valeur du SDK : Getting Started effaçait le bit `0x40` « console configurée » et déconnectait les profils |
+| Fuseau horaire (`kernel_xconfig.cpp`, `host_timezone.h`, `timezone_table.h`) | XConfig 3/1..7 depuis l'hôte, table cherchée dans l'image de tout Dashboard ; noms vides en 17559 (ils font planter Clock) |
+| Trap non fatal (SDK `function_dispatcher.cpp`, `f2c7948`) | appel indirect invité vers 0 avortait le processus (sortie de Game Library) ; journal borné, `r3 = 0` |
+| Journal sans `[error]` (SDK `dec33681`) | périphériques/modules absents, XLIVEBASE hors ligne : un avertissement par cas ; `tools/banc_suite.py` échoue sur toute ligne `[error]` |
+| Fibres de XAM (`src_xam_patch/xam_fiber_switch.cpp`) | `sub_819BF2E0` recompilé revenait sur la pile hôte de l'appelant (fil à 99 % CPU) ; vraie bascule ucontext, pile mmap gardée ; `DASH_XAM_FIBER_FIX=0` désactive |
+| `DASH_HUD_NOTIFY` en opt-in | la diffusion `XN_SYS_UI` sur les pixels du chrome re-posait le bit « interface active » : Guide bloqué sur son panneau de chargement |
+| Frappes pendant le Guide | le A qui connecte un profil ouvrait ensuite la tuile du Dashboard : file du HLE vidée tant que le HUD a le focus |
 
-## Palier C : table de fonctions relocalisable (SDK)
+Création de profil (N4), causes successives : `0x8000FFFF` (`RtlAppendStringToString` stub, `sub_8185CD38`) ; `0x80070002` (liens `\System??\__tmpN:` avec
+préfixe) ; `0x80070005` (`Partition1` en lecture seule : `allow_game_relative_writes=true` en mode XAM) ; `0xC0000022` (`CreatePath` du SDK) ; nom de
+paquet vide (`%I64X`, SDK `format.h`) ; `Account` = octets de pile (`XeKeysObfuscate`) ; `0x80070570` (en-tête jamais signé, descripteur STFS sans `0x24`).
 
-Le recouvrement de la table de XAM avec dash.xex est corrigé. Le hub reste noir : voir « Résultat » ci-dessous.
+### SDK (`third_party/xenondash-sdk`)
+- `7348c20` : `AccessViolationCallback` refusait les tas `kGuestVirtual`. `core/memory_posix.cpp` : `memfd_create` d'abord (voir pièges).
+- `InputSystem::devices_mutex_` : `RefreshDevices()` sans verrou, appelé par `GuideFrame` et les fils invités (plantage `std::stable_sort`).
+- `XHostThread::Execute` appelle `fpscr.InitHost()` (sinon `MXCSR = 0`, exceptions flottantes démasquées : SIGFPE dans `sub_81A06F88`).
+- `xex_module.cpp` : modules de ressources sans PE. `xmemory.cpp` : tas 0x8/0x9 séparés. `virtual_file_system.cpp` : `OpenFile` sous le parent résolu.
+- `keybind_guide = "G"` par défaut. `7151265f` : `RtlCompareMemoryUlong` compte par octets (sans lui, « Enter Pass Code »). `69764e99` : `vavguw`,
+  `crmove`, `crnot`. À corriger dans le SDK puis retirer les hooks de `common/` : `ObReferenceObjectByName`, `XeCryptRandom`, minuteries,
+  `ObCreateObject`, `XThread::Exit`.
 
-### Correctif (`third_party/xenondash-sdk`, non commité)
+## 4. Variables d'environnement
 
-- **Codegen** : clé optionnelle `function_table_base` (TOML). Placée au niveau racine d'un fichier de configuration, ou dans
-  l'entrée `[[modules]]` du manifeste (lue par `LoadFromTable`). Défaut : fin de l'image (`IMAGE_BASE + IMAGE_SIZE`).
-  Les gabarits n'émettent `REX_TABLE_BASE` et `.table_base` que si la clé est présente.
-- **Sortie inchangée sans la clé** : Dashboard 2.0.13604.0 et 2.0.6770.0 régénérés avec `--ignore-stamp` ; aucun fichier
-  source ne change (seul `codegen.stamp` change, il contient la version du SDK). Le projet XAM a `REX_TABLE_BASE` (2 occurrences).
-- **Runtime** : `PPCImageInfo::table_base` (ajouté en fin de structure). `Memory::InitializeFunctionTable(..., table_base)` et
-  `FunctionDispatcher::InitializeFunctionTable(..., table_base = 0, is_entrypoint = false)`. Les appelants passent la valeur
-  (`runtime.cpp`, `kernel_state.cpp`).
-- **Recouvrement** : les tas `0x8` et `0x9` sont deux vues du même fichier (bit 28 non significatif). `GuestRangesOverlap`
-  (`include/rex/system/xmemory.h`) compare donc en adresses physiques. Le dispatcher contrôle image, table et code de chaque
-  module enregistré ; la mémoire contrôle les tables existantes.
-- **Pages** : `AllocFixed` ne refuse une plage occupée que pour une réservation seule (`Reserve`). Avec `Reserve|Commit`, le
-  contrôle n'existe pas. La table est donc réservée seule (refus si occupée), puis validée. Son alias dans l'autre tas est
-  réservé de la même façon et libéré à la destruction du module.
-- **Image de XAM** : `ReserveImageAlias` (`src/system/kernel_state.cpp`) réserve l'alias de l'image chargée dans l'autre tas
-  (`0x917E0000-0x91D50000` pour XAM). Refuse le chargement si une page est déjà prise.
-
-### Projet XAM
-
-- `dash_manifest.toml`, entrée `[[modules]]` de XAM : `function_table_base = 0x84000000`.
-- Plages (adresses physiques, bit 28 retiré) : dash.xex `0x92000000-0x92EA8000` (tas `0x9`, pages de 4 Ko), table du Dashboard
-  `0x92EA8000-0x93E05B10`, image de XAM `0x817E0000-0x81D50000`, table de XAM `0x84000000-0x84727098` (alias `0x94000000`).
-- Journal du chargement : `Function table initialized for module: code=81850000-81BD384C, image=817E0000-81D50000, table=84000000`.
-
-### Tests et compilation
-
-- `tests/unit/system/function_dispatcher_test.cpp` : 12/12 cas `[dispatcher]` (4 nouveaux : table relocalisée, défaut
-  inchangé, recouvrements direct, par alias et hors tas refusés, alias déjà occupé). Suite complète : 212 cas sur 221 réussis ;
-  les 5 échecs portent sur BitStream, le calendrier et Depfile (modules sans lien ; non vérifiés sur la base d'origine).
-- Compilés (rc 0) : `dashboards/2.0.13604.0-xam`, `dashboards/2.0.13604.0` (variante supprimée le 2026-11-26), `dashboards/2.0.6770.0`.
-
-### Résultat (`DASH_XAM_MODULE=2`, environnement de référence : `VK_ICD_FILENAMES` lavapipe, `HOME` et `XDG_DATA_HOME` de test)
-
-| Run | Réglage | Résultat |
-|---|---|---|
-| `s5base2` | sans module | **hub affiché** à 60 s, rendu continu |
-| `s5c`, `s5e` | module 2, table 0x84000000 | vivant 90 s (`s5c`) et 60 s ; aucun `FATAL`, aucun SIGSEGV ; **écran noir** |
-| `s5a` | module 2, sans l'environnement de référence | SIGSEGV à 20 s (une fois) ; pile : lambda `XThread::Create()::$_0`, décalage `0x4bb581` de `librexruntime.so` ; non reproduit en 3 runs de référence |
-
-Constats sur le run module (le journal est complet avec `DASH_ARGS=--log_flush_interval=1`, sans ce réglage il est tronqué) :
-
-- Le journal s'arrête 0,3 s après le chargement de XAM (`xam.xex recompilé : chargé`). Sans module, le rendu produit des
-  lignes `[gpu]` en continu. Avec module, aucune.
-- À ce moment, neuf threads système sont créés (`[ExCreateThread] Guest is creating a system thread!`, aucun dans le run de référence).
-- `gdb` à 60 s (`gdb/stall60.out`, méthode `interrupt.sh`) : le thread principal du Dashboard est dans `ExCreateThread_entry`,
-  en destruction d'un `XThread` ; les threads de XAM attendent (`KeWaitForSingleObject`).
-- Hypothèse « le Dashboard alloue dans l'alias de l'image XAM » (blocage n° 2 ci-dessous) : **réservation réussie** au
-  chargement (`Module image alias 917E0000-91D50000 ... reserved`), le blocage persiste. Cette cause n'explique donc pas
-  le hub noir à elle seule.
-- Import du Dashboard : aucun `FATAL` (le `m1a` provenait de l'écrasement de `0x92000D64`) ; la table de XAM ne le touche plus.
-
-### Blocages restants
-
-1. **Hub noir avec XAM chargé** : le Dashboard cesse de produire du rendu peu après le chargement de XAM. Cause non établie.
-   Pistes : la boucle de création de threads du thread principal (dont la destruction de `XThread` observée à 60 s) ; les
-   9 threads système créés au chargement ; le `Reset` du tas `0x8` au chargement d'un XEX, qui efface les réservations
-   (y compris celle de l'alias de la table du Dashboard).
-2. **Plantage isolé** (`s5a`) : SIGSEGV dans le lambda de démarrage des `XThread` (`librexruntime.so+0x4bb581`), non reproduit
-   dans l'environnement de référence. Core dump géré par `systemd-coredump` (`/var/lib/systemd/coredump`, lisible par root seulement).
-3. **Redirection des imports** : non faite (bonus, bloquée par le point 1).
-4. Les réservations d'alias ne sont ni sauvegardées (`Save`/`Restore`) ni libérées au déchargement d'un module ; à vérifier.
-
-### Procédure (après modification du SDK)
-
-```sh
-cd third_party/xenondash-sdk && cmake --build out/build/linux-amd64 --config Release --target install -j 6
-cd dashboards/2.0.13604.0-xam && ../../sdk/bin/rexglue codegen --ignore-stamp dash_manifest.toml
-python3 ../../tools/xam_unimpl_patch.py generated/xam
-cmake --preset linux-amd64-relwithdebinfo && cmake --build out/build/linux-amd64-relwithdebinfo -j 6
-DASH_DISPLAY=92 DASH_RUNS=<dossier_hors_depot> DASH_XAM_MODULE=2 DASH_ARGS="--log_flush_interval=1" \
-  DASH_ENV="HOME=<test> XDG_DATA_HOME=<test> VK_ICD_FILENAMES=/usr/share/vulkan/icd.d/lvp_icd.json DASH_XAM_STATE=<test>/xam" \
-  ./run_headless.sh 90 essai
-```
-
-Le correctif `tools/xam_unimpl_patch.py` reste à relancer après chaque `rexglue codegen` du projet XAM.
-
-## Palier D : le hub s'affiche avec XAM chargé
-
-Résultat : le hub Kinect s'affiche avec `DASH_XAM_MODULE=2` (captures hors dépôt : `runs/f1.png` à 60 s, `runs/f2.png` à 100 s).
-Le processus est vivant, les 9 threads système de XAM sont créés, aucun `FATAL`, aucun SIGSEGV.
-
-### Cause du hub noir (établie)
-
-Chaîne complète, observée par piles gdb et journal de diagnostic (instrumentation temporaire du SDK, retirée) :
-
-1. XAM (fonction `sub_81883CB8`, `generated/xam/dash_recomp.38.cpp:2238`, appelée depuis un thread système) appelle
-   `ObReferenceObjectByName(&nom_ansi, ..., &objet)` sur un nom de périphérique, puis `ObDereferenceObject(objet)` sans
-   contrôler le statut.
-2. Le SDK ne lit pas `nom` comme un `ANSI_STRING` : `ObReferenceObjectByName_entry` (`src/kernel/xboxkrnl/xboxkrnl_ob.cpp`)
-   prend l'adresse de la structure pour une chaîne C. Journal : `ObReferenceObjectByName '' -> 0xc0000034` (nom vide,
-   recherche toujours en échec). Le SDK n'écrit pas `*objet` en cas d'échec.
-3. `*objet` garde donc une valeur ancienne : `0xBEBEBEBE` (boucle de XAM, sans fin) ou le pointeur d'un objet précédent.
-   `ObDereferenceObject` appelle alors `XObject::ReleaseHandle()` sur cet objet, qui décrémente le compte de handles d'un
-   objet qui n'a pas été référencé.
-4. Le Dashboard crée son thread : `XObject` ajoute le handle (compte 1, « référence du créateur »). Un thread de XAM
-   déréférence ce handle (journal : `ReleaseHandle h=F8000114 hcnt=1 obj=<thread du Dashboard>`) : le compte tombe à 0,
-   l'entrée de la table est retirée (`Release` du pointeur de la table).
-5. `XThread::Create` puis `ExCreateThread_entry` se terminent : la dernière référence de pointeur est celle de
-   `object_ref` (`ExCreateThread_entry`). Elle libère l'objet, `~XThread` (`ExCreateThread_entry` directement dans la pile).
-6. Le thread hôte du nouveau XThread est suspendu (en attente de `Resume`) ; `~PosixThread` détruit la condition
-   (`pthread_cond_destroy`) alors qu'un thread y est en attente : le thread principal du Dashboard (`Main XThread`) reste
-   bloqué dans `pthread_cond_destroy` (pile gdb à 60 s). Plus de rendu, plus de journal.
-
-Preuves retenues : pile du thread principal à 60 s (gdb, `Main XThread` dans `ExCreateThread_entry` → `~XThread` →
-`~PosixThread` → `pthread_cond_destroy`) ; `XThread dtor` appelé directement depuis `ExCreateThread_entry` (gdb) ; deux
-objets différents portant le même handle `F8000114` (le second créé par un thread de XAM après la suppression du
-premier) ; piles des `ObDereferenceObject` sur `0xBEBEBEBE` (`sub_81883CB8` ← `sub_81890F18` ← thread système) ; sans
-instrumentation, la même séquence (journal arrêté après « Created 9 graphics pipelines », process vivant).
-
-### Correctif (`common/src/kernel_stubs.cpp`, SDK inchangé)
-
-`REX_HOOK_RAW(__imp__ObReferenceObjectByName)` : nom lu comme `ANSI_STRING` (`TranslateAnsiStringAddress`) ; en cas
-d'échec, `*objet = 0` et statut `STATUS_OBJECT_NAME_NOT_FOUND`. Sur succès, la référence est prise (`RetainHandle`), comme
-dans le SDK. XAM voit alors `0` et ne déréférence pas (la branche `beq` de la fonction de XAM).
-
-Ce correctif contourne le SDK. Le défaut à corriger dans le SDK (`xboxkrnl_ob.cpp`) :
-- `ObReferenceObjectByName_entry` doit lire `X_ANSI_STRING*` (`util::TranslateAnsiStringAddress`), comme
-  `LookupNamedObject` ;
-- il doit écrire `NULL` dans `out_object_ptr` sur échec.
-Le correctif de `common/` touche tous les projets qui lient `common/` (13604, 13604-xam, 6770 ; 17559 non recompilé). Il ne
-couvre pas les objets de périphérique (`\Device\...`) : ils ne figurent pas dans la table des noms, la recherche échoue
-toujours, mais sans déréférencement fautif.
-
-### Vérifications
-
-| Vérification | Résultat |
+| Variable | Effet |
 |---|---|
-| `dashboards/2.0.13604.0-xam` (module 2) | hub affiché à 60 s et 100 s (`f1.png`, `f2.png`) ; 9 threads système ; 0 FATAL |
-| `dashboards/2.0.13604.0` (HLE, même `common/`) | hub affiché à 40 s (`hle1.png`) |
-| Compilation | `2.0.13604.0` et `2.0.6770.0` : rc 0 ; `2.0.13604.0-xam` : rc 0 |
-| SDK | `third_party/xenondash-sdk` : aucun fichier modifié (instrumentation temporaire annulée par `git checkout`, `sdk/lib/librexruntime.so` md5 `769fc992…`, identique à l'état d'avant) |
-
-### Blocages restants
-
-1. **Threads de XAM en boucle** : après le correctif, deux threads système de XAM consomment 75 à 90 % d'un cœur
-   (`Main XThread` à ~97 %, comme dans la référence sans module à ~98 %). Ils réessaient les recherches de périphériques
-   (`\Device\...`, absents de la table des noms) : à traiter (objets de périphérique ou table de noms).
-2. **Redirection des imports** (bonus) : non faite.
-3. **Correctif SDK** : à faire dans `xboxkrnl_ob.cpp` (voir ci-dessus) ; le correctif de `common/` peut alors être retiré.
-4. Sémantique de `ExCreateThread` (flags `0x80`, objet renvoyé sans référence) : non vérifiée.
-5. Fenêtre de course : entre l'ajout du thread dans la table (`XObject`, compte 1) et le `RetainHandle` de `XThread::Create`,
-   un déréférencement concurrent retire le thread de la table. C'est la fenêtre observée ; le SDK ne protège pas cette
-   fenêtre.
-
-## Palier E : redirection des imports du Dashboard vers XAM recompilé
-
-Le Dashboard appelait encore le HLE du SDK pour chacun de ses imports XAM ; le module tournait à côté sans servir à rien.
-Ce palier ajoute un mécanisme de redirection configurable, sans modifier le SDK.
-
-### Étape 1 : mécanisme d'imports (constats)
-
-- **Codegen** : un import du Dashboard devient un appel direct `__imp__<Nom>(ctx, base)`
-  (`third_party/xenondash-sdk/src/codegen/builders/context.cpp`, `phase_register.cpp`). Le nom vient de la table d'exports du
-  SDK (ordinal → nom).
-- **Résolution à l'édition de liens** : `__imp__<Nom>` est fourni par le HLE du SDK (`REX_EXPORT` dans
-  `src/kernel/xam/xam_ui.cpp` et voisins, dans `librexruntime.so`). Un `REX_HOOK_RAW(__imp__<Nom>)` dans l'exécutable
-  l'emporte pour les appels de l'exécutable : c'est le mécanisme déjà utilisé par `common/`.
-- **Ordinaux du Dashboard** : `work/dash_imports.tsv` (43 entrées `xam.xex`, dont l'ordinal 96, non nommé). Noms :
-  `third_party/xenondash-sdk/src/kernel/xam/export_table.inc` (ex. ordinal 714 = `XamShowMessageBoxUI`).
-- **Exports de XAM recompilé à l'exécution** : `XexModule::GetProcAddress(ordinal)` (`src/system/xex_module.cpp`) lit la
-  table d'exports du XEX ; `UserModule::GetProcAddressByOrdinal` la relaie. La fonction recompilée se trouve ensuite dans
-  la table de fonctions du module (`FunctionDispatcher::GetFunction`). Testé : XGetVideoMode (977) → `0x818CAD18`,
-  XamShowMessageBoxUI (714) → `0x8189A3C0`, signature à 9 arguments conforme (le 9e est lu à `1412(r1)` après `stwu -1328`,
-  soit `r1 + 0x54` de l'appelant).
-- **Table d'exports PE de `work/xam13604.pe`** : son répertoire d'exports (RVA `0x4E0000`) pointe sur des zéros dans l'image
-  décodée (données utiles décalées, en gros-boutiens) : non exploitable. Les noms viennent donc du SDK, les adresses de
-  l'exécution.
-- **Imports déjà remplacés dans `common/`** (non redirigeables sans toucher à leur fichier) : `XamShowAchievementsUI`
-  (ancien `dash_xam_ui.cpp`, retiré), `XamLoaderLaunchTitle` (`dash_launch.cpp`), `XamNotifyCreateListener` (`dash_disc.cpp`),
-  `XamContentClose` et `XamContentCreateEnumerator` (`dash_library.cpp`, `dash_content.cpp`), `XamUserGetName`
-  (`dash_profile.cpp`). Ils restent sur le hook de `common/`.
-
-### Étape 2 : mécanisme (`common/src/dash_xam_redirect.{h,cpp}`)
-
-- Un hook par import XAM du Dashboard (36 hooks, macro `DASH_XAM_REDIRECT_HOOK`). Chaque hook appelle `Dispatch` : si le
-  nom figure dans `DASH_XAM_REDIRECT`, il exécute la fonction de XAM recompilé avec le même `ctx` ; sinon le HLE du SDK.
-- `Configure` est appelée après `LoadUserModule("game:\\xam.xex")` (`dash_app_base.cpp`). Elle résout chaque nom en
-  ordinal (table `xam.xex` du SDK), puis en adresse, et journalise `[xamredir] <nom> (ordinal N) -> XAM recompilé 0x...`.
-- **Trace** : `[xamredir] <nom> : appel N par XAM recompilé|HLE` au premier appel de chaque import puis tous les 1000 appels.
-- **Piège trouvé (interposition ELF)** : `librexruntime.so` exporte aussi `__imp__XGetLanguage` ; sa table de registre
-  (`FindPPCFuncByName`) pointe sur le hook de l'exécutable, et le repli HLE s'appelait lui-même (récursion, SIGSEGV dans
-  `Dispatch`). Sous Linux, le HLE est donc résolu par `dlsym(RTLD_NEXT)` ; sous Windows, la table de registre suffit (pas
-  d'interposition entre DLL).
-- Aucune modification du SDK. Sans `DASH_XAM_REDIRECT`, les imports passent tous par le HLE (même comportement qu'avant,
-  seule la trace est ajoutée).
-
-Utilisation :
-
-```sh
-DASH_XAM_MODULE=2 DASH_XAM_REDIRECT=XGetVideoMode,XamShowMessageBoxUI ./run_headless.sh 90 essai
-DASH_TEST_MSGBOX=30   # test : appelle XamShowMessageBoxUI depuis un thread titre au bout de 30 s (appel asynchrone)
-```
-
-Imports appelés par le Dashboard au démarrage (trace, sans redirection) : XamLoaderGetLaunchData, XGetVideoMode,
-XamUserGetXUID (1000 appels en 90 s), XamUserGetSigninState, XamEnumerate, XNotifyGetNext, XamInputGetKeystrokeEx,
-XamInputGetState, XamLoaderGetDvdTrayState, XamContentCreateDeviceEnumerator. Les autres imports de la table n'apparaissent pas
-dans ce démarrage.
-
-### Étape 3 : premier test (XGetVideoMode)
-
-| Run | Réglage | Résultat |
-|---|---|---|
-| `r5a` | `DASH_XAM_REDIRECT=XGetVideoMode` | journal : `XGetVideoMode (ordinal 977) -> XAM recompilé 0x818CAD18`, puis `appel 1 par XAM recompilé` ; vivant 90 s ; hub affiché (`runs/r5a.png`) |
-| `r4a` | sans redirection | trace des imports appelés (liste ci-dessus), hub affiché |
-
-### Étape 4 : XamShowMessageBoxUI via XAM recompilé (blocage classé)
-
-Le test `DASH_TEST_MSGBOX` appelle la voie redirigée comme le ferait le Dashboard (hook → `Dispatch` → XAM). Résultats :
-
-| Run | Arguments | Retour (r3) | Journal |
-|---|---|---|---|
-| `r6a` | 9e argument mal placé (`r1 + 0x28` au lieu de `r1 + 0x54`) : `overlapped` lu comme une valeur quelconque | `0x65B` (1627) | `appel 1 par XAM recompilé`, retour immédiat, résultat 0 |
-| `r7a` | 9e argument à `r1 + 0x54`, `overlapped` nul | `0x57` (87, ERREUR_PARAMETRE) | aucun autre journal |
-| `r8a` | `overlapped` = XOVERLAPPED à zéro (appel asynchrone) | `0x65B` (1627) | aucun autre journal ; capture hub affichée (`runs/r8a.png`) |
-
-Lecture du code généré (`dashboards/2.0.13604.0-xam/generated/xam/dash_recomp.20.cpp`, fonction `sub_8189A3C0`) :
-
-- Contrôles d'arguments (`loc_8189A400` à `loc_8189A484`) : utilisateur < 4 ou 255 ; drapeaux sans bits interdits ; nombre de
-  boutons ; `overlapped` nul impose `pResult` nul (sinon 87). Avec les valeurs de test, ces contrôles passent.
-- Corps : `sub_818FCD10`/`sub_818FCCA8` (initialisation de la structure), puis `sub_8189F0D0` (r3 non nul → chemin 254 avec
-  `sub_8187B8E8` puis `r4 = 997` et `sub_81896B20`, qui renvoie r4 ; r3 nul → 5). Ce chemin devrait donner 997, 0 ou 5, pas
-  0x65B : **la cause du 0x65B n'est pas établie**. Le contrôle `sub_8189F0D0` et les fonctions appelées n'ont pas été tracés
-  (essai gdb : `handle SIGSEGV nostop noprint pass` requis, les points d'arrêt dans `sub_8189A3C0` n'ont pas été atteints).
-- Aucun fichier XUI n'est demandé pendant l'appel : pas de `File not found` pour `hud.xex`, `huduiskin.xex`, `signin.xex`,
-  `vk.xex`, `shrdres.xzp`. XAM refuse donc avant le chargement de l'interface.
-
-Blocages classés (étape 4) :
-
-1. **XamShowMessageBoxUI refuse avec 0x65B avant tout chargement de module XUI** (preuve : `r8a`). Cause non établie.
-   Pistes : `sub_8189F0D0` (état de l'interface, à tracer) ; variable importée `xam:0x3db` (`g_XuiAutomation`) non
-   implémentée, signalée à chaque chargement (`Variable import xam:0x3db (g_XuiAutomation) not implemented`), jamais
-   renseignée. Une recherche des `li r3,1627` du code généré ne désigne pas un chemin évident.
-2. **Chargement des modules XUI** (`hud.xex`, `huduiskin.xex`, `signin.xex`, `createprofile.xex`, `vk.xex`) : non observé
-   (la voie n'y arrive pas). Prévision : ces XEX ne sont pas recompilés (aucun `[[modules]]` dans `dash_manifest.toml`) ;
-   leur chargement par XAM ne donnerait que des images sans code. À confirmer une fois le point 1 levé.
-3. **Périphériques absents** (existant) : `secexp.xex`, `xstudio.xex`, `systemupdate.xex` (`\Device\Mass0`) : journalisés,
-   non bloquants pour le hub.
-4. **Autres imports non testés** : seule XGetVideoMode est redirigée en route de production ; les entrées manette
-   (`XamInputGetState`) et les profils (`XamUserGetSigninState`) restent sur le HLE par défaut, faute de test.
-
-### Vérifications
-
-| Vérification | Résultat |
-|---|---|
-| `dashboards/2.0.13604.0-xam` (module, redirection et test) | compile (rc 0), hub affiché (`r5a`, `r8a`), aucun SIGSEGV ni FATAL pendant 90 s |
-| `dashboards/2.0.13604.0` (HLE) | compile (rc 0) : pas de symbole dupliqué avec les hooks de redirection |
-| `dashboards/2.0.6770.0` | compile (rc 0) |
-| SDK (`third_party/xenondash-sdk`) | aucun fichier modifié par ce palier |
-
-### Fichiers
-
-- Nouveaux : `common/src/dash_xam_redirect.h`, `common/src/dash_xam_redirect.cpp`.
-- Modifiés : `common/CMakeLists.txt` (une source), `common/src/dash_app_base.cpp` (appel de `Configure` après le chargement de
-  XAM), ce document.
-
-### Reste à faire
-
-- Lever le point 1 (0x65B) : tracer `sub_8189F0D0` et les fonctions de XAM appelées depuis `sub_8189A3C0`, avec gdb
-  (`handle SIGSEGV nostop noprint pass`, points d'arrêt par nom dans `libdash_xam.so`) ; renseigner `xam:0x3db`.
-- Recompiler les XEX XUI de la flash (`hud.xex`, `signin.xex`, ...) si XAM les charge (point 2).
-- Étendre la liste des redirections (entrées manette, profils) après validation de chaque import.
-
-## Palier F : boîte de message Xbox par XAM recompilé et `hud.xex` (jalon partiel)
-
-Objectif : `XamShowMessageBoxUI` (redirigé vers XAM recompilé) affiche la vraie boîte de message de la console, fournie par
-XAM et les modules XUI de la flash. **Non atteint** : l'appel est désormais accepté par XAM (retour `0x3E5`,
-ERROR_IO_PENDING, au lieu de `0x65B`), mais aucune interface n'apparaît. La cause du refus et les neuf blocages levés
-pour y arriver sont établis ci-dessous ; la suite est bloquée au démarrage d'une application de XAM (point 1 des
-blocages restants). Aucun fichier du SDK n'est modifié : tous les correctifs sont dans `common/`.
-
-### Étape 1 : cause du `0x65B` (établie)
-
-Chaîne lue dans le code généré (`dashboards/2.0.13604.0-xam/generated/xam/`), confirmée par des traces temporaires
-(`REXLOG` dans le code généré, retirées) et par la mémoire invitée lue au moment de l'appel (`DASH_TEST_PEEK`) :
-
-1. `sub_8189A3C0` (XamShowMessageBoxUI) remplit une structure de 1148 octets et appelle `sub_8187B8E8` →
-   `sub_8187B648(254, 0x2100D, ...)` : envoi du message `0x2100D` à l'**application XAM numéro 254** (0xFE).
-2. `sub_81893EE0(254)` cherche l'entrée dans la table des applications (`0x81C06F78 - 184 * id`, 184 octets par entrée).
-   Elle renvoie 0 si `entrée+8 == 0` ou `entrée+16 == 0`. `sub_8187B648` renvoie alors `0x80070057` (E_INVALIDARG).
-3. `sub_81896B20` convertit tout HRESULT négatif en code Win32 : `14` pour `0x8007000E`, sinon **`1627` = `0x65B`**.
-4. Mesure : à l'appel, les 255 entrées de la table étaient à zéro (`+8 == +16 == 0`). Les applications ne sont enregistrées
-   que par `sub_818951C8` (`sub_818946D8`, table statique `0x817E4B60` : xlivebase 0xFC, uvbase 0xFD, xgi 0xFB, musicplayer 0xFA,
-   Xam.LiveMessenger 0xF7, ximecore 0xF5, Xam.Community 0xF4, avatarcore 0xF2, avatarsyscore 0xF3, cert 0xF8), elle-même appelée
-   par `sub_81872230` (initialisation de XAM) qui n'allait pas jusque-là.
-5. Avec l'application 254 enregistrée (`+8 != 0`, `+16 == 1`, gestionnaire `sub_81894D50`), l'appel renvoie `0x3E5`. Le
-   gestionnaire traite `0x2100D` par `sub_8189BE20` → `sub_818A21B0("hud.xex", ...)` (chaîne `0x817E4C3C`), qui renvoie
-   `0x80004005` (E_FAIL) si l'état du HUD `0x81BFCAE8` (+172, +176) est nul. Ces champs sont posés par `sub_818A2C98`
-   (`XexLoadImage("\SystemRoot\huduiskin.xex")`, `VdRegisterXamGraphicsNotification`, ...), planifiée par `sub_818A2F90`,
-   appelée par `sub_81872230` **après** `sub_818951C8` et seulement si `XboxHardwareInfo.Flags & 0x200`.
-   Mesure : les mots `0x81BFCAE8..0x81BFCBE8` sont nuls pendant tout le test (150 s).
-
-Hypothèses de l'énoncé : (a) HUD chargé au démarrage de XAM : confirmé dans la forme (XAM tente `XexLoadImage("hud.xex")` au
-démarrage : `VFS: 'hud.xex' -> [no device]`, puis `File not found: \Device\Harddisk0\Partition1\hud.xex`, et le HUD complet
-passe par `sub_818A2C98`) ; (b) `xam:0x3db` (`g_XuiAutomation`) : non utilisée sur ce chemin ; (c) autre état d'initialisation :
-**c'est la cause réelle** (initialisation de XAM interrompue).
-
-### Étape 1 bis : blocages levés dans l'initialisation de XAM (tous dans `common/`)
-
-Méthode : trace temporaire des appels directs de `sub_81872230` (`tr/trace_calls.py`, hors dépôt : ajoute une ligne `REXLOG`
-avant et après chaque `sub_X(ctx, base)` d'une fonction choisie, avec r3/r4/r5), plus piles gdb (`SIGINT` à `gdb -batch`, `handle
-SIGSEGV nostop noprint pass` : le Dashboard provoque des SIGSEGV normaux). Le fil d'initialisation s'arrêtait successivement à :
-
-| # | Symptôme (preuve) | Cause | Correctif |
-|---|---|---|---|
-| 1 | `sub_81872230` bloque dans `sub_81879B58` (`KeWaitForSingleObject(*0x817E05C0 = 0x30000254)`, pile gdb) | `UsbdBootEnumerationDoneEvent` est créé par le SDK avec `type = 1`, soit `EventSynchronizationObject` (réarmement automatique) : le premier fil (`sub_81872180`) consomme le signal | `FixKernelVariables` (`dash_xam_runtime.cpp`) : type 0 (notification), comme sur la console |
-| 2 | un fil de XAM à 100 % d'un cœur ; l'événement `0x81BE0DF8` jamais signalé | `DrvGetContentStorageNotification` est un stub qui laisse r3 inchangé ; `sub_8185C5E0` le rappelle tant que r3 >= 0 | `kernel_stubs.cpp` : renvoie `0xC0000001` (aucun périphérique USB) |
-| 3 | le fil de répartition des tâches (`sub_81890DE8`) reçoit `0xC000000D` de `KeWaitForMultipleObjects` en boucle (2577 réveils en 30 s) ; les tâches de classe 1 (`sub_81890B38`) ne sont jamais exécutées, `sub_81859780` attend pour toujours | l'objet `0x81BFB6F0` est une minuterie invitée (en-tête type 9) : `XObject::GetNativeObject` refuse les types 8/9, et `KeSetTimerEx`/`KeCancelTimer` sont des stubs | `kernel_timers.cpp` : `KeInitializeTimerEx`, `KeSetTimerEx`, `KeCancelTimer` créent/pilotent un `XTimer` rattaché à l'en-tête invité (DPC non pris en charge, journalisé) |
-| 4 | SIGSEGV aléatoire dans `AudioSystem::SubmitFrame` (fil audio, gdb) | XAM désinscrit son client audio pendant qu'un callback soumet une trame : `clients_[index].driver` est nul (assert seulement dans le SDK) | `kernel_audio_guard.cpp` : suivi des clients, trame ignorée si le client est absent, désinscription sous verrou exclusif |
-| 5 | SIGSEGV dans `RtlEnterCriticalSection` appelé par `sub_818EE808` depuis le test (fil titre) ; enregistrement de tas `0x81C061A8` (classe 0) non initialisé | sur la console XAM est chargé aussi dans le processus titre (état « titre », identifiant d'application 238, tas de classe 0) ; ici il n'y a qu'une instance, initialisée dans le processus système (cf. palier A) | `KeGetCurrentProcessType()` renvoie 2 quand l'adresse de retour (`ctx.lr`) est dans l'image de XAM (`SetXamImageRange`) : les fils titre qui entrent dans XAM utilisent l'état système (application 254) |
-| 6 | `sub_818A2F90` jamais appelée (non tracée) | `XboxHardwareInfo.Flags` = `0x20` (SDK), XAM teste le bit `0x200` | `FixKernelVariables` : `Flags \|= 0x200` (`0x220`) |
-| 7 | l'application 0xFD (`sub_81ABE0F8` → `sub_81BA7FE8` → `sub_81BA7A88`) renvoie E_FAIL et `sub_818951C8` aussi | `ObCreateObject` et `ObInsertObject` sont des stubs : `sub_8187D9A8` (ordonnanceur de tâches audio, objet de type `'Nfto'`) reçoit un objet nul | `kernel_ob.cpp` : corps alloué dans le tas système (en-tête de 16 octets), handles propres (`0xF9000000+`), `ObReferenceObjectByHandle` et `NtClose` les reconnaissent, les autres vont au SDK. Limite : corps jamais libéré, procédures de type non appelées |
-| 8 | SIGFPE dans `sub_81BAB930` (`fdivs`, fil audio) | `XAudioGetDucker*` sont des stubs (f1 inchangé, nul) ; les exceptions flottantes hôtes sont démasquées par le code invité | `kernel_audio_guard.cpp` : f1 = 1.0, succès pour les réglages |
-| 9 | l'application 0xFA ne revient pas (voir blocages) | `XeKeysGetKey`/`XeKeysExGetKey` stubs : tampon de clé nul | `kernel_keys.cpp` : clé factice (octets pseudo-aléatoires fixes), **seulement pour les appels de XAM** ; insuffisant (voir blocages). **Retiré au palier G** : la vraie cause était `XeCryptRandom`, les clés n'y changent rien |
-
-Les hooks de `common/` sont liés à tous les Dashboards (`xenondash_common`) ; ceux qui dépendent de XAM recompilé (`KeGetCurrentProcessType`,
-`XeKeys*`) ne s'activent que pour une adresse de retour dans l'image de XAM ; les autres corrigent des défauts du SDK pour tous
-les appelants (minuteries, objets, garde audio, ducker, stockage). Fonctions du SDK appelées en repli par `dlsym(RTLD_NEXT)`
-(`kernel_sdk_fn.h`, même interposition ELF que le palier E).
-
-### Résultats des runs (Xvfb `:92`, lavapipe, `DASH_XAM_MODULE=2`, `DASH_XAM_REDIRECT=XamShowMessageBoxUI`, `DASH_TEST_MSGBOX=<s>`)
-
-| Run | État | Résultat de l'appel |
-|---|---|---|
-| `f6` | correctifs 1 et 2 | `sub_81872230` bloque encore dans `sub_818BEF38` (minuterie) |
-| `f7` | + 3 | `sub_818BEF38` revient ; applications enregistrées (entrée 254 : `+8=0xAAAABBBB`, `+12=0x81894D50`, `+16=1`) ; plantage (`RtlEnterCriticalSection`, fil titre) |
-| `i1` | + 4, 5 | retour `0x3E5`, aucun plantage |
-| `m1`, `m2` | + 7, 8 | `sub_818951C8` dépasse l'application 0xFD ; SIGFPE puis plus de plantage |
-| `m4` (150 s) | + 9 | application 0xFA : fil bloqué dans `sub_81A71FD8` à 140 s ; test `0x3E5` ; `0x81BFCAE8..` nul |
-| `final1` (45 s) | tout | hub affiché (`runs/final1.png`), retour `0x3E5`, aucun `FATAL`/SIGSEGV/SIGFPE |
-
-### Étape 2 : modules XUI de la flash (constats, recompilation d'essai)
-
-- **Chargement par XAM** : import `xboxkrnl` `XexLoadImage` (`0x81BCEB9C`) avec des noms nus (`hud.xex`, `signin.xex`, ... : table
-  de noms `0x817E5464-0x817E55C0` : `deviceselector.xex`, `signin.xex`, `nuihud.xex`, `createprofile.xex`, `gamerprofile.xex`, `vk.xex`)
-  ou `\SystemRoot\huduiskin.xex` (`0x817E5FD4`, format `\SystemRoot\%s` en `0x817E25B4`). Le SDK
-  (`xboxkrnl_modules.cpp`, `KernelState::LoadUserModule`) résout un nom nu dans le dossier du module exécutable
-  (journal : `ResolvePath(hud.xex) failed`). `hud.xex` est demandé **au démarrage de XAM** (journal), pas à l'appel de la boîte.
-- **Décodage** (`tools/xex_rekey.py` puis `tools/xexinfo`, fichiers dans `work/`/scratchpad) : `hud`, `signin`, `vk`,
-  `createprofile`, `deviceselector`, `gamerprofile`, `ximecore` sont lisibles sans rechiffrement (sortie de `xex_rekey.py`
-  identique à l'entrée : clé retail). Ce sont de vrais modules de code :
-
-| Module | Base | Taille image | `.text` | Imports `xam.xex` | Imports `xboxkrnl` |
-|---|---|---|---|---|---|
-| `hud.xex` | `0x913E0000` | `0x4C000` | `0x1BF6C` | 464 (254 nommés) | 47 |
-| `signin.xex` | `0x90100000` | `0x30000` | `0xFC14` | 284 | 22 |
-| `createprofile.xex` | `0x90100000` | `0x1E000` | `0x97D8` | 210 | 29 |
-| `gamerprofile.xex` | `0x90100000` | `0x4F000` | `0x1F0D8` | 336 | 49 |
-| `vk.xex` | `0x917D0000` | `0x17000` | `0x9538` | 152 | 10 |
-| `deviceselector.xex` | `0x916D0000` | `0x14000` | `0x618C` | 126 | 9 |
-| `ximecore.xex` | `0x91680000` | `0x28000` | `0x1D60C` | 68 | 31 |
-
-  `huduiskin.xex` (70 Ko) est une archive de ressources sans code (chaînes `XamStrings.xus`) : `xexinfo` n'y lit pas de sections.
-  Conflit : `signin`, `createprofile` et `gamerprofile` ont la même base `0x90100000` ; la console les relocalise (`.reloc`),
-  une recompilation à base fixe ne peut pas les charger ensemble.
-- **Recompilation d'essai de `hud.xex`** (dossier `work/hudproj/`, hors dépôt), même procédé que XAM :
-
-```sh
-python3 tools/xex_rekey.py <flash>/hud.xex work/hudproj/hud.rekey.xex          # identique à l'entrée
-tools/xexinfo/build/xexinfo work/hudproj/hud.rekey.xex work/hud.pe             # image décodée, sections
-# manifeste work/hudproj/hud_manifest.toml : [project] name = "hud", [entrypoint] file_path = "assets/hud.xex",
-#   out_directory_path = "generated/hud", includes = [hud_overrides.toml, hud_auto_overrides.toml]
-python3 tools/codegen_module.py work/hudproj hud_manifest.toml hud work/hud.pe 913E0000 913E6000 1BF6C 913E0400:913E4158 91402000:91402FD4
-```
-
-  Résultat : 1133 fonctions connues, 1 cible non résolue (`0x913FC6A4`, écrite dans `hud_auto_overrides.toml`), aucune fonction
-  par pointeur, aucune instruction non implémentée, 14 fichiers générés (1,9 Mo), 2 passes de codegen. Les tables de fonctions
-  par défaut (`0x9142C000`, `0x91487F58` en vue 0x9) ne recouvrent ni l'image de XAM ni celle du Dashboard ; on peut les placer
-  avec `function_table_base` (par exemple `0x84800000`) comme au palier C.
-- **Non fait** : déclaration `[[modules]]` de `hud.xex` dans `dash_manifest.toml`, compilation de la DLL, et surtout routage de ses
-  imports. Les 464 imports `xam.xex` de `hud.xex` seraient résolus à l'édition de liens contre le HLE du SDK (`__imp__Xui*`),
-  pas contre XAM recompilé : il faudrait un hook par ordinal (mécanisme du palier E, généré), et beaucoup d'ordinaux de XAM n'ont
-  pas de nom dans la table du SDK (nom nécessaire au symbole `__imp__<Nom>`). Faire charger `hud.xex` par XAM supposerait aussi
-  une redirection de `XexLoadImage` pour les noms nus (par exemple vers `game:\flash\<nom>`), car `assets/` ne contient pas les XUI
-  à la racine.
-
-### Blocages restants, classés
-
-1. **Application 0xFA (`musicplayer.xex`, `sub_818D19A8`) : démarrage sans fin** (cause non établie). `sub_818951C8` ne revient
-   donc pas : les applications 0xF7, 0xF5, 0xF4, 0xF2, 0xF3, 0xF8, puis `sub_818CD070` et la suite de `sub_81872230` (dont
-   `sub_818A2F90`, le HUD) ne sont jamais atteintes. Preuves : piles gdb prises à 25 s et 45 s identiques (`sub_818D7110` →
-   `sub_818D2DC0` → `sub_81A64D00` → `sub_81A63580` → `sub_81A65638` → `sub_81A72108` → `sub_81A71FD8` → `sub_81A71EE8` →
-   `sub_81A71E90`, grands nombres) ; `XeKeysExGetKey(0x100)` (40 octets) et `(0x101)` (20 octets) lus juste avant ; avec le tampon
-   nul (stub), même boucle. La clé factice n'est pas une vraie clé RSA : le calcul peut ne pas se terminer sur une entrée
-   invalide, ou une instruction du code de grands nombres être mal recompilée (non vérifié). Pistes : fournir une clé 0x100
-   valide (module + exposant cohérents), ou instrumenter `sub_81A71EE8` (compteurs de boucle) pour distinguer boucle infinie et
-   calcul long.
-2. **État du HUD** (`0x81BFCAE8+172/+176`) : posé par `sub_818A2C98`, qui n'est planifiée qu'après le point 1.
-3. **XAM et les XUI** : `hud.xex` & co. ne sont pas des `[[modules]]` ; routage des imports non fait (voir étape 2). Rendu : le HUD
-   appelle `VdRegisterXamGraphicsNotification` et le pipeline Vd* du noyau (`VdSwap`, `VdGetSystemCommandBuffer`), non examinés ;
-   le Dashboard et le HUD partagent le même GPU émulé.
-4. **Entrées** (A/B pour la réponse) : non examinées.
-5. **Défauts du SDK contournés dans `common/`** (à corriger dans `third_party/xenondash-sdk`, puis retirer les hooks) :
-   `UsbdBootEnumerationDoneEvent` de type 1 (`kernel_state.cpp:107`) ; `KeSetTimerEx`/`KeCancelTimer` stubs et
-   `GetNativeObject` sans minuteries (`xobject.cpp`) ; `ObCreateObject`/`ObInsertObject` stubs ; `DrvGetContentStorageNotification`
-   stub ; `AudioSystem::SubmitFrame` sans test de client nul ; `XAudioGetDucker*`/`XeKeys*` stubs ; `ObReferenceObjectByName`
-   (palier D).
-6. **Instance unique de XAM** : le correctif 5 (`KeGetCurrentProcessType` == 2 pour XAM) est une approximation : l'état « titre »
-   de XAM (identifiant 238, tas de classe 0) n'existe pas ; ce qui en dépend (nom du titre en cours, messages par processus)
-   ne peut pas fonctionner.
-
-### Vérifications
-
-| Vérification | Résultat |
-|---|---|
-| `dashboards/2.0.13604.0-xam` | compile ; hub affiché à 45 s avec `DASH_XAM_REDIRECT=XGetVideoMode,XamShowMessageBoxUI` et le test à 30 s (`final1`) |
-| `dashboards/2.0.13604.0` (HLE, même `common/`) | compile (rc 0) ; hub affiché à 40 s (écran `:94`, `runs/hle_final.png`), aucun processus restant |
-| `dashboards/2.0.6770.0` | compile (rc 0) ; non lancé |
-| SDK (`third_party/xenondash-sdk`) | aucun fichier modifié par ce palier |
-
-### Fichiers
-
-- Nouveaux : `common/src/kernel_timers.cpp`, `common/src/kernel_audio_guard.cpp`, `common/src/kernel_ob.cpp`,
-  `common/src/kernel_keys.cpp`, `common/src/kernel_sdk_fn.h`.
-- Modifiés : `common/CMakeLists.txt` (4 sources), `common/src/dash_xam_runtime.{h,cpp}` (`FixKernelVariables`, `SetXamImageRange`,
-  `InXamImage`, hook `KeGetCurrentProcessType`), `common/src/dash_app_base.cpp` (appels), `common/src/kernel_stubs.cpp`
-  (`DrvGetContentStorageNotification`), `common/src/dash_xam_redirect.cpp` (`DASH_TEST_PEEK=<adresse hex>` : 64 mots de mémoire
-  invitée avant le test), ce document.
-- Hors dépôt : `work/hudproj/` (recompilation d'essai de `hud.xex`) ; traces de diagnostic : générées par un script
-  jetable, retirées du code généré avant le dernier build.
-
-## Palier G : le HUD de XAM est chargé et vivant (jalon partiel : pas encore dessiné)
-
-Objectif : la boîte de message du Dashboard doit être la vraie fenêtre de la console, fournie par XAM recompilé et `hud.xex`.
-**Atteint** : l'initialisation de XAM va jusqu'au bout, XAM charge `hud.xex` **recompilé** (module `dash_hud`) et `huduiskin.xex`
-(ressources), le HUD enregistre ses classes XUI, crée sa scène, charge sa table de chaînes et entre dans sa boucle de messages ; tous
-ses appels `xam.xex` (232 imports) atteignent **XAM recompilé**. **Non atteint** : aucune boîte n'est dessinée (rendu du HUD non
-exécuté) et le HUD ne reçoit aucune touche (pas de périphérique d'entrée côté XAM). Preuves et classement ci-dessous.
-
-### Étape 1 : application 0xFA et fin de l'initialisation de XAM (fait)
-
-**Cause établie : ce n'était pas la clé.** Méthode : points d'arrêt gdb par script Python (compteurs et arguments, sans rebuild :
-`break *sub_81A71EE8` créé au chargement de `libdash_xam.so`, `ctx` = `rdi`, `base` = `rsi`). `sub_81A71FD8` est appelée une seule
-fois ; elle appelle une seule fois `sub_81A71EE8(0, 0x89ABCDEF, ...)`, qui tire un nombre aléatoire dans `[0, 0x89ABCDEF]` **par
-rejet** (recommence tant que le tirage dépasse la borne) ; `sub_81A71E90` (tirage) est appelée **156 024 fois en 30 s**, avec les
-mêmes arguments à chaque appel. Elle aboutit à `XeCryptRandom`, que le SDK implémente par `memset(buf, 0xFD, taille)`
-(`xboxkrnl_crypt.cpp:329`) : le tirage vaut toujours `0xFDFDFDFD`, supérieur à la borne : boucle infinie, pas de calcul long.
-
-- Correctif : `common/src/kernel_random.cpp` (`XeCryptRandom` : `getrandom`, repli `mt19937`). Valable pour tous les appelants (la sortie
-  constante du SDK est un défaut). Ce ne sont pas des clés de console.
-- Les clés factices de `kernel_keys.cpp` (palier F, étape 1 bis n° 9) étaient inutiles : fichier **supprimé** (initialisation
-  vérifiée sans elles ; les journaux montrent `XeKeysGetKey`/`XeKeysExGetKey` en stub du SDK). Aucune clé n'est fabriquée.
-- L'initialisation continue puis appelle `KeBugCheck(0x29)` (journal ajouté : `[kernel] KeBugCheck... depuis lr=0x818CD134`, hooks
-  `KeBugCheckEx`/`KeBugCheck` dans `dash_xam_runtime.cpp`) : `sub_818CD070` ouvre `\Device\DeviceAuth` (`NtOpenFile`) puis lui envoie un
-  IOCTL (`sub_818CC870`) ; ce périphérique n'existe pas ici, l'ouverture échoue. **Neutralisation** (c'est une écoute de
-  l'authentification de périphériques de stockage, inutile au Dashboard) par le mécanisme `[[midasm_hook]]` du codegen
-  (`xam_overrides.toml` : adresse `0x818CD070`, `return = true`) : le code généré appelle `xam_skip_device_auth(r3)`
-  (`dashboards/2.0.13604.0-xam/src/xam_neutralize.cpp`, journal `[xam] sub_818CD070 (écoute DeviceAuth) neutralisée`) puis revient.
-  Les symboles de l'exécutable doivent être exportés pour la DLL chargée par `dlopen` : `set_target_properties(dash PROPERTIES
-  ENABLE_EXPORTS ON)` dans le `CMakeLists.txt` du projet (la déclaration générée est en liaison C++ : pas de `extern "C"`).
-- Résultat : `sub_818951C8` revient, les applications sont enregistrées, XAM demande `hud.xex` au démarrage (journal), puis à chaque
-  appel de la boîte de message (`XexLoadImage("hud.xex")`).
-- Aucune autre application n'a eu besoin d'être neutralisée (0xFA, 0xF7, 0xF5, 0xF4, 0xF2, 0xF3, 0xF8 démarrent).
-
-### Étape 2 : `hud.xex` recompilé comme module (fait)
-
-- `dash_manifest.toml` : deuxième `[[modules]]` (`file_path = "assets/flash/hud.xex"`, `guest_path = "game:\\flash\\hud.xex"`,
-  `function_table_base = 0x84800000`, `includes = hud_overrides.toml, hud_auto_overrides.toml`). Code généré dans
-  `generated/dash/hud/` (dossier ignoré par git, comme `generated/xam/` : traduction d'un binaire Microsoft). Le chemin de sortie
-  `generated/hud/` n'était pas ignoré par `.gitignore`. 1133 fonctions, aucune instruction non implémentée : pas de post-traitement
-  `xam_unimpl_patch.py` pour ce module. `hud_auto_overrides.toml` vient de l'essai du palier F (`tools/codegen_module.py`, 1 cible).
-- Adresses (physiques, bit 28 retiré ; les tas `0x8` et `0x9` sont deux vues du même fichier) : image du HUD `0x813E0000-0x8142C000`,
-  table `0x84800000-0x8485BEDC` ; dash.xex `0x82000000-0x82EA8000` et sa table jusqu'à `0x83E05B10` ; XAM `0x817E0000-0x81D50000` et sa
-  table `0x84000000-0x84727098`. Aucun recouvrement (le SDK le vérifie au chargement : journal `Function table initialized for
-  module: code=913E6000-91401F6C, image=913E0000-9142C000, table=84800000`).
-- `CMakeLists.txt` : cible `dash_hud` (créée par `generated/dash/dll_targets.cmake`) + même contournement du registre que XAM
-  (`generated/dash/hud/dash_register.cpp`) + `src_hud/hud_xam_imports.cpp` (étape 3).
-- **Chargement par XAM** : le SDK résout un nom nu (`hud.xex`) dans le dossier du module exécutable (ici le périphérique d'état de XAM,
-  `\Device\Harddisk0\Partition1`) : fichier introuvable. Hook `XexLoadImage` (`common/src/dash_xam_runtime.cpp`) : pour un appel venant
-  de XAM, un nom nu présent dans la flash est remplacé par `game:\flash\<nom>` (même fichier que `\SystemRoot\<nom>`). Le chemin
-  normalisé (`flash/hud.xex`) correspond alors au `guest_path` du manifeste (`FindRecompiledModule`) : le SDK charge `libdash_hud.so`
-  et enregistre les 1133 fonctions (journal `Module 'flash/hud.xex' registered 1133 functions`).
-- **`huduiskin.xex`** (`\SystemRoot\huduiskin.xex`) : archive de ressources (XEX compressé, DLL sans point d'entrée, image décodée qui n'est pas un PE ;
-  en-têtes `0x2FF` ressources, `0x3FF` format). Le chargeur du SDK la refusait (`XEX load failed with code 3`, puis `2` avec la clé de
-  développement) : sans elle, `XuiLoadStringTableFromFile` renvoyait `0x80004005` et le HUD se déchargeait aussitôt
-  (`XamAppUnloadSelf`, requête terminée avec `0x65B`). **Modification du SDK** (indispensable) :
-  - `include/rex/system/xex_module.h` : `XexModule::is_resource_module()` (module DLL, sans point d'entrée, avec en-tête de ressources) ;
-  - `src/system/xex_module.cpp` : `ReadImage` accepte un tel module sans PE ; `LoadContinue` le mappe sans analyse de PE ni d'imports
-    (journal `XEX resource module loaded at 90F90000-90FC3000`). `XexGetModuleSection` (`UserModule::GetSection`) lit ses ressources
-    nommées. Après le correctif : `XuiLoadStringTableFromFile` renvoie 0.
-  - Limite : la vérification de validité du déchiffrement est absente pour ces modules (un XEX de ressources chiffré avec une autre clé serait accepté avec une image fausse).
-- **Autre modification du SDK** : `src/system/xthread.cpp`, `XHostThread::Execute` appelle `fpscr.InitHost()` (le contexte d'un fil hôte n'est
-  pas initialisé par `XThread::Execute` ; le premier `disableFlushModeUnconditional` du code recompilé posait `MXCSR = 0`, toutes les
-  exceptions flottantes démasquées). Preuve : SIGFPE du fil « Audio Worker » dans `sub_81A06F88` (division flottante par zéro, ligne
-  `dash_recomp.25.cpp:18792`), à l'ouverture de la boîte ; c'est la cause réelle du SIGFPE contourné au palier F par le ducker. Le
-  fil `SystemHostThread` de `common/` reçoit le même appel.
-- Procédure SDK (sauvegarde de `sdk/lib/` et des 3 fichiers sources dans le scratchpad avant ; `librexruntime.so` d'avant : md5 `769fc992…`) :
-  `cd third_party/xenondash-sdk && cmake --build out/build/linux-amd64 --config Release --target install -j 6`.
-
-### Étape 3 : imports `xam.xex` du HUD vers XAM recompilé (fait)
-
-- Le code généré de `hud.xex` appelle ses imports par `__imp__<Nom>(ctx, base)` (232 noms `xam.xex`, 22 noms `xboxkrnl` ; aucun ordinal sans
-  nom : pas de symbole `__imp__xam_<N>` dans le code ni dans le registre, donc la table de noms du SDK suffit ; vérifié par
-  recherche dans les fichiers générés). Les thunks d'import sont aussi enregistrés dans la table de fonctions du module.
-- `tools/gen_module_xam_imports.py generated/dash/hud dashboards/2.0.13604.0-xam/src_hud/hud_xam_imports.cpp` produit une définition
-  `__imp__<Nom>` **masquée** (`visibility("hidden")`) par import `xam.xex`, dans la DLL du HUD : l'appel se lie localement et non à
-  l'exécutable (hooks de `common/` pour le Dashboard HLE) ni au HLE du SDK. Elle appelle `dash::xamredir::CallModuleImport`
-  (`common/src/dash_xam_redirect.{h,cpp}`, exporté par l'exécutable) : l'export de XAM recompilé de même ordinal est exécuté avec le même
-  `ctx` (`UserModule::GetProcAddressByOrdinal` puis `FunctionDispatcher::GetFunction`). Repli (export absent de XAM) : symbole visible de
-  l'exécutable (`dlsym(RTLD_DEFAULT)`), avec un avertissement `[xamredir] module : ...`. Les imports `xboxkrnl` restent au noyau du SDK.
-- Preuves : journal `[xamredir] module : XuiRegisterClass (ordinal 842) : appel 1 par XAM recompilé` (et XuiCreateObject, XuiLoadStringTableFromFile,
-  XamShowMessageBox, XamInputGetKeystrokeHud, XamEnableSystemAppInput...) ; aucun `repli`. Trace des arguments et retours :
-  `DASH_XAM_TRACE_MODULE=<n>` (lignes `[xamtrace]`).
-
-### Étape 4 : la boîte de message du HUD (état : créée, non dessinée)
-
-Appel : `DASH_XAM_REDIRECT=XGetVideoMode,XamShowMessageBoxUI DASH_TEST_MSGBOX=12` (retour `0x3E5`, accepté). Séquence observée (trace, fil de
-l'application 254) : `XexLoadImage(hud.xex)` → entrée du module (`XamRegisterSysApp(0xFF)`) → ~60 `XuiRegisterClass` → `XuiRenderGetBackBufferSize` →
-`XuiCreateObject` → `XuiElementSetBounds` → `XamEnableSystemAppInput` → `XamBuildDynamicResourceLocator` → `XuiLoadStringTableFromFile` = 0 →
-`XamShowMessageBox` = 0 → **boucle** `XamInputGetKeystrokeHud` (53 125 appels en 18 s). Capture `runs/g12.png` : le hub seul, aucune boîte.
-
-Classement, avec preuves :
-
-1. **Rendu : le HUD est créé mais rien n'est dessiné.** *(Correction du palier N2 : les tampons n'étaient pas à zéro. Le descripteur de `VdSetSystemCommandBuffer` donne une adresse **physique**, lue ici par la vue virtuelle ; le HUD dessinait bien, voir « Palier N2 ».)* Le rendu XUI se fait dans XAM recompilé (le HUD n'importe aucun `XuiRender*` dans cette
-   séquence), qui soumet ses commandes par `VdSetSystemCommandBuffer(descripteur)` : le SDK en fait un stub (`REX_EXPORT_STUB`), appelé
-   ~3000 fois par seconde par un fil de XAM sans cadence (57 000 appels en 18 s). Descripteur observé (`DASH_TRACE_VD=<n>`) : 14 mots,
-   `{ 0x1FC65000, 0xB58, 0xFF49D000, 6, 0, 0x354, 0x1E0, ... }` (852 × 480), l'adresse tournant sur trois tampons (`0x1FC65000`,
-   `0x1FC25000`, `0x1FBE5000`) ; **les 64 premiers octets des tampons sont à zéro** : aucune commande GPU n'a été produite ni exécutée.
-   `VdRegisterXamGraphicsNotification` est aussi un stub : le rappel de XAM (`sub_818A04F8`, messages 1 à 9 par `VdCallGraphicsNotificationRoutines`)
-   n'est jamais appelé. Le SDK n'a aucun traitement de tampon de commandes système ni de notifications graphiques de XAM ; il faudrait un
-   processeur de commandes Xenos pour les tampons de XAM (D3D statique de XAM) et un affichage superposé à l'image du Dashboard
-   (non entrepris : hors de `common/` et du projet). `VdQuerySystemCommandBuffer` (stub, résultat 0) tenait un fil de XAM dans
-   une boucle d'attente à 100 % d'un cœur (4,5 millions d'appels en 20 s) : hook `common/src/kernel_video.cpp` (1 pour les appels venant
-   de XAM).
-2. **Entrées : le HUD ne reçoit aucune touche.** `XamInputGetKeystrokeHud` renvoie `0x10D2` (ERROR_EMPTY) à chaque appel, y compris après
-   `Return` et `Escape` envoyés avec `tools/xkeys.py` (`XKEYS_HOLD=0.8`) : 90 703 appels, tous `0x10D2`. Le Dashboard HLE reçoit bien ces touches
-   (entrées du SDK), pas XAM : la couche d'entrée de XAM lit les manettes par `XInputdGetCapabilities`, `XInputdReadState`,
-   `XInputdNotify` (stubs du SDK, `xboxkrnl_hid.cpp`) et un tableau de périphériques par port et type (`sub_818AD2A8` : mot non nul à `0x81BFD950 + 8 × (7 × port + type)`, identifiant à `+4`,
-   renseigné quand un périphérique USB est arrivé) qui reste vide faute de périphérique USB. Il faudrait un périphérique d'entrée virtuel
-   (arrivée de périphérique, état de manette) alimenté par les entrées du SDK. Non entrepris.
-3. **Plantage sporadique au démarrage** (environ 1 démarrage sur 6, à moins de 2 s, depuis que l'initialisation de XAM va plus loin) :
-   `SIGSEGV` dans `rex::system::XEvent::Reset()` appelé par `KeResetEvent` depuis `sub_81890650` (fil de répartition de XAM, pile gdb) :
-   le pointeur d'objet natif de l'événement (`r31 + 60`) est invalide (condition de course entre l'initialisation et l'usage ; non
-   établie). Non corrigé ; relancer.
-4. **Défauts du SDK contournés dans `common/`** : `XeCryptRandom` (corrigé ici), `VdQuerySystemCommandBuffer` (1 pour XAM), voir aussi palier F.
-5. Les fils du HUD et de XAM interrogent sans pause (`XamInputGetKeystrokeHud` ~3000 appels/s, `VdSetSystemCommandBuffer` ~3000/s) : charge CPU élevée
-   sans les notifications d'image (vsync) que le noyau doit fournir.
-
-### Vérifications
-
-| Vérification | Résultat |
-|---|---|
-| `dashboards/2.0.13604.0-xam` | compile (rc 0, avec `dash_hud`) ; initialisation de XAM complète ; HUD chargé (`libdash_hud.so`), hub affiché (`runs/g12.png`) ; boîte non dessinée |
-| `dashboards/2.0.13604.0` (HLE) | compile (rc 0) ; hub affiché à 40 s (`runs/hle_g.png`) ; le script `run_headless.sh` de cette version choisit son écran à partir de `:80` (non `:92`/`:94`) |
-| `dashboards/2.0.6770.0` | compile (rc 0) ; non lancé |
-| SDK | 3 fichiers modifiés (ci-dessous) ; réinstallé deux fois (`sdk/lib`, `librexruntime.so` : md5 `7bcd7801…`) |
-
-### Fichiers
-
-- Nouveaux : `common/src/kernel_random.cpp`, `common/src/kernel_video.cpp`, `dashboards/2.0.13604.0-xam/src/xam_neutralize.cpp`,
-  `dashboards/2.0.13604.0-xam/src_hud/hud_xam_imports.cpp` (produit), `dashboards/2.0.13604.0-xam/hud_overrides.toml`,
-  `dashboards/2.0.13604.0-xam/hud_auto_overrides.toml`, `tools/gen_module_xam_imports.py`.
-- Supprimé : `common/src/kernel_keys.cpp`.
-- Modifiés : `common/CMakeLists.txt`, `common/src/dash_xam_redirect.{h,cpp}` (`CallModuleImport`, trace), `common/src/dash_xam_runtime.cpp`
-  (`XexLoadImage`, `KeBugCheck*`, `InitHost` du fil système), `dashboards/2.0.13604.0-xam/{CMakeLists.txt,dash_manifest.toml,xam_overrides.toml}`, ce document.
-- SDK (`third_party/xenondash-sdk`) : `include/rex/system/xex_module.h`, `src/system/xex_module.cpp`, `src/system/xthread.cpp`.
-
-### Reproduire (projet XAM)
-
-```sh
-cd dashboards/2.0.13604.0-xam
-../../sdk/bin/rexglue codegen --ignore-stamp dash_manifest.toml
-python3 ../../tools/xam_unimpl_patch.py generated/xam
-python3 ../../tools/gen_module_xam_imports.py generated/dash/hud src_hud/hud_xam_imports.cpp
-cmake --preset linux-amd64-relwithdebinfo && cmake --build out/build/linux-amd64-relwithdebinfo -j 6
-DASH_XAM_REDIRECT=XGetVideoMode,XamShowMessageBoxUI DASH_TEST_MSGBOX=12 DASH_XAM_TRACE_MODULE=3000 DASH_TRACE_VD=6 ./run_headless.sh 40 essai
-```
-
-### Suite
-
-1. Rendu : exécuter les tampons de commandes système de XAM (`VdSetSystemCommandBuffer`) dans le processeur de commandes Xenos du SDK et les
-   superposer à l'image du Dashboard ; implémenter `VdRegisterXamGraphicsNotification`/`VdCallGraphicsNotificationRoutines` et la cadence d'image.
-2. Entrées : périphérique d'entrée virtuel pour XAM (`XInputdGetCapabilities`, `XInputdReadState`, `XInputdNotify`, arrivée de périphérique).
-3. Corriger le SDK (`XeCryptRandom`, `ObReferenceObjectByName`, minuteries invitées, etc.) puis retirer les hooks de `common/`.
-4. Modules `signin`, `vk`, `createprofile`, `deviceselector` : même procédé que `hud.xex`, mais `signin`, `createprofile` et `gamerprofile` ont la même
-   base `0x90100000` (relocalisation requise).
-
-## Palier H : entrées du HUD (manette virtuelle) et plantage sporadique
-
-### Étape 1 : comment XAM découvre une manette
-
-- Au démarrage XAM (sub_81872460) enregistre ses rappels noyau : `DrvSetUserBindingCallback(0x818AD898)`, `DrvSetDeviceConfigChangeCallback(0x818AD8C8)`, etc.
-  Le rappel de liaison (r3 = poignée du pilote, r4 = identifiant du périphérique, r5 = type, r6 = retrait si non nul, r7 = &port)
-  appelle `sub_818AD508` : choix du port (octet à `*r7`, `0xFF` = quelconque), écriture dans le tableau `0x81BFD948`
-  (4 ports de 56 octets ; entrée `(port, type)` à `+8 + 8 × (7 × port + type)` : `{présent, identifiant}` ; type 0 = manette,
-  1 = casque, 3/4 = périphériques de texte), puis rappel d'arrivée de XAM (`0x81BE1E10 + 4 × type`) et `XInputdSetRingOfLight`.
-- XAM lit ensuite le périphérique par l'identifiant : `XInputdGetCapabilities(id, X_INPUT_CAPABILITIES*)` (code ≥ 0 = succès),
-  `XInputdReadState(id, uint32_t* paquet, X_INPUT_GAMEPAD*)` (`0xC000009D` = non connecté), `XInputdNotify(id, port | 0x90000000)`.
-  `XamInputGetKeystrokeHud(utilisateur, X_INPUT_KEYSTROKE*)` en dérive les frappes par interrogation de l'état.
-
-### Étape 2 : `common/src/kernel_xinputd.cpp`
-
-- Hook de `DrvSetUserBindingCallback` : mémorise le rappel ; un fil attend que XAM ait posé son rappel d'arrivée (`0x81BE1E10`)
-  puis appelle `0x818AD898(id 0x10000001, id, type 0, arrivée, &port=0xFF)` depuis un fil invité. Journal : `[xinputd] manette virtuelle
-  0x10000001 annoncée à XAM : retour r3=0x00000000, port=0`.
-- `XInputdGetCapabilities` : manette standard (type 1, sous-type 1, boutons `0xF3FF`, gâchettes `0xFF`, sticks `0xFFC0`, vibration `0xFF00`).
-  `XInputdReadState` : `InputSystem::GetState(0)` du SDK, la même source que `XamInputGetState` du Dashboard (clavier/manette réels, mêmes
-  touches pour le Dashboard et le HUD ; pas de drapeau « HUD actif »). `XInputdNotify` : sans effet.
-- Test : `DASH_TEST_MSGBOX=<s>` appelle maintenant `XamShowMessageBoxUI` avec un OVERLAPPED et attend (`DASH_TEST_MSGBOX_WAIT`, 60 s) sa fin ;
-  les frappes données au HUD sont journalisées (`dash_xam_redirect.cpp`, `CallModuleImport`).
-- Preuve (`DASH_XAM_REDIRECT=XGetVideoMode,XamShowMessageBoxUI DASH_TEST_MSGBOX=8`, Return envoyé par `tools/xkeys.py`, `XKEYS_HOLD=0.8`) :
-  `XInputdReadState : boutons 0x1000` ; `XamInputGetKeystrokeHud(utilisateur 0) = 0x0 : VirtualKey=0x5800 unicode=0x0000 flags=0x0001`
-  (VK_PAD_A, appui) ; `test XamShowMessageBoxUI : TERMINÉ après 7400 ms, overlapped.InternalLow=0x00000000, erreur étendue=0x00000000, bouton
-  choisi=0`. Rien n'est dessiné (rendu hors périmètre).
-
-### Étape 3 : plantage sporadique (corrigé dans `common/`, SDK inchangé)
-
-Deux causes, établies par gdb (relances jusqu'à reproduction, `ulimit -c 0`) :
-
-1. **En-tête d'événement périmé** (`KeResetEvent` depuis `sub_81890650`, `XEvent::Reset()` sur un pointeur invalide) : XAM réutilise la mémoire
-   d'objets sans passer par `KeInitializeEvent` ; l'en-tête garde la signature `REX\0` du SDK et un handle recyclé (`0xF80001D0`) pour un objet
-   d'un autre type. `common/src/kernel_event_guard.cpp` efface la signature d'un tel en-tête avant l'appel (appels venant de XAM seulement ;
-   journal `en-tête signé périmé`).
-2. **XThread détruit trop tôt** (SIGSEGV dans `XThread::Create()::$_0` : `thread_` nul sur un XThread déjà libéré ; ou dans `Thread::Exit`) :
-   `ObReferenceObject` est un stub du SDK alors que `ObDereferenceObject` libère un handle ; `ExCreateThread` avec le drapeau `0x80` rend un
-   pointeur dont la référence n'est pas prise ; un fil qui déréférence son propre objet libère deux fois l'auto-référence ; et
-   `XThread::Exit` du SDK libère le dernier handle puis appelle `Thread::Exit` sur le `PosixThread` que `~XThread` vient de supprimer (gdb :
-   `~XThread` appelé depuis `XThread::Exit`). Correctifs dans `common/src/kernel_ob.cpp` : `ObReferenceObject` (RetainHandle pour un objet
-   déjà natif), `ExCreateThread` (référence de handle pour `0x80`, et un compte de pointeurs en plus, jamais rendu : les fils ne sont jamais
-   détruits, fuite de quelques centaines d'octets par fil), `ObDereferenceObject` du fil par lui-même ignoré.
-   Défaut du SDK à corriger : `XThread::Exit` (ordre libération du handle / sortie du fil hôte) et `ObReferenceObject`.
-- Mesure : avant, 4 plantages sur 16 (garde d'événement seule) ; après tous les correctifs, 20 démarrages consécutifs de 10 s sans SIGSEGV.
-
-### Fichiers (palier H)
-
-Nouveaux : `common/src/kernel_xinputd.cpp`, `common/src/kernel_event_guard.cpp`. Modifiés : `common/CMakeLists.txt`, `common/src/kernel_ob.cpp`,
-`common/src/dash_xam_redirect.cpp`, ce document. SDK : aucun fichier.
-Limites : ReadState lit toujours le port 0 ; pas de retrait de manette ; le rendu de la boîte reste à faire.
-
-## Palier N2 : rendu natif du HUD de XAM (boîte de message Xbox par-dessus le Dashboard, sans plugin GPU ni lecteur PM4)
-
-**Atteint** : avec `DASH_TEST_MSGBOX=<s>` (et `DASH_XAM_REDIRECT=XGetVideoMode,XamShowMessageBoxUI`), la vraie boîte de message du HUD de XAM (`hud.xex`
-recompilé) s'affiche par-dessus le hub : fond du Dashboard atténué, panneau, barre de titre, texte, boutons OK / Annuler, légende « A Select / B Back ». La
-flèche bas déplace la sélection, Entrée ferme la boîte (journal : `TERMINÉ … bouton choisi=0`, ou 1 après « bas »), le hub n'est pas touché par l'appui.
-Le Dashboard est lui aussi rendu nativement (`-DDASH_NATIVE_GPU=ON`, aucun plugin `xenos`). Captures regardées (scratchpad, non versionnées) : `n24_0.png`
-(boîte), `n24_1.png` (après Entrée), `n11_1.png` (sélection sur Annuler). Aucune commande PM4 n'est exécutée : les fonctions D3D statiques de XAM sont
-crochetées et rendues par un second noyau `ngpu_core` ; l'image est superposée à celle du Dashboard à la présentation.
-
-### Étape 1 : comment le HUD dessine réellement
-
-- **(a) Bibliothèque D3D.** `xam.xex` embarque sa **propre** copie de D3D9 **2.0.2099.16** (XDK de 2005 ; bibliothèques statiques lues dans l'en-tête XEX : `D3D9
-  2.0.2099.16`, `XGRAPHC 2.0.2099.3`, `XUIRNDR 13604`), très différente de celle du Dashboard (2.0.20158) : décalages du périphérique (groupes de registres + 1088 octets,
-  objets shader à +12944/+12948), objets shader et conteneurs d'un ancien format. `hud.xex` n'a ni D3D ni `XUIRNDR` : il appelle les exports XUI de XAM, qui dessinent. Le
-  matcheur `tools/d3d_match.py analyze work/xam13604.pe` ne les retrouve qu'à confiance faible (0,2 à 0,9 selon le rôle : la famille `dash-13604` ne vaut pas pour D3D 2099) : les
-  adresses ci-dessous viennent du désassemblage (`tools/ppc_dis.py`) et de traces d'appels, validées par le rendu.
-- **(b) Qui soumet, et quand.** La fonction d'image du HUD est `sub_818A1368` (appelée par `sub_818A1B58` ← `sub_818A2500`) : boucle **libre**, ≈ 2400 images/s sans vsync, **à chaque image**,
-  qu'une interface soit affichée ou non (au repos : 3 dessins + un resolve ; avec la boîte : 20 dessins + un resolve). Séquence d'une image : changement de tampon (`819CC428`),
-  cible de rendu et fenêtre (`819C3E18`, `819C16D8`, six écritures de registres `819C43C0`), rendu de la scène XUI (`sub_8186F398`), `Resolve` (`819CA3E0`), puis `sub_819CC490` qui appelle
-  `VdSetSystemCommandBuffer(descripteur)`. Le HUD n'existe que depuis la demande de boîte (la boucle démarre avec `XamShowMessageBoxUI`).
-- **(c) Contenu réel des tampons.** Le descripteur (14 mots : adresse **physique** du tampon, taille en mots, texture de sortie `0xFF4A2000`, format 6 = 8888, 852 × 480…) désigne trois tampons
-  tournants. L'analyse du palier G les croyait vides : erreur de lecture (vue virtuelle au lieu de `TranslatePhysical`). Ils contiennent du PM4 : au repos 2904 mots (3 `DRAW_INDX`, un `DRAW_INDX_2`
-  de resolve), avec la boîte 4412 mots (20 `DRAW_INDX`) ; chaque image réécrit tout l'état (écritures de registres `0x2000`…`0x2380`, constantes `0x4000`/`0x4400`, `IM_LOAD` du microcode, sommets
-  en ligne). Diagnostics : `DASH_TRACE_VD_SCAN=<n>` (compte et premiers mots, au plus n lignes `[vdscan]`), `DASH_TRACE_VD_DUMP=<dossier>` (fichiers binaires), analyse de structure **sans exécution**
-  par un script jetable (hors dépôt). Le PM4 n'est jamais exécuté.
-- **(d) Fonctions D3D utilisées par le HUD** (adresses invitées de XAM, `native_gpu/profiles/hud_xam13604.h`) : `BeginVertices 819C8E38` (dev, prim, nombre, pas → pointeur d'écriture **dans le tampon de commandes**),
-  `EndVertices 819C90B8`, `DrawVerticesUP 819C90D8` (Begin + copie + End fondu), `SetTexture 819C8C60`, `SetVertexShader 819C6BE8`, `SetPixelShader 819C69D0`, `Resolve 819CA3E0`, soumission `819CC490`. Ni indexé, ni
-  `DrawVertices`, ni `Clear` n'apparaissent. Périphérique unique (`0x40870700` dans les essais). Primitives : quads (13), éventails (5), bandes (6), listes (4).
-
-Périphérique de XAM (vérifié en comparant sa mémoire aux écritures de registres du PM4) : fetch constants à `+0x480`, constantes de sommets `+0x780`, de pixels `+0x1780` (identiques au canonique) ; **groupes de registres
-décalés de 1088 octets** (`0x2000` à 11456, `0x2100` à 11532, `0x2280` à 11684…) ; pixel shader courant à `+12944`, vertex shader à `+12948`. Les constantes `def` des shaders sont copiées dans le périphérique
-par `SetPixelShader`/`SetVertexShader` (liste de patchs du conteneur) : elles se lisent donc dans l'ombre.
-
-### Étape 2 : crochets D3D de XAM et façade
-
-- `dashboards/2.0.13604.0-xam/src_xam_d3d/xam_d3d_hooks.cpp` (+ `xam_d3d_entries.inc`, 1347 adresses : 819B0000-819F0000 et quelques fonctions de la boucle d'image) : une définition **forte** de chaque `sub_<adresse>` dans `dash_xam`
-  prend le pas sur l'alias faible du code généré (pour les appels directs comme pour la table de fonctions) et appelle `hudd3d_call(adresse, ctx, base, original)`, définie dans l'exécutable. Aucun recodage
-  du code généré, pas de nouvelle génération (`rexglue codegen`).
-- `native_gpu/src/hud_front.cpp` (+ `profiles/hud_xam13604.h`) : la façade. Même principe que `front_profile.cpp` : ombre = `xenos::Canonicalize` du périphérique (`DeviceLayout` de XAM : groupes + 1088, shaders 12944/12948),
-  dessin ouvert à `BeginVertices` (état figé, microcode du vertex shader **tel que D3D l'a patché**), clos au prochain appel suivi, quads/éventails développés en triangles, `Resolve` → `ResolveCall` (destination
-  `RB_COPY_DEST_BASE`), soumission → `EndFrame` du noyau. Le HUD a son **propre noyau** `ngpu_core` (second périphérique Vulkan, ses propres EDRAM et textures) : `ngpu_core` n'est **pas modifié**, deux instances coexistent
-  sans conflit (essais sous lavapipe). Surveillance d'écriture : une instance de `PhysicalWriteWatcher` par noyau.
-- **Effacement de l'overlay** : D3D ne vide jamais la cible (aucun `Clear`, `Resolve` sans drapeau de remise à zéro) mais la scène XUI est redessinée entièrement sur une surface transparente à chaque image ; sans
-  effacement les images s'empilent (traces de l'animation de fermeture, constatées). La façade efface la cible (0,0,0,0) avant le premier dessin de chaque image. **Hypothèse** (non établie : comment le matériel s'y prend).
-- Cadence : la soumission est limitée à 60 Hz (`sleep_until`) ; une image au repos (overlay précédent vide) n'est rendue qu'une fois sur quatre. Le HUD n'attend rien du GPU (pas de « GPU nul » à fournir).
-- Projet : `cmake --preset linux-amd64-relwithdebinfo -DDASH_NATIVE_GPU=ON` dans `dashboards/2.0.13604.0-xam` (option du `CMakeLists.txt`, qui active aussi `NGPU_HUD` de `native_gpu/CMakeLists.txt`) ; `app.h` vide
-  `gpu_plugin`. `run_headless.sh` accepte `DASH_GPU_ARG=` (vide : aucun plugin). Sans l'option, le comportement est celui du palier H (crochets présents mais sans effet, `src/hud_d3d_trace.cpp` ne fait que des diagnostics).
-
-### Étape 3 : superposition
-
-L'image 852 × 480 que le HUD résout (`RB_COPY_DEST_BASE`, 8888) est relue par `Renderer::ReadResolved` à la soumission (RGBA8, alpha compris), publiée sous verrou, puis `ngpu::HudComposite` (appelée par
-`front_profile.cpp` à la présentation du Dashboard : symbole faible, sans effet dans les builds sans HUD) l'interpole (bilinéaire) vers 1280 × 720 et la compose avec **alpha prémultiplié** (la cible reçoit `SrcAlpha / InvSrcAlpha` sur du
-transparent : `rgb = c·a`). `ngpu::HudActive()` (vrai quand l'overlay a au moins 16 pixels d'alpha ≥ 8) sert de drapeau « HUD actif » :
-- **entrées** (`common/src/dash_xam_redirect.cpp`) : tant qu'il est vrai, puis jusqu'au relâchement de tous les boutons, `XamInputGetState` / `XamInputGetKeystrokeEx` du Dashboard ne renvoient plus rien (sinon l'appui qui ferme
-  la boîte déclenchait aussi « A » dans le hub : constaté) ; le HUD lit les mêmes touches par `XInputd*` (palier H) ;
-- notification système `XN_SYS_UI` (9) diffusée au noyau du SDK à l'ouverture et à la fermeture (aucun effet visible mesuré sur le hub).
-
-**Fond atténué.** Le premier dessin de chaque image du HUD est un quad plein écran (sommets en pixels, `vs 509E…`, `ps 4D19…`) qui échantillonne une texture et la multiplie par `ColorFactor` = gris 0,22, alpha opaque : l'image du titre,
-assombrie, sous la boîte. Sa texture n'est pas l'image du Dashboard (copie GPU du titre, que le noyau natif garde hors de la mémoire invitée) : la façade ne rend pas ce dessin, **retient son facteur** et `HudComposite` multiplie l'image du
-Dashboard par ce facteur avant de superposer l'overlay. Cette lecture est **déduite** (forme du dessin, shader, constante) ; au repos le dessin existe aussi mais l'overlay est alors vide : pas d'atténuation (visible requise).
-Ce quad avait des sommets **NaN** tant que XAM ne recevait pas les notifications graphiques du noyau : `common/src/kernel_video.cpp` implémente maintenant `VdRegisterXamGraphicsNotification` (mémorise le rappel `sub_818A04F8`
-de XAM, lui envoie le message 2 = `X_DISPLAY_INFO` de `VdGetCurrentDisplayInformation`, puis le message 1) et `VdCallGraphicsNotificationRoutines` (le D3D du Dashboard annonce `BufferScaling` 1280 × 720 : transmis à XAM, ou gardé pour un
-rappel enregistré plus tard). `DASH_XAM_GFXNOTIFY=0` supprime les notifications (retour aux sommets NaN : pas d'atténuation, le reste est inchangé).
-
-### Étape 4 : shaders du HUD
-
-`tools/hud_shaders.py` (`extract` / `translate`, mêmes dépendances que `tools/dash_shaders.py` : `build_xenosrecomp.sh`) : 34 conteneurs `0x102A0E0x` dans l'image de XAM (29 PS, 5 VS), ancien en-tête de 6 mots (magie, tailles virtuelle et physique, table de définitions, table de
-constantes, structure du shader) et structure du shader de 2 mots de plus que celle de `0x102A11xx`. Conversion vers le format de XenosRecomp (en-tête de 9 mots, structure reconstruite : `physicalOffset = 0`, `size` = taille physique,
-champs repris, mots en trop retirés ; table de définitions omise car les `def` sont dans l'ombre), booléens de pixel shader renumérotés (le microcode lit `b128` + n, la table de constantes donne n : décalage corrigé dans la table, retiré du HLSL),
-puis traduction XenosRecomp + dxc : **33 / 34** (échec : le VS `817F9550`, sans vfetch ; jamais demandé dans les essais). Nom du fichier = clé XXH3-64 du microcode, **instructions vfetch des vertex shaders mises à zéro** (D3D les remplit à
-l'exécution : la façade calcule la même clé sur la mémoire de l'objet) ; `<clé>.spv` et `<clé>.cont` (conteneur converti, lu par le noyau pour les éléments de sommets). Rien de cela n'est versionné ; variable `DASH_HUD_SHADERS=<dossier>`
-(les shaders du Dashboard : `DASH_NGPU_SHADERS`, `tools/dash_shaders.py`). Aucun shader du HUD manquant dans les essais (boucle « jouer → reconstruire » non nécessaire).
-
-### Reproduire
-
-```sh
-python3 -I tools/hud_shaders.py extract work/xam13604.pe <dossier>/bins && python3 -I tools/hud_shaders.py translate <dossier>/bins <dossier>/keys
-python3 -I tools/dash_shaders.py extract <dash 13604 décodé .bin> <d>/bins && python3 -I tools/dash_shaders.py translate <d>/bins <d>/keys      # Dashboard
-cd dashboards/2.0.13604.0-xam && cmake --preset linux-amd64-relwithdebinfo -DDASH_NATIVE_GPU=ON && cmake --build out/build/linux-amd64-relwithdebinfo -j 6
-DASH_GPU_ARG= DASH_NGPU_SHADERS=<d>/keys DASH_HUD_SHADERS=<dossier>/keys DASH_XAM_MODULE=2 \
-DASH_ENV="DASH_XAM_REDIRECT=XGetVideoMode,XamShowMessageBoxUI DASH_TEST_MSGBOX=8" ./run_headless.sh 25 essai        # Xvfb + lavapipe ; touches : tools/xkeys.py (XKEYS_HOLD=0.8)
-```
-Plan overlay : les notifications de XAM (toast « a signed out ») ne passent pas par l'overlay plein écran du HUD mais par le plan overlay du
-contrôleur d'affichage (registres D1OVL 0x1860-0x186B écrits en PM4 type 0 dans le tampon de `VdSetSystemCommandBuffer`, suivis par
-`common/src/kernel_video.cpp`) ; `native_gpu/src/hud_front.cpp` compose la dernière surface résolue à la fenêtre START-END du plan, sans
-prendre les entrées du Dashboard.
-Diagnostics (variables d'environnement) : `DASH_HUD_RESOLVES=1` (chaque forme de Resolve distincte, une fois), `DASH_HUD_EVLOG=<image>` (dessins, textures, sommets d'une image ; 0 = 60 premiers dessins), `DASH_HUD_DUMP=<image>:<f.ppm>` (overlay sur gris, alpha dans `<f>.a.pgm`), `DASH_HUD_STATS=1`, `DASH_HUD_DRAWRANGE=a:b`,
-`DASH_HUD_TEXDUMP=<préfixe>` (textures 8 bits), `DASH_HUD_NODRAW`, `DASH_HUD_NOIDLE` (rend toutes les images), `DASH_HUD_NOTIFY=1` (diffuse XN_SYS_UI aux titres ; **off par défaut** : la diffusion sur les pixels du chrome de chargement re-posait le bit « interface active » de XAM et bloquait tout le système UI — mesure du 2026-11-21, `xam_13604_compilation.md`), `DASH_HUD_NODIM_SKIP` (rend le quad d'atténuation tel quel : opaque), `DASH_HUD_DISABLE`,
-`DASH_HUD_D3D_TRACE|SEQ|SEQT|DEVDUMP|PROBE` (`src/hud_d3d_trace.cpp` : cadence des appels, séquence d'une image, mémoire du périphérique, objets shader).
-
-### Limites et blocages restants, classés
-
-1. **Autres fenêtres du HUD** (clavier virtuel, connexion, création de profil, sélecteur de périphérique) : non essayées. Leurs XEX (`vk`, `signin`, `createprofile`, `deviceselector`, `gamerprofile`) ne sont pas des `[[modules]]` recompilés (palier G, « Suite » 4 : `signin`,
-   `createprofile` et `gamerprofile` ont la même base `0x90100000`). Le rendu, lui, est générique (mêmes fonctions D3D de XAM) : les shaders qu'elles demanderaient et qui manqueraient seraient signalés par `[ngpu] ERREUR HUD : shader …`.
-2. **Fond atténué déduit, non vérifié sur console** (voir ci-dessus) ; le facteur 0,22 est celui du shader. L'image du titre servant de fond sur la console (copie de son tampon d'image) n'existe pas ici (le noyau natif ne l'écrit pas dans la mémoire invitée) : on assombrit l'image présentée.
-3. **Constantes booléennes de pixel shader** : le noyau lit les booléens aux emplacements canoniques (`+0x2780` / `+0x2790`) ; l'emplacement dans le périphérique de XAM n'a pas été établi. Les deux shaders `CopyAlpha` (`817E59F0`, `817E5B70`) en dépendent (alpha forcé à 1 ou copié) : non vérifiés. Le premier dessin de chaque image
-   (booléen à faux dans le PM4 observé) est le cas rencontré.
-4. **Effacement de l'overlay** (hypothèse), **gamma** (rampe d'affichage 1,16 du Dashboard non appliquée à l'overlay), pas de MSAA, plans de coupe utilisateur et lecture de texture en vertex shader non pris en charge.
-5. **Cadence** : ≈ 34 images/s du HUD avec la boîte sous lavapipe (relecture `ReadResolved` avec `WaitIdle` à chaque image) ; deux fils système de XAM (« XThread ») tournent à ≈ 100 % d'un cœur (boucles d'attente, antérieures à ce palier : palier D, 5). Le HUD devrait attendre un vsync
-   (`VdCallGraphicsNotificationRoutines` message 5, `VdSwap`) au lieu de dormir 16,7 ms.
-6. **Entrées partagées** : le HUD et le Dashboard lisent le même `InputSystem` (port 0) ; l'exclusivité est faite côté Dashboard (ci-dessus), pas par XAM.
-7. Les builds `2.0.6770.0` et `2.0.13604.0` (natif et par défaut) compilent avec les modifications de `common/` et de `front_profile.cpp` ; SDK inchangé.
-
-### Fichiers
-
-Nouveaux : `native_gpu/src/hud_front.cpp`, `native_gpu/profiles/hud_xam13604.h`, `dashboards/2.0.13604.0-xam/src_xam_d3d/{xam_d3d_hooks.cpp,xam_d3d_entries.inc}`, `dashboards/2.0.13604.0-xam/src/hud_d3d_trace.cpp`, `tools/hud_shaders.py`.
-Modifiés : `native_gpu/CMakeLists.txt` (`NGPU_HUD`), `native_gpu/src/front_profile.cpp` (superposition à la présentation, symbole faible), `dashboards/2.0.13604.0-xam/{CMakeLists.txt,run_headless.sh,src/app.h}`,
-`common/src/kernel_video.cpp` (diagnostics du tampon système, notifications graphiques), `common/src/dash_xam_redirect.cpp` (exclusivité des entrées), ce document. `ngpu_core/` et le SDK : inchangés.
-
-
-## Palier N3 : modules XUI du HUD (clavier virtuel, création de profil) recompilés
-
-**Atteint** : `vk.xex` (clavier virtuel) et `createprofile.xex` sont recompilés comme modules et chargés par XAM à la demande ; les vraies fenêtres
-Xbox s'affichent par-dessus le hub (rendu natif du palier N2, aucun shader manquant). `DASH_TEST_KEYBOARD=<s>` : clavier virtuel, navigation par
-les touches, texte renvoyé à l'appelant. `DASH_TEST_CREATEPROFILE=<s>` : fenêtre « Enter Profile Name » (clavier de `vk.xex` chargé par
-`createprofile.xex`), décharge et rechargement de `vk.xex` observés. **Non atteint** : création effective du profil (blocage XAM, ci-dessous) et
-fenêtre de connexion `signin.xex` (chargée et exécutée, mais elle quitte aussitôt : message « This feature is temporarily unavailable, 80004005 »).
-Captures regardées (scratchpad) : `k3_2.png`, `k5_5.png` (« Xenondashb i »), `c2_1.png`, `c4_2.png`, `s10_1.png`.
-
-### Étape 1 : XAM charge et décharge ces modules à la demande
-- `sub_8189BE20` (application 254, message `0x2100D` boîte, `0x2100E` création de profil, `0x21033` connexion, etc.) copie le nom du module (`"vk.xex"`,
-  `"signin.xex"`, `"createprofile.xex"`...) dans l'état du HUD (`0x81BFCAE8 + 224`, `sub_818A21B0`) et crée une application dynamique (objet de 184
-  octets, `sub_81894658`). `sub_81894210` la charge par `XexLoadImage(nom, 0x40000008)` ; `sub_818943E8` la décharge (`XexUnloadImage`) ;
-  le module appelle `XamAppUnloadSelf` à sa fin. Journal : `XexLoadImage("vk.xex")` ... `Unloading recompiled module 'flash/vk.xex'` ... rechargement.
-- Un module peut en charger un autre (`createprofile` charge `vk`) : les modules de bases différentes coexistent (hud + createprofile + vk observés).
-  Jamais deux de `signin`/`createprofile`/`gamerprofile` en même temps dans les essais (la console ne le permet pas non plus : bases fixes identiques).
-
-### Étape 2 : collision de bases (choix et limites)
-- Les images XEX ne sont pas relocalisables : bases fixes, la « `.reloc` » décodée n'est pas une table de relocalisation (entropie, chaînes de texte).
-  La piste (b) est donc fermée ; `signin`, `createprofile` et `gamerprofile` (`0x90100000`) sont chargés **à la demande, un seul à la fois** (piste a).
-- **Second conflit, réel et distinct** : `vk.xex` (`0x917D0000`, taille `0x17000`) recouvre l'image de XAM (`0x817E0000`) **par l'alias des tas 0x8/0x9 du
-  SDK** (deux vues du même fichier). Preuve : le simple ajout de `vk` au manifeste faisait lire à zéro les tables de saut de XAM par le codegen (31 fichiers
-  de `generated/xam` faux, SIGILL « switch case out of range » au démarrage, `sub_81896600`) ; au chargement, l'image de `vk` aurait écrasé le début de XAM.
-- **Correctifs SDK (volontaires, `third_party/xenondash-sdk`, non commités)**, sauvegarde dans le scratchpad (`n3_modules/sdkbak/` : `sdk/lib`, `sdk/bin`,
-  les sources d'origine ; md5 d'avant : `librexruntime.so` `7bcd7801…`, `rexglue` `65196276…`) :
-  1. `include/rex/system/xmemory.h`, `src/system/xmemory.cpp` : **tas XEX 0x8 et 0x9 séparés par défaut** (la vue 0x90000000 pointe sur son propre décalage du
-     fichier). `REX_ALIAS_XEX_HEAPS=1` rétablit l'ancien mode. `XexHeapsAliased()`, `GuestRangesOverlap` sans alias, pas de réservation d'alias de table.
-  2. `src/system/kernel_state.cpp`, `include/rex/system/kernel_state.h` : `ReserveImageAlias` sans effet en mode séparé ; **`UnloadUserModule` retrouvait mal le
-     module recompilé** (`UserModule::path()` est le chemin absolu du VFS, pas celui du chargement) : la table de fonctions et la bibliothèque n'étaient jamais
-     libérées et le rechargement échouait (« already loaded; refusing duplicate load », qui écrasait en plus l'image en place). Table `recompiled_module_keys_`.
-  3. `src/codegen/project_recompiler.cpp` : le recouvrement de modules n'est refusé que si un des deux est à (re)générer (et avant l'analyse) ; une construction
-     sans rien à faire réussit.
-  4. `tests/unit/system/function_dispatcher_test.cpp` : tests d'alias ignorés en mode séparé (`SKIP`), nouveau test du mode séparé. **Non compilés ni exécutés**
-     (`REXGLUE_BUILD_TESTS=OFF`).
-  Procédure : `cd third_party/xenondash-sdk && cmake --build out/build/linux-amd64 --config Release --target install -j 6` ; tous les projets qui incluent
-  `kernel_state.h` doivent être recompilés (membre ajouté). Risque : le changement de défaut touche tous les projets (aucun code invité n'est censé
-  s'appuyer sur l'alias, absent de la console) ; 6770 et 13604 HLE recompilés (voir Vérifications), non relancés.
-- Limites : `BaseHeap::Reset()` à chaque chargement de XEX efface la table de pages du tas (les images déjà chargées ne sont plus enregistrées) ; la fuite de
-  `deferred_unload_libraries_` (bibliothèques gardées chargées jusqu'à la fin) est volontaire.
-
-### Étape 3 : `vk.xex` (même procédé que `hud.xex`)
-- `dash_manifest.toml` : `[[modules]]` pour `vk` (table `0x84900000`), `signin` (`0x84A00000`), `createprofile` (`0x84B00000`), `gamerprofile` (`0x84C00000`),
-  `deviceselector` (`0x84D00000`), `ximecore` (`0x84E00000`) : huit modules au total, tables distinctes, aucune ne recouvre dash.xex, XAM ni hud.
-  `<nom>_overrides.toml` / `<nom>_auto_overrides.toml` : produits par `tools/codegen_module.py` (projets de travail hors dépôt : `vk` 310 fonctions, `signin` 571,
-  `createprofile` 430, `gamerprofile` 1077, 1 cible non résolue chacun) ; `src_xui/<nom>_xam_imports.cpp` : `tools/gen_module_xam_imports.py` ; `CMakeLists.txt` :
-  boucle `xui_mod`.
-- **Génération du code** : `tools/regen_xam_modules.py` (le codegen charge tous les XEX avant d'analyser : les modules de même base se génèrent par groupes, `--target`,
-  avec le **chemin absolu** du manifeste comme la construction CMake, sinon les empreintes diffèrent et la construction regénère tout) ; il applique aussi
-  `tools/xam_unimpl_patch.py` et les fichiers d'imports. À relancer après toute modification du manifeste ou des overrides, puis `cmake --build`.
-- `common/src/dash_xam_runtime.cpp` : `InXamImage` couvre aussi les modules du HUD (`0x90000000-0x91800000`) : leurs appels à `XexLoadImage` (noms nus) et
-  les hooks « appelant = XAM » s'appliquent à eux (`createprofile` demande `vk.xex`).
-- `common/src/dash_xam_redirect.cpp` : `DASH_TEST_KEYBOARD=<s>` (`XamShowKeyboardUI`, huit arguments en registres, XOVERLAPPED, attente `DASH_TEST_KEYBOARD_WAIT`,
-  texte renvoyé journalisé), `DASH_TEST_SIGNIN=<s>` (`XamShowSigninUI(1, 0)`), `DASH_TEST_CREATEPROFILE=<s>` (`XamShowCreateProfileUI(0, 0)`),
-  `DASH_XAM_EXPORTS=<ordinaux>` (adresse invitée des exports de XAM, pour désassembler), `DASH_TEST_PEEK` généralisé. Redirections à ajouter à `DASH_XAM_REDIRECT` :
-  `XamShowKeyboardUI,XamShowSigninUI,XamShowSigninUIp,XamShowCreateProfileUI,XamShowDeviceSelectorUI,XamShowGamerCardUIForXUID` (hooks déjà présents).
-- Touches de test : `XKEYS_HOLD=0.12` (0,8 s déclenche la répétition et saisit « ffff ») ; flèches = croix, Entrée = A, `y` = Y (espace), `x` = X (retour arrière), `p` = Start (Done).
-  Résultat : « Xenondash » + b, espace, i, retour arrière + Start → texte renvoyé `"Xenondashb "`.
-
-### Étape 4 : création de profil et connexion (ce que XAM tente, blocages classés)
-`createprofile.xex` : `XamProfileCreateEnumerator`/`XamProfileEnumerate` (0x65B : aucun profil), saisie du nom par `vk.xex`, puis `XamProfileCreate(1, ...)` = 0 et
-`XamProfileGetCreationStatus` = `0x8000000A` (en attente) puis **`0x8000FFFF`** : la fenêtre revient au nom (« Enter Profile Name », réessai). Chaîne (traces
-jetables dans le code généré, retirées) : tâche `sub_818B4948` → `sub_818AFAD0` (`ExGetXConfigSetting(1, 2)` = `0xC00000EF`, `(2, 1)` = `0xC00000F0` : réglages de
-console non fournis par le SDK) → `sub_81865010` → `sub_81864C38` (stockage du compte : nom de conteneur aléatoire `_rand%016I64x`, chemin `%s:\Account`) → `sub_81862F00`
-→ `sub_8185D488(…, 0x200)` → `sub_8185CE60(0x4AF10000, 0, 0x10000 = type de contenu « profil »)` = `0x8000FFFF`, **avant tout accès fichier** (aucune ligne d'erreur de système de fichiers).
-Blocages, du plus probable au moins établi :
-1. **Couche de contenu STFS de XAM** : la création d'un conteneur de profil passe par un contexte d'E/S de XAM (appel virtuel au début de `sub_8185CE60`) qui suppose un périphérique
-   de contenu enregistré par le noyau (le stub `DrvGetContentStorageNotification` répond « aucun périphérique », palier F) et le pilote STFS du noyau, absents du SDK. Cause exacte non établie.
-2. **Réglages de console** (`ExGetXConfigSetting` catégories 1 et 2 « sécurisées ») et fichier `Account` chiffré par des clés de console (`XeKeys*`, `XeCrypt*`) : **non fabriqués**
-   (règle du brief) ; à fournir par l'utilisateur ou à contourner autrement qu'en inventant des clés.
-3. Aucun profil n'est écrit dans `profiles/<XUID>/` (rien tenté de ce côté : c'est le HLE du Dashboard).
-`signin.xex` : chargé, exécute `XamRegisterSysApp`, `XamUserGetSigninState` (0 pour les 4 utilisateurs), **`XamInputGetState(0, 0x80000000)` = `0x48F`** (périphérique non connecté), puis quitte
-(`XamGetOnlineSchema`, `XamGetSystemVersion`) : XAM affiche le message 80004005. Cause (désassemblage `sub_818C4240`) : avec une interface active, `XamInputGetState` renvoie l'état en cache
-(octet de présence `0x81C00000 + 212 + port`, posé par une lecture réelle `XInputdReadState`) ; le HUD ne tourne qu'après la première requête, donc le cache est vide quand `signin` interroge. Un
-amorçage (appel de XamInputGetState au repos) et un état neutre de `XInputdReadState` ont été essayés : amorçage réussi une fois sur trois seulement (dépend du système d'entrée du SDK, sans focus) ;
-**retirés**, non résolu. Piste : lancer la boucle d'entrée du HUD (ou l'amorçage) à la première arrivée de la manette indépendamment du focus.
-`gamerprofile.xex`, `deviceselector.xex`, `ximecore.xex` : recompilés et compilés, non essayés.
-
-### Vérifications
-| Vérification | Résultat |
-|---|---|
-| `dashboards/2.0.13604.0-xam` (natif) | compile (huit modules) ; clavier : texte renvoyé `"Xenondashb "` (essai complet) et `"Xenondashb"` (essai final : Droite, Entrée, Start) ; création de profil : fenêtre affichée |
-| `dashboards/2.0.6770.0` (`out/build/native`), `dashboards/2.0.13604.0` (natif) | compilent (rc 0) après les changements du SDK et de `common/` ; non lancés |
-| Tests unitaires du SDK | non compilés (`REXGLUE_BUILD_TESTS=OFF`) |
-| Processus restants | aucun |
-
-### Fichiers (palier N3)
-Nouveaux : `tools/regen_xam_modules.py`, `dashboards/2.0.13604.0-xam/{vk,signin,createprofile,gamerprofile,deviceselector,ximecore}_{overrides,auto_overrides}.toml`, `dashboards/2.0.13604.0-xam/src_xui/*.cpp` (produits).
-Modifiés : `dashboards/2.0.13604.0-xam/{CMakeLists.txt,dash_manifest.toml}`, `common/src/dash_xam_redirect.{h,cpp}` (tests, `DASH_XAM_EXPORTS`), `common/src/dash_xam_runtime.{h,cpp}` (`InXamImage`), ce document. SDK : 6 fichiers (ci-dessus).
-
-## Palier N4 : création de profil, connexion et parcours « premier lancement sans profil » par XAM recompilé
-
-**Atteint** (captures regardées, scratchpad non versionné) : avec `DASH_XAM_MODULE=2` et `DASH_PROFILE_MODE=xam`, le hub Kinect démarre sans aucun profil
-(tuile « Sign In / No Profiles Found », `m2_1.png`) ; A sur la tuile ouvre la scène « Sign In » du Dashboard (« Create Profile », `m3_5.png`), puis
-`XamShowCreateProfileUI` ouvre la vraie fenêtre « Enter Profile Name » de `createprofile.xex` avec le clavier de `vk.xex` (`m3_14.png`) ; la création
-est **effective** (`XamProfileCreate` puis `XamProfileGetCreationStatus` = 0), XAM connecte le profil (`XamUserLogon`), le Dashboard reçoit la
-notification de connexion et affiche le profil dans « My Xbox » (tuile « 0 Latest Games » + avatar, `m9_12.png`). `DASH_TEST_SIGNIN=<s>` ouvre la
-vraie fenêtre « No Profiles Found / Create Profile / Recover Gamertag / Exit » de `signin.xex` (`s9_1.png`) ; le test enchaîné signin → création → nom →
-« Save Profile » → « Done » aboutit (`s11_*.png`). Après redémarrage sur une racine contenant le profil, le hub affiche « Sign In / 1 Profile Found »
-(`r7_2.png`) et la scène « Sign In » liste « Player1 / HDD » lu par XAM dans le paquet (`r8_5.png`). **Non atteint** : la connexion d'un profil existant
-choisi dans cette liste (XAM demande « Enter Pass Code », voir blocages).
-
-### Choix de la couche de stockage
-
-XAM écrit un profil dans un paquet de contenu « CON » (`Content\[<XUID>\]FFFE07D1\00010000\<XUID>`, en-tête de 40 Ko écrit par XAM avec NtWriteFile),
-puis demande au pilote STFS du **noyau** de monter le système de fichiers contenu dans le paquet (`StfsCreateDevice`, `StfsControlDevice` 0 à 5) et
-écrit `Account` dans ce volume. Le SDK n'a pas de pilote STFS (stubs). Options examinées :
-
-- (b) surcharger `sub_81864C38` (conteneur du compte) : ne couvre ni l'énumération des profils (qui relit l'en-tête et le compte de chaque paquet), ni la
-  connexion, ni l'ouverture du profil (`DASHUSER:`) ; il faudrait remplacer plusieurs fonctions de la couche de contenu de XAM.
-- (a) **retenue** : pilote STFS minimal côté noyau (`common/src/kernel_stfs.cpp`) dont le « volume » est un **dossier hôte** ; XAM garde toute sa logique
-  (création de l'en-tête, énumération, vérification, ouverture, GPD de profil). Le volume du paquet de profil est `<game_data_root>/profiles/<XUID>/`, le
-  dossier de profil déjà utilisé par le Dashboard (`dash_profile.cpp`) ; les autres paquets vont dans `<game_data_root>/.stfs/<chemin relatif>/`. Les codes
-  de `StfsControlDevice` (déduits des appelants `sub_8185EF28`, `sub_8185A5B0`, `sub_8185A290`) : 0 début d'écriture, 1 fin, 2 vérification, 3 empreinte du
-  volume (36 octets), 4 validation, 5 état. Le code 3 rend un **descripteur de volume STFS valide** (taille 0x24, hachage SHA-256 des fichiers du dossier) :
-  XAM le range dans l'en-tête, le signe, et le revalide à la réouverture (un descripteur sans `0x24` en tête rendait `0x80070570` et « No Profiles Found »
-  après redémarrage). Aucun volume STFS réel n'est écrit : un paquet créé ici n'est lisible que par ce noyau natif.
-- Le profil créé contient donc : `profiles/<XUID>/Account` (404 octets : 24 d'en-tête local + les 380 octets du compte), `FFFE07D1.gpd`, `tile_32.png`,
-  `tile_64.png` (créés par XAM à la connexion), et `Content/<XUID>/FFFE07D1/00010000/<XUID>` (en-tête CON signé localement).
-
-### Données de compte et clés : local, sans valeur de sécurité
-
-- **XUID** : généré par XAM (`sub_818AFAD0` : les réglages de console 1 et 2 échouent, il tire un XUID hors ligne aléatoire `0xE…`), stable ensuite dans le paquet.
-- **`Account`** : `XeKeysObfuscate`/`XeKeysUnObfuscate` locaux (`kernel_obfuscate.cpp`) : en-tête de 24 octets (« XDASHOBF », longueur, CRC-32) puis les données
-  **en clair**. Ni clé de console ni chiffrement ; illisible par une console.
-- **Signature d'en-tête** : `XeKeysConsolePrivateKeySign`/`XeKeysConsoleSignatureVerification` (`kernel_localkey.cpp`) par HMAC-SHA-256 avec une clé **locale** de 32
-  octets, tirée au hasard au premier usage dans `<état XAM>/local_console.key`. Une signature n'est valable que sur l'installation qui l'a produite ; un
-  paquet d'une vraie console est refusé comme avant. Aucune clé de console réelle n'est fabriquée, aucune protection de contenu contournée.
-- `XeCryptMd5` (`kernel_md5.cpp`, nom de périphérique `Package_<MD5 du chemin>`), `ExGetXConfigSetting`/`ExSetXConfigSetting` (`kernel_xconfig.cpp` : mémoire ;
-  zéros pour les catégories 3 et 7 absentes du SDK ; les catégories 1 et 2 restent en échec, XAM se replie sur un XUID aléatoire).
-
-### Cause des échecs de création (chaîne établie, `sub_818B4948` → `sub_81865010` → `sub_81864C38`)
-
-Aucune n'était l'absence de clés ou de pilote STFS au premier niveau ; ce sont des défauts du noyau émulé, levés un par un (traces d'appels sur les `sub_*`
-de XAM, retours et arguments, par définitions fortes jetables ; retirées) :
-
-| # | Symptôme | Cause | Correctif |
-|---|---|---|---|
-| 1 | `0x8000FFFF` (E_UNEXPECTED) avant tout accès fichier | `RtlAppendStringToString` (stub du SDK) : statut quelconque dans `sub_8185CD38` | `kernel_rtl.cpp` (+ `RtlAppendUnicode*`) |
-| 2 | `0x80070002` | liens `\System??\__tmpN:` enregistrés avec le préfixe ; `ObTranslateSymbolicLink` stub | `kernel_ob.cpp` : `ObCreate/DeleteSymbolicLink` sans préfixe, `ObTranslateSymbolicLink` (chemin absolu rendu tel quel) |
-| 3 | `0x80070005` | `\Device\Harddisk0\Partition1` = `game_data_root` en lecture seule (le périphérique d'état de XAM est masqué : même point de montage) | `allow_game_relative_writes=true` en mode XAM (`dash_app_base.cpp`) |
-| 4 | dossier `Content` introuvable, `0xC0000022` | `CreatePath` du SDK ne crée pas un fichier désigné par un chemin `\Device\...` | **SDK** `virtual_file_system.cpp` (création sous le parent déjà résolu) |
-| 5 | nom de paquet vide dans `Content\<XUID>\...` | `%.16I64X` d'un XUID `0xE…` faux (entier signé) | **SDK** `format.h` |
-| 6 | `Account` = octets de pile | `XeKeysObfuscate` stub | `kernel_obfuscate.cpp` |
-| 7 | `StfsCreateDevice` stub | pas de pilote STFS | `kernel_stfs.cpp` |
-| 8 | « Couldn't sign in » / `0x80070570` | en-tête jamais signé : `NtOpenSymbolicLinkObject` du SDK refuse `\System??\...` (conteneur jamais fermé, donc ni écrit ni signé) ; signature stub | `kernel_ob.cpp` (nom réécrit sans préfixe), `kernel_localkey.cpp` |
-
-### Connexion (`signin.xex`)
-
-La cause de la sortie immédiate (« temporarily unavailable, 80004005 ») n'était **pas** le cache d'entrée : `signin.xex` appelle `NetDll_WSAStartupEx` par
-`XexGetProcedureAddress(xam.xex, 36)` ; le SDK n'implémente que `NetDll_WSAStartup` et laisse la variante Ex en stub (r3 inchangé = 2 = échec).
-`kernel_stubs.cpp` : `NetDll_WSAStartupEx` = `NetDll_WSAStartup` (Winsock démarre sans réseau). Preuve : trace des fonctions de `signin.xex` (`sub_90104F78` →
-`sub_9010FEC8` → `sub_901121B8`), puis `s9_1.png`.
-Le cache d'entrée vide existait bien (`XamInputGetState(0, 0x80000000)` = `0x48F`, vérifié avec `DASH_XAM_INPUT_PATCH=0`) mais `signin.xex` le tolère. Un
-correctif est tout de même en place, conforme à la demande : `dashboards/2.0.13604.0-xam/src_xam_patch/xam_input_patch.cpp` définit `sub_818C4240` (cœur de
-`XamInputGetState`) : si XAM répond `0x48F` pour le port 0 avec le drapeau système, l'état est lu sur la manette virtuelle (`XInputdReadState`). L'exclusivité des
-entrées (le HUD actif bloque le Dashboard) est inchangée. `DASH_TEST_SIGNIN=<s>` existait déjà (`dash_xam_redirect.cpp`).
-
-### Mode `DASH_PROFILE_MODE=xam` (défaut : absent = comportement précédent)
-
-- `dash_xam_redirect.{h,cpp}` : `ProfileModeXam()`, `CallXamExport(nom)` ; redirections par défaut vers XAM : `XGetVideoMode`, `XamUserGetXUID`, `XamUserGetSigninState`,
-  `XamUserLogon`, `XamUserCheckPrivilege`, `XamUserIsOnlineEnabled`, `XamShow*UI`. Les accroches de profil de `dash_profile.cpp` (`XamUserGetName`, `XamUserGetGamerTag`,
-  `XamProfile*`, `XamReadTileEx`) et de `dash_user.cpp` passent la main à l'export de même nom de XAM (`DASH_XAM_FWD`, `DASH_XAM_FWD_HOOK`).
-- `XamUserGetSigninState` (XAM) : quand l'état d'un utilisateur change, `XN_SYS_SIGNINCHANGED` est **rediffusé côté HLE** (le Dashboard écoute les files du SDK, pas
-  celles de XAM) : sans cela la scène « Sign In » du Dashboard ne se fermait pas après la connexion.
-- Aucun profil au démarrage : vérifié (`m1`, dossier `profiles/` vide).
-- Robustesse : `dash_disc.cpp` (`LoadIcon`) levait une exception sans dossier `profiles/` (premier lancement) : corrigé.
-
-### Reproduire
-
-```sh
-cd third_party/xenondash-sdk && cmake --build out/build/linux-amd64 --config Release --target install -j 4        # SDK modifié (2 fichiers, voir plus bas)
-cd dashboards/2.0.13604.0-xam && cmake --preset linux-amd64-relwithdebinfo -DDASH_NATIVE_GPU=ON && cmake --build out/build/linux-amd64-relwithdebinfo -j 4
-# racine de jeu de test (dash.xex copié, flash en lien, profiles/ vide) ; DASH_ROOT remplace --game_data_root=assets (input_test.sh, run_headless.sh)
-DASH_ROOT=<racine> DASH_PROFILE_MODE=xam DASH_XAM_STATE=<dossier> ... ./input_test.sh essai 25 "Up" "sleep:2" "Right" "sleep:2" "Return" ...
-```
-Touches : `XKEYS_HOLD=0.12` ; `Up` (My Xbox), `Right` (tuile Sign In), `Return` (A), `p` (Start = Done du clavier).
-
-### Blocages restants, classés
-
-1. **Connexion d'un profil existant choisi dans la liste** : XAM affiche « Enter Pass Code » (compte à code nul, drapeaux réservés `0x10000001` écrits par `createprofile.xex`). Essais : drapeau `0x10000000` retiré, code `FFFFFFFF` : même
-   fenêtre (comptes modifiés à la main, CRC refait). Cause non établie ; piste : lecture du code dans `signin.xex` ou réglages « contrôle parental » (`ExGetXConfigSetting(3, 0x0F…)`) à zéro.
-2. **Réglages de profil** (`XamUserReadProfileSettings(Ex)`, `XamUserWriteProfileSettings`) : toujours servis par le HLE ; les rediriger vers XAM plante le Dashboard (lecture invitée de `0x7008004F` :
-   un identifiant de réglage pris pour un pointeur ; résultat asynchrone ?). Conséquence : gamertag et Gamerscore du bandeau du hub ne viennent pas du profil XAM ; le contenu (`dash_content.cpp`) reste lié au profil HLE.
-3. **Fenêtre « Save Profile »** : absente du parcours Dashboard (présente dans `DASH_TEST_CREATEPROFILE`) ; la connexion a lieu quand même.
-4. **Entrées du hub après connexion** : deux « Up » n'ont pas changé de blade (non élucidé : focus ? exclusivité ?).
-5. Défauts du SDK contournés dans `common/` : `StfsCreateDevice/ControlDevice`, `Rtl*String`, `ObTranslateSymbolicLink`, `NtOpenSymbolicLinkObject` (préfixe), `NetDll_WSAStartupEx`, `XeKeys*` locaux, `XeCryptMd5`, `Ex*XConfigSetting`.
-   Défauts corrigés **dans le SDK** (2 fichiers, ci-dessous) : `%I64X`, `CreatePath`.
-6. Rien n'est signé ni chiffré à la façon d'une console : les profils de ce mode sont locaux et illisibles par une console ; les packages d'une vraie console ne sont pas lus.
-
-### Fichiers (palier N4)
-
-Nouveaux : `common/src/{kernel_rtl,kernel_stfs,kernel_obfuscate,kernel_localkey,kernel_md5,kernel_xconfig}.cpp`, `common/src/dash_sha256.h`,
-`dashboards/2.0.13604.0-xam/src_xam_patch/xam_input_patch.cpp`.
-Modifiés : `common/CMakeLists.txt`, `common/src/{dash_app_base,dash_disc,dash_profile,dash_user,dash_xam_redirect,dash_xam_runtime,kernel_ob,kernel_stubs}.{cpp,h}`,
-`dashboards/2.0.13604.0-xam/{CMakeLists.txt,input_test.sh,run_headless.sh}` (variable `DASH_ROOT`), ce document.
-**SDK** (`third_party/xenondash-sdk`, non commité ; sauvegarde de `sdk/lib` et `sdk/bin` d'avant dans le scratchpad `n4_profile/sdkbak/`) : `include/rex/system/format.h`
-(conversions `%x/%u/%o` sur entier non signé), `src/filesystem/virtual_file_system.cpp` (`OpenFile` : création sous le parent résolu).
-
-## Palier N5 — fenêtres du HUD appelées depuis l'hôte (progression de construction)
-
-Date : 2026-11-17. Le rendu natif est désormais le seul chemin (l'option `DASH_NATIVE_GPU` et le repli ImGui ont été retirés) : le
-présentateur SDK est détaché, aucun `ImGuiDrawer` hôte, et les fenêtres ImGui de `dash_xam_ui.cpp` (progression de
-construction, lanceur F5, statut bibliothèque ; fichier supprimé) ne sont plus dessinées — `OpenLauncherHotkey()` sortie silencieuse, aucun journal
-(voir `docs/ngpu_core.md`, « Non fait »). Remplacement par les **vraies fenêtres Xbox du HUD de XAM**
-(boîte de message du palier N2), comme le veut l'utilisateur (pas de menus façon Xenia-canary).
-
-### Socle : `XamShowMessageBoxUI` appelable depuis l'hôte
-
-- `common/src/dash_xam_redirect.cpp` : `ShowXamMessageBox(titre, texte, boutons, ...)` — marshalling du test
-  `DASH_TEST_MSGBOX` (factorisé ; `PutWide` exporté, 9ᵉ argument à `r1+0x54`, XOVERLAPPED à zéro, attente
-  `WaitOverlapped`). Renvoie faux si XAM recompilé n'est pas chargé/redirigé. `RunMessageBoxTest` reconstruit dessus.
-- `Configure()` : `XamShowMessageBoxUI`/`Ex` redirigés **dès que le module XAM est chargé** (fonction purement
-  d'interface, sans sémantique de profil) ; hors mode profil, `DASH_XAM_REDIRECT` s'ajoute à cette liste de base
-  au lieu de la remplacer.
-- `common/src/dash_xam_hud_ui.{cpp,h}` (`dash::hudui`) : thread invité **unique** (`XHostThread`, motif des tests)
-  et file de demandes (une seule boîte à la fois, sérialisées) ; `Init(ks)` appelé de
-  `OnPostSetup` — ne s'active qu'avec `DASH_XAM_MODULE`.
-- `dash_xam_ui.cpp` : supprimé (fenêtres ImGui retirées) ; la progression passe uniquement par le HUD de XAM.
-
-### Utilisation : progression de construction
-
-- Watcher hôte (500 ms) sur `launch::GetBuildStatus()` (`dash_launch.cpp`, déjà alimenté par `BuildMonitor` et
-  `ResumeBuild`, y compris après la relance du hub) : boîte au **démarrage** d'une construction (nom du jeu,
-  durée estimée de la recette, chemin du journal, bouton « Masquer ») et boîte à l'**échec** (erreur + journal) ;
-  rien au succès (le jeu se lance tout seul). Une boîte par transition (le statut `failed` reste jusqu'au
-  lancement suivant).
-- Pendant une boîte, les entrées du Dashboard sont déjà suspendues (`ngpu::HudActive()`,
-  `dash_xam_redirect.cpp`) ; `F5`/`F6` ImGui restent disponibles dans les builds avec plugin `xenos`.
-- Test sans vraie recompilation : `DASH_TEST_BUILDBOX=start|fail` (statut simulé 10 s après le démarrage).
-
-### État de vérification
-
-- Compilation : variantes 13604 (native, non-régression : hub rendu et regardé sous Xvfb, ligne « interfaces
-  ImGui indisponibles » dans le journal) et 13604-xam.
-- **Les boîtes ne sont pas encore vues à l'écran** : la variante `-xam` s'affiche noir sur cette machine
-  (interblocage d'initialisation de XAM recompilé, mesuré — voir `docs/xam_13604_compilation.md`). Le socle
-  s'active dès que ce blocage est levé ; `DASH_TEST_MSGBOX` reste le test unitaire du chemin.
-- Non fait (reporté, même blocage) : toasts de progression (`XNotifyQueueUI` : HLE = stub, seul XAM recompilé
-  peut les afficher) ; mise à jour du texte de la boîte ouverte (`XuiTextElementSetText`, ordinal 867, importé
-  par hud.xex) ; redirection de `XamShowAchievementsUI` vers XAM (l'action Succès de la lame Guide passe encore
-  par l'entrée ImGui, sans effet en rendu natif).
-
-### Fichiers (palier N5)
-
-Nouveaux : `common/src/dash_xam_hud_ui.{cpp,h}`. Modifiés : `common/CMakeLists.txt`,
-`common/src/{dash_app_base,dash_xam_redirect}.{cpp,h}` (`dash_xam_ui` supprimé depuis), ce document, `REPRISE.md`,
-`ngpu_core.md`, `nxe_jeux.md`, `recettes.md`, `technique.md`.
+| `DASH_XAM_MODULE` | `2` (défaut de `main.cpp`) module + point d'entrée ; `1` module seul ; une valeur déjà posée l'emporte |
+| `DASH_PROFILE_MODE` | `xam` (défaut) : profils et redirections de session par XAM |
+| `DASH_XAM_STATE` | dossier d'état des périphériques factices |
+| `DASH_XAM_REDIRECT` / `DASH_XAM_NOREDIRECT` | ajoute / retire des imports redirigés (liste de noms) |
+| `DASH_XAM_SYNC`, `DASH_XAM_FIBER_FIX=0`, `DASH_XAM_INPUT_PATCH=0`, `DASH_XAM_GFXNOTIFY=0` | retour au comportement antérieur (diagnostic) |
+| `DASH_XAM_EXPERIENCE_REDIRECT=1`, `DASH_XMP_HLE=1`, `DASH_VIDEO_DISCOVERY=0` | `GetExperienceMode` vers XAM ; messages XMP au HLE ; stubs vidéo du SDK |
+| `DASH_XEKEYS_STATUS=<hex>` | valeur de `XeKeysGetStatus` (défaut `0x4`) |
+| `DASH_XAM_TRACE_MODULE=<n>`, `DASH_XAM_EXPORTS=<ordinaux>`, `DASH_XAM_ALT=<nom>` | trace `[xamtrace]` ; adresse invitée des exports ; charge un autre module à la place de XAM |
+| `DASH_HUD_SHADERS`, `DASH_NGPU_SHADERS` | dossiers de shaders traduits du HUD / du Dashboard |
+| `DASH_HUD_NOTIFY=1` | diffuse `XN_SYS_UI` aux titres (off : bloque le système UI) |
+| `DASH_HUD_DISABLE`, `DASH_HUD_NOIDLE`, `DASH_HUD_NODIM_SKIP`, `DASH_HUD_NODRAW`, `DASH_HUD_CHROME`, `DASH_HUD_MSGBOX_KEEP`, `DASH_XAM_NO_BOOTBOX` | diagnostics du rendu et des boîtes du HUD |
+| `DASH_HUD_RESOLVES`, `DASH_HUD_EVLOG`, `DASH_HUD_DUMP`, `DASH_HUD_STATS`, `DASH_HUD_DRAWRANGE`, `DASH_HUD_TEXDUMP`, `DASH_HUD_CALLERS`, `DASH_HUD_D3D_TRACE|SEQ|SEQT|DEVDUMP|PROBE` | traces et dumps du HUD (`hud_front.cpp`, `hud_d3d_trace.cpp`) |
+| `DASH_TRACE_VD`, `DASH_TRACE_VD_SCAN`, `DASH_TRACE_VD_DUMP` | descripteur et contenu PM4 du tampon système |
+| `DASH_GUIDE_TRACE=1`, `DASH_LOGON_TRACE=1`, `DASH_WATCH_APPS=1` | traces de l'ouverture du Guide, de la tâche de connexion (`sub_818B2BF8`), de l'application active `0x817E4B64` |
+| `DASH_TEST_MSGBOX`, `DASH_TEST_KEYBOARD`, `DASH_TEST_SIGNIN`, `DASH_TEST_CREATEPROFILE`, `DASH_TEST_GUIDE`, `DASH_TEST_BUILDBOX=start|fail` (secondes ; `_WAIT` borne l'attente), `DASH_TEST_PEEK=<adresse>` | déclenchent une fenêtre du HUD sans manette ; mémoire invitée |
+| `DASH_AUDIO=nop`, `DASH_RETURNED_FROM`, `DASH_XENIA` | audio muet ; titre dont on revient ; binaire Xenia |
+| `REX_LOG_THREADS`, `REX_LOG_DLLMAIN` | instrumentation du SDK (création de fils, `DllMain`) |
+
+Reproduire un essai : `cd dashboards/2.0.13604.0-xam && cmake --preset linux-amd64-relwithdebinfo && cmake --build out/build/linux-amd64-relwithdebinfo -j 6`
+puis `DASH_DISPLAY=92 DASH_RUNS=<dossier> DASH_ENV="…" ./run_headless.sh 40 essai` (`input_test.sh` pour les touches ; `DASH_ROOT` remplace
+`--game_data_root=assets`). Le plugin GPU `xenos` n'est pas utilisé (`DASH_GPU_ARG=` vide). gdb : `-batch`, `handle SIGSEGV nostop noprint pass`,
+SIGINT envoyé à gdb (ptrace interdit). Journal complet : `DASH_ARGS=--log_flush_interval=1`.
+
+## 5. État actuel
+
+### Profil (N4)
+Au banc : sans profil, tuile « Sign In / No Profiles Found » ; A ouvre « Create Profile », `createprofile.xex` + clavier `vk.xex`, création
+effective (`XamProfileCreate` puis `XamProfileGetCreationStatus` = 0), `XamUserLogon`, profil visible dans My Xbox. Redémarrage : « 1 Profile
+Found », liste « Player1 / HDD ». Connexion par Sign In sans code d'accès (« Enter Pass Code » vient d'un SDK sans `7151265f`) ; gamertag
+sur le XMB (`XamUserReadProfileSettings` synchronisé avec le profil HLE, `cd7f3b0`). `DASH_TEST_SIGNIN` ouvre la vraie fenêtre de `signin.xex`.
+
+### Guide
+Chaîne : G ou bouton Guide → `ShowXamGuide` (`dash_xam_redirect.cpp`) → `XamShowGuideUI` (ordinal 772, `0x81898630`) → portier `sub_8189F0D0`
+→ message `0x20004117` à l'application 254 (`sub_8187B960`) → répartiteur `0x8000000B`/`0x80000007` (requête `0x402E9B80`, scène en +4) →
+chargeur `sub_8189BE20` (scène `0x21015`) → ouvreur `sub_818A21B0("hud.xex")`. Le portier refuse (r3 = 5) tant que le mot `0x81BFCAE8` (masque de
+bits : 0 → 4 au boot → 0) est non nul ; `ShowXamGuide` le remet à 0 le temps de l'appel (toujours nécessaire). L'ouvreur exige
+`UIstate(0x81BFCAE8)+172 != 0`, `+176 != 0`, `+216 == 0` ; avec `XeKeysGetStatus = 0x4` le fil du HUD (`sub_818A2F90` → `sub_818A2C98`) les pose
+lui-même (plus de `0x80000012` à la main). Le Guide s'affiche (lames Marketplace/Games/Home/Media/Settings, Sign In, horloge locale) et les boîtes
+système se ferment au bouton B. Le Guide et le HUD sont inséparables (`DASH_HUD_DISABLE=1` : accepté mais invisible).
+
+### Avatar (banc, 2026-11-24)
+- L'avatar choisi s'affiche en couleur sur le XMB. Causes de la silhouette grise, toutes corrigées : `LDI*` (LZX) stubs (`xam_kernel_stubs.cpp`,
+  `243b35e`) ; `vavguw`/`crmove`/`crnot` absents du recompilateur (`69764e99`) ; `vfetch` indexé des os ignoré par XenosRecomp (patch
+  `0009-dash13604-indexed-vfetch.patch`, `105b468`) ; hauteur de texture résolue `y + destHeight` sous tuilage prédit (`ngpu_core/src/renderer.cpp`, `687ecab`).
+- Option 2 (retenue) : choix d'avatar à la place de l'éditeur ; réglage `0x63E80044` (1000 octets) écrit dans `profiles/<XUID>/FFFE07D1.gpd`.
+  Option 1 (éditeur complet recompilé) : retirer l'appel à `AvatarEditorOption2`.
+- Carte d'ombre noire (passes de profondeur seule ignorées) : sans effet visible, pas de correctif. `XexLoadImage` refuse les XEX d'avatar non recompilés
+  (sinon le Guide affichait un panneau vide).
+
+### Médias et Video Library
+Les messages XMP vont à XAM : la scène `MediaSourceSelection.xur` (`dashcommon.xzp`) envoie `0x0007002B`, inconnu du HLE (X_E_FAIL, `0x8007065B`, retour au canal
+Welcome). Application XMP : table de `sub_81893EE0` (`0x81C06F78 - 0xB8 * id`), objet `0x81C07688`.
+
+## 6. Pièges
+- `/dev/shm` de 64 Mo (conteneur) : l'arène invitée (4,5 Go, `MAP_SHARED`) donne un SIGBUS par écriture au-delà (1,6 M de fautes, écran noir) ; SDK : `memfd_create`.
+- Instrumentation : lire `ctx.lr`/`r3` à l'entrée de la fonction, pas après un `bl` ; adresses PowerPC par `lis`/`addi` (pas de `grep` du littéral) ;
+  mesurer à l'exécution plutôt que recalculer. Les objets en `0x40…` sont en vue physique (`TranslatePhysical`) : le descripteur de `VdSetSystemCommandBuffer` donne une adresse physique.
+- gdb : `handle SIGSEGV nostop noprint pass` (suivi de pages du SDK) ; watchpoint sur l'alias hôte (`0x182000D64`), pas `0x192000D64`.
+- Bibliothèque SDK : `RUNPATH=$ORIGIN` sans copie à côté : prendre `sdk/lib/` ; une copie périmée régresse (« Enter Pass Code »).
+- `DASH_PROFILE_MODE=xam` seul ne suffit pas : il faut aussi `DASH_XAM_MODULE` ; sans module, le Dashboard répond par le HLE (une capture « qui marche » peut être du HLE).
+- `Partition1` et `game:` masquent la flash (même point de montage) ; `GAME:` (lecteur) et `game:` (titre) sont deux volumes distincts.
+- Déchiffrement `.xex` : fichiers d'autres versions inutilisables (un `.xexp` est un delta). Hooks de `common/` liés à tous les Dashboards ; ceux qui dépendent de XAM
+  ne s'activent que pour un appelant dans l'image de XAM.
+- `XeKeysVerifyRSASignature` rend TRUE en dur (compromis accepté ; le SHA-1 du contenu reste vérifié) : 5 appels au démarrage (appelants `0x8185A4C4`, `0x818BF0C0`).
+  `XexLoadExecutable` (lr `0x818783AC`) lit un nom vide : ne pas le faire échouer avant de corriger la lecture. `XexStartExecutable` (lr `0x8187A028`) exécute la fonction sur un fil système.
+- Instance unique de XAM : tout ce qui dépend de l'état « titre » (nom du titre en cours, messages par processus) ne peut pas fonctionner.
+- Les lignes `[ngpu]` du rendu natif sont sur stderr, jamais dans `dash.log` ; `dash.log` est tronqué sans `--log_flush_interval=1`.
+
+## 7. Problèmes ouverts
+- Fermeture du Guide après connexion (faire échouer `XamShowAvatarMiniCreatorUI` maintenant que le module est recompilé) ; panneau du Guide vide après B non analysé.
+- `Customize Avatar` de dash.xex n'atteint pas `XamLaunchAvatarEditor` (`XamPackageManagerGetExperienceMode` du HLE sans le bit `0x2`) ; sous-menus de Customize Profile non testés.
+- AppImage avec ces correctifs non vérifiée sur le Deck ; entrées manette inégales (SDL voit les manettes, boutons parfois absents du hook `XInputdReadState`).
+- Fenêtre « Save Profile » absente du parcours Dashboard ; `XamUserReadProfileSettings(Ex)`/`Write` toujours au HLE ; contenu lié au profil HLE.
+- Rendu du HUD : constantes booléennes de pixel shader (`+0x2780`/`+0x2790` supposés, `CopyAlpha` `817E59F0`/`817E5B70` non vérifiés), gamma, MSAA,
+  plans de coupe ; cadence ≈ 34 images/s sous lavapipe (`ReadResolved` + `WaitIdle`) : le HUD devrait attendre un vsync.
+- Toasts de progression (`XNotifyQueueUI`), mise à jour du texte d'une boîte ouverte (`XuiTextElementSetText`), `XamShowAchievementsUI` vers XAM.
+- Lecteur optique réel exposé en `\Device\CdRom0` ; lecture d'un média ; sources Computer, Portable Device, Current Disc.
+- Défauts du SDK contournés dans `common/` (liste en section 3) ; réservations d'alias non sauvegardées ni libérées au déchargement ; `BaseHeap::Reset` efface la table de pages à chaque XEX chargé.
+- `signin`/`createprofile`/`gamerprofile` en même temps : impossible (bases identiques).
+
+Historique détaillé avant condensation : `git show d96c252:docs/xam_recompile.md`
+Historique détaillé avant condensation : `git show d96c252:docs/xam_13604_compilation.md`
+Historique détaillé avant condensation : `git show d96c252:docs/xam_etat.md`
+Historique détaillé avant condensation : `git show d96c252:docs/avatar_hub.md`

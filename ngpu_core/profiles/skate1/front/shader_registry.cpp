@@ -1,4 +1,4 @@
-// skate1 - native D3D layer: shader registry (see docs/native_d3d.md)
+// skate1 - native D3D layer: shader registry (see docs/ngpu_core.md)
 //
 // Skate builds its shader objects in place with XGSetVertexShaderHeader-like
 // helpers, sub_82CC1038 (vertex) and sub_82CC0EB0 (pixel) (object, size,

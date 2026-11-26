@@ -24,7 +24,7 @@ endif()
 
 target_link_libraries(dash PRIVATE xenondash_common)
 
-# Rendu natif D3D (remplace l'émulation du GPU Xenos) : voir docs/rendu_natif.md. Désactivé par défaut.
+# Rendu natif D3D (remplace l'émulation du GPU Xenos) : voir docs/ngpu_core.md. Désactivé par défaut.
 option(DASH_NATIVE_GPU "Rendu natif au niveau D3D (native_gpu/) pour cette version" OFF)
 if(DASH_NATIVE_GPU)
     add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/../../native_gpu xenondash_native_gpu)

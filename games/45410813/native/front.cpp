@@ -555,7 +555,7 @@ void XdFrontStart(rex::Runtime* runtime) {
     g_renderer->LoadPipelineCache((runtime->cache_root() / "native_pipelines.bin").string());
   }
   // Rampe d'affichage : le D3D regle l'ecran par une rampe ecrite dans le tampon de commandes (non lu ici) ; approximation par une
-  // puissance (docs/ngpu_core.md section 4).
+  // puissance (docs/ngpu_core.md, « Façade 6770 », rampe d'affichage).
   const double power = REXCVAR_GET(native_gpu_gamma) / 100.0;
   if (power > 0.0 && power != 1.0) {
     uint32_t ramp[256];

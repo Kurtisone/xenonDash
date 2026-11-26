@@ -1,6 +1,6 @@
 // native_gpu : XDK D3D 2.0.20158 liee dans le Dashboard 2.0.13604 (dash.xex) : adresses et decalages du peripherique.
 // Retrouves par tools/d3d_match.py (famille dash-13604, tools/d3d_signatures/references.toml) et verifies a la main
-// (docs/ngpu_core.md section 13604). Aucun contenu Microsoft : des adresses et des nombres.
+// (docs/ngpu_core.md, « Dashboard Kinect 13604 »). Aucun contenu Microsoft : des adresses et des nombres.
 #pragma once
 
 #include <cstdint>

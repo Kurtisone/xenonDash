@@ -1,4 +1,4 @@
-# native_gpu : rendu natif au niveau D3D (remplace l'emulation du GPU Xenos). Voir docs/rendu_natif.md et docs/ngpu_core.md.
+# native_gpu : rendu natif au niveau D3D (remplace l'emulation du GPU Xenos). Voir docs/ngpu_core.md.
 # Bibliotheque OBJECT (symboles forts qui remplacent les alias faibles `sub_XXXXXXXX` du code genere).
 # Inclue seulement avec l'option DASH_NATIVE_GPU=ON du projet de la version (desactivee par defaut).
 #

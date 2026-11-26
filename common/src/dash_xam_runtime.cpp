@@ -225,7 +225,7 @@ void RunInSystemProcess(rex::system::KernelState* ks, std::function<int()> fn) {
 // Variante NON bloquante : le thread vit jusqu'a la fin du processus et l'appelant repart tout de
 // suite. Le chargement de XAM dans OnPostSetup bloquait le thread principal AVANT le premier dessin
 // du Dashboard : aucun appel D3D n'arrivait, donc aucun device Vulkan n'etait cree et l'ecran
-// restait noir (voir docs/xam_13604_compilation.md). Le thread doit rester reference : un
+// restait noir (voir docs/xam_recompile.md). Le thread doit rester reference : un
 // object_ref local le detruirait en fin de fonction.
 void RunInSystemProcessAsync(rex::system::KernelState* ks, std::function<int()> fn) {
   static std::mutex mu;

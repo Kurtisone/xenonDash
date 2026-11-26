@@ -1,5 +1,5 @@
 // skate1 - native D3D layer (port of Unleashed Recompiled's renderer on
-// plume, see docs/native_d3d.md). For now: create the plume device and report
+// plume, see docs/ngpu_core.md). For now: create the plume device and report
 // what the renderer needs from it.
 
 #include "native_gpu.h"

@@ -1,4 +1,4 @@
-// skate1 - native D3D layer: one-frame capture (see docs/native_d3d.md)
+// skate1 - native D3D layer: one-frame capture (see docs/ngpu_core.md)
 //
 // native_gpu_capture_seconds = N records the frame that starts N seconds
 // after the first Swap into native_gpu_capture_path: every draw, clear,

@@ -18,7 +18,7 @@ NAMES = {
 
 
 # Register groups of the device shadow (first register, device offset), from
-# the draw flush (docs/native_d3d.md): register base+k is at offset + 4k.
+# the draw flush (docs/ngpu_core.md): register base+k is at offset + 4k.
 REGISTER_GROUPS = [(0x2000, 10368, 19), (0x2100, 10444, 21), (0x2180, 10528, 5),
                    (0x2200, 10548, 12), (0x2280, 10596, 21), (0x2300, 10680, 38),
                    (0x2380, 10832, 32)]

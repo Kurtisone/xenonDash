@@ -1,6 +1,6 @@
 #include <sys/mman.h>
 #include <unistd.h>
-// skate1 - native D3D layer: live rendering (see docs/native_d3d.md)
+// skate1 - native D3D layer: live rendering (see docs/ngpu_core.md)
 //
 // native_gpu_render feeds the game's draws, clears, resolves and tiling
 // calls to the native renderer as they happen, next to the emulated GPU (which
