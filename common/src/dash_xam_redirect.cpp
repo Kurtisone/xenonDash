@@ -97,6 +97,8 @@ PPCFunc* FindHle(const std::string& sym) {
 void DispatchImpl(Slot& s, PPCContext& ctx, uint8_t* base);
 void SyncHleProfileWithXam(const PPCContext& ctx, uint8_t* base, uint64_t wanted);
 void SyncHleAvatarManifest(const PPCContext& ctx, uint8_t* base);
+void NoteAvatarManifestChanged(uint32_t hr);
+std::atomic<int> g_manifest_refresh{0};  // lectures du manifeste restant à tenter après XamAvatarSetManifest
 std::atomic<rex::system::KernelState*> g_ks{nullptr};
 
 // Exécute l'import : XAM recompilé si redirigé, sinon le HLE du SDK (même fonction que sans ce fichier).
@@ -281,7 +283,8 @@ void SyncHleAvatarManifest(const PPCContext& ctx, uint8_t* base) {
   static std::mutex mu;
   static uint64_t synced = 0;
   std::lock_guard<std::mutex> lock(mu);
-  if (synced == profile->xuid()) return;
+  const bool refresh = g_manifest_refresh.load() > 0;  // XamAvatarSetManifest vient de réussir : relire jusqu'à voir le nouveau
+  if (synced == profile->xuid() && !refresh) return;
   const uint32_t buf = REX_KERNEL_MEMORY()->SystemHeapAlloc(kSize);
   if (!buf) return;
   std::memset(base + buf, 0, kSize);
@@ -300,8 +303,24 @@ void SyncHleAvatarManifest(const PPCContext& ctx, uint8_t* base) {
   REXLOG_INFO("[avatar] manifeste du profil {:016X} : XamAvatarGetManifestLocalUser -> 0x{:08X}{} ; {} ; début {}", profile->xuid(),
               hr, called ? "" : " (export absent)", empty ? "vide" : "donné au HLE (réglage 0x63E80044)", head);
   synced = profile->xuid();
-  if (!called || hr != 0 || empty) return;
+  static std::vector<uint8_t> given;  // dernier manifeste donné au HLE
+  if (!called || hr != 0 || empty || (refresh && manifest == given)) {
+    if (refresh) g_manifest_refresh.fetch_sub(1);  // pas encore écrit : nouvelle tentative à la prochaine lecture (bornée)
+    return;
+  }
   profile->AddSetting(std::make_unique<rex::system::xam::UserProfile::BinarySetting>(kSetting, manifest));
+  given = manifest;
+  if (refresh) g_manifest_refresh.store(0);
+}
+
+void NoteAvatarManifestChanged(uint32_t hr) {
+  if (static_cast<int32_t>(hr) < 0) return;
+  g_manifest_refresh.store(20);
+  // Les notifications de XAM recompilé n'atteignent pas l'écouteur du Dashboard (même cause que XN_SYS_SIGNINCHANGED plus haut) :
+  // XN_SYS_PROFILESETTINGCHANGED (0xE), utilisateur 0, pour que le hub relise le manifeste.
+  if (auto* ks = g_ks.load()) {
+    ks->BroadcastNotification(rex::system::XNotificationID(0x0000000E), 1);
+  }
 }
 
 void DispatchImpl(Slot& s, PPCContext& ctx, uint8_t* base) {
@@ -1060,6 +1079,13 @@ void CallModuleImport(ModuleImport& imp, PPCContext& ctx, uint8_t* base) {
     }
     return;
   }
+  // Choix d'un avatar (MiniCreator, XamAvatarSetManifest) : XAM écrit le manifeste dans le GPD du profil ; le HLE garde l'ancien
+  // (ou aucun : silhouette grise dans My Xbox). La copie donnée au HLE est relue aux prochaines lectures du réglage.
+  if (std::string_view(imp.name) == "XamAvatarSetManifest") {
+    fn(ctx, base);
+    NoteAvatarManifestChanged(ctx.r3.u32);
+    return;
+  }
   // DASH_XAM_TRACE_MODULE=<n> : journalise les n premiers appels de module (arguments r3..r6, retour r3), diagnostic.
   static const long trace_max = [] {
     const char* e = std::getenv("DASH_XAM_TRACE_MODULE");
@@ -1413,8 +1439,8 @@ REX_HOOK_RAW(__imp__XamIsUIActive) {
   dash::xamredir::IsUIActive(g_slot_XamIsUIActive, ctx, base);
 }
 // « Customize Avatar » de dash.xex (sub_9231DC28) : même point que les modules (AvatarEditorOption2, via CallModuleImport).
-// Non atteint aujourd'hui : dash.xex n'appelle XamLaunchAvatarEditor que si XamPackageManagerGetExperienceMode (HLE, mode 0)
-// a le bit 0x2 et si XamPackageManagerGetFileSize (HLE, 0) trouve l'éditeur.
+// dash.xex ne l'appelle que si XamPackageManagerGetExperienceMode a le bit 0x2 et si XamPackageManagerGetFileSize trouve
+// l'éditeur : les deux sont servis par XAM recompilé pour cet appel (voir plus bas).
 REX_HOOK_RAW(__imp__XamLaunchAvatarEditor) {
   static dash::xamredir::ModuleImport imp{"XamLaunchAvatarEditor", 2011};
   dash::xamredir::CallModuleImport(imp, ctx, base);
@@ -1428,21 +1454,41 @@ REX_HOOK_RAW(__imp__XamIsIptvEnabled) {
   dash::xamredir::CallModuleImport(imp, ctx, base);
 }
 // XamPackageManagerGetExperienceMode (ordinal 1606) de dash.xex : export réel de XAM recompilé (sub_818BC250) au lieu du HLE du SDK
-// (renvoie 0 sans écrire *pMode). Même schéma que hud_xam_imports.cpp / gamerprofile_xam_imports.cpp. Aucune valeur forcée ici.
+// (renvoie 0 sans écrire *pMode). Même schéma que hud_xam_imports.cpp / gamerprofile_xam_imports.cpp. Aucune valeur forcée.
 REX_HOOK_RAW(__imp__XamPackageManagerGetExperienceMode) {
-  // Désactivé par défaut : cette redirection fait basculer le démarrage vers AvatarEditor.xex (le hub n'apparaît plus).
-  // Sans DASH_XAM_EXPERIENCE_REDIRECT=1, même résultat que le HLE du SDK (xam_misc.cpp:622) : r3 = 0.
-  static const bool enabled = [] {
+  // Redirection globale désactivée par défaut : elle fait basculer le démarrage vers AvatarEditor.xex (le hub n'apparaît
+  // plus ; DASH_XAM_EXPERIENCE_REDIRECT=1 la réactive, diagnostic). Même résultat que le HLE du SDK (r3 = 0, *pMode non
+  // écrit) partout sauf « Customize Avatar » : sub_9231DC28 lit *pMode (appel d'adresse de retour 0x9231DC44, bit 0x2
+  // requis) puis, avec XamPackageManagerGetFileSize("AvatarEditor.xex") non nul, appelle XamLaunchAvatarEditor (option 2 :
+  // MiniCreator). Avec le HLE (*pMode = 0), dash prend la branche « requires update ». Pour cet appel : valeur de XAM
+  // recompilé (mode 0x2 mesuré, bit présent sans rien forcer).
+  static const bool all = [] {
     const char* e = std::getenv("DASH_XAM_EXPERIENCE_REDIRECT");
     const bool on = e && std::string_view(e) == "1";
     if (on) REXLOG_INFO("[xamredir] XamPackageManagerGetExperienceMode : redirection active (DASH_XAM_EXPERIENCE_REDIRECT=1)");
     return on;
   }();
-  if (!enabled) {
+  static dash::xamredir::ModuleImport imp{"XamPackageManagerGetExperienceMode", 1606};
+  if (all) {
+    dash::xamredir::CallModuleImport(imp, ctx, base);
+    return;
+  }
+  if (static_cast<uint32_t>(ctx.lr) != 0x9231DC44u) {  // retour du bl de sub_9231DC28
     ctx.r3.u64 = 0;
     return;
   }
-  static dash::xamredir::ModuleImport imp{"XamPackageManagerGetExperienceMode", 1606};
+  dash::xamredir::CallModuleImport(imp, ctx, base);  // mesuré le 2026-11-26 : mode 0x2, r3 = 0
+}
+// XamPackageManagerGetFileSize (ordinal 1608) : HLE du SDK (0) partout ; pour « Customize Avatar » (retour 0x9231DC64),
+// XAM recompilé : il trouve AvatarEditor.xex dans l'index des paquets (15 556 608 octets mesurés), l'éditeur lui-même
+// n'étant pas recompilé (XamLaunchAvatarEditor est servi par le MiniCreator, option 2).
+REX_HOOK_RAW(__imp__XamPackageManagerGetFileSize) {
+  static PPCFunc* const hle = dash::xamredir::FindHle("__imp__XamPackageManagerGetFileSize");
+  static dash::xamredir::ModuleImport imp{"XamPackageManagerGetFileSize", 1608};
+  if (static_cast<uint32_t>(ctx.lr) != 0x9231DC64u) {
+    if (hle) hle(ctx, base); else ctx.r3.u64 = 0;
+    return;
+  }
   dash::xamredir::CallModuleImport(imp, ctx, base);
 }
 #define DASH_XAM_AVATAR_HOOK(fn)                         \

@@ -95,6 +95,12 @@ git (liste en fin de fichier). État courant : `docs/REPRISE.md`. Les mesures da
 - `XamUserGetSigninState` : `XN_SYS_SIGNINCHANGED` est rediffusé côté HLE (le Dashboard écoute les files du SDK, pas celles de XAM).
 - `AvatarEditorOption2` : `XamLaunchAvatarEditor` (ordinal 2011) ouvre `XamShowAvatarMiniCreatorUI(user, 2)` (ordinal 1700) ; ouverture
   différée depuis le MiniCreator (un appel synchrone après `XamAppUnloadStack` renvoie 5).
+- « Customize Avatar » de dash.xex (`sub_9231DC28`) : `XamPackageManagerGetExperienceMode` (retour `0x9231DC44`) et `XamPackageManagerGetFileSize`
+  (retour `0x9231DC64`) vont à XAM recompilé pour CET appel seulement (mesuré le 2026-11-26 : mode `0x2`, `AvatarEditor.xex` 15 556 608 octets
+  dans l'index) ; ailleurs le HLE (r3 = 0), car la redirection globale ouvre `AvatarEditor.xex` au démarrage. Le Dashboard appelle alors
+  `XamLaunchAvatarEditor`, servi par l'option 2. Le MiniCreator n'a pas de bouton B (légende A / Y) : on ne quitte le choix qu'en choisissant.
+- Après `XamAvatarSetManifest` (choix d'avatar), le manifeste donné au profil HLE est relu aux lectures suivantes de `0x63E80044` et
+  `XN_SYS_PROFILESETTINGCHANGED` (0xE) est rediffusé (sinon My Xbox gardait l'ancien avatar, ou la silhouette grise pour un profil neuf).
 
 ### Rendu natif du HUD (palier N2)
 - XAM embarque sa propre D3D9 2.0.2099.16 (celle du Dashboard : 2.0.20158) : groupes de registres décalés de 1088 octets, shaders à
@@ -182,7 +188,7 @@ git (liste en fin de fichier). État courant : `docs/REPRISE.md`. Les mesures da
 | `ObReferenceObject`/`ExCreateThread`/auto-déréférencement (`kernel_ob.cpp`) | `ObReferenceObject` stub, drapeau `0x80` sans référence, `XThread::Exit` libère avant `Thread::Exit` : `XThread` détruit trop tôt. Fuite de quelques centaines d'octets par fil |
 | `VdSetSystemCommandBuffer`, `VdQuerySystemCommandBuffer` (`kernel_video.cpp`) | stub journalisé 371 443 fois ; l'interrogation sans pause tenait un fil à 100 % |
 | `game:` / `\Device\CdRom0` | `GAME:` → `\Device\CdRom0` (posé par XAM) pendait : `game:\flash\<nom>` échouait une fois sur deux ; CdRom0 monté sur un dossier VIDE ; SDK `766678d`, `0bc075f` : liens sensibles à la casse |
-| `XamPackageManagerGetExperienceMode` = 0 | stub à r3 résiduel (`DASH_XAM_EXPERIENCE_REDIRECT=1` : vers XAM) |
+| `XamPackageManagerGetExperienceMode` = 0 | stub à r3 résiduel ; vers XAM pour « Customize Avatar » seulement (`DASH_XAM_EXPERIENCE_REDIRECT=1` : partout, ouvre `AvatarEditor.xex` au démarrage) |
 | `XamIsIptvEnabled` (export 1301, `RETAIL_FLAGS & 0x1000`) | le stub laissait r3 ; `EcoMediaroomEnabled` ajoutait un emplacement Mediaroom vide dans My Xbox |
 | `XamLoaderGetDvdTrayState` sans argument (`sub_81884580`) | l'ancien prototype écrivait 2 par r3 dans la vtable de l'Async Loader : appel nul dans `sub_922AA018` (lr `0x922AA0D8`) ; trouvé par point d'arrêt matériel |
 | `MmDoubleMapMemory`/`MmUnmapMemory` | vrai double mappage (`Memory::MapAlias`/`UnmapAlias`) |
@@ -303,10 +309,14 @@ Welcome). Application XMP : table de `sub_81893EE0` (`0x81C06F78 - 0xB8 * id`), 
 - Les lignes `[ngpu]` du rendu natif sont sur stderr, jamais dans `dash.log` ; `dash.log` est tronqué sans `--log_flush_interval=1`.
 
 ## 7. Problèmes ouverts
-- Fermeture du Guide après connexion (faire échouer `XamShowAvatarMiniCreatorUI` maintenant que le module est recompilé) ; panneau du Guide vide après B non analysé.
-- `Customize Avatar` de dash.xex n'atteint pas `XamLaunchAvatarEditor` (`XamPackageManagerGetExperienceMode` du HLE sans le bit `0x2`) ; sous-menus de Customize Profile non testés.
+- Mesuré le 2026-11-26 (banc) : connexion d'un profil sans avatar (Guide, MiniCreator, choix, Guide de retour), sous-menus de Customize Profile
+  (image, nom, avatar), création de profil jusqu'à « Save Profile » (scène Congratulations de `createprofile.xex`, après le choix d'avatar),
+  panneau du Guide après B : tout fonctionne ; la fermeture du Guide et le panneau vide venaient du MiniCreator non recompilé (voir plus haut).
+- MiniCreator d'option 2 sans bouton B ; avatar complet (`AvatarEditor.xex`) à recompiler ; créer un profil nommé `a` (déjà existant) affiche « must begin with a letter » (hypothèse : code d'erreur « nom pris » mal traduit ; non mesuré).
 - AppImage avec ces correctifs non vérifiée sur le Deck ; entrées manette inégales (SDL voit les manettes, boutons parfois absents du hook `XInputdReadState`).
-- Fenêtre « Save Profile » absente du parcours Dashboard ; `XamUserReadProfileSettings(Ex)`/`Write` toujours au HLE ; contenu lié au profil HLE.
+- `XamUserReadProfileSettings(Ex)`/`Write` toujours au HLE ; contenu lié au profil HLE. Mesure : `DASH_XAM_REDIRECT=XamUserReadProfileSettings,XamUserReadProfileSettingsEx`
+  (lecture par XAM) donne gamertag et avatar corrects, mais l'image du joueur (haut à droite) disparaît (hypothèse : un réglage lu par le hub, ex. `0x402C0011`, absent du GPD) :
+  désactivé par défaut tant que ce réglage n'est pas rempli.
 - Rendu du HUD : constantes booléennes de pixel shader (`+0x2780`/`+0x2790` supposés, `CopyAlpha` `817E59F0`/`817E5B70` non vérifiés), gamma, MSAA,
   plans de coupe ; cadence ≈ 34 images/s sous lavapipe (`ReadResolved` + `WaitIdle`) : le HUD devrait attendre un vsync.
 - Le texte d'une boîte de message ouverte ne se met pas à jour (`XuiTextElementSetText` non essayé : l'avancement passe par des notifications) ; le toast recouvre l'étiquette du bouton « Masquer » pendant son affichage.
