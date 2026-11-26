@@ -156,3 +156,47 @@ void UiState(const char* tag, uint32_t r3) {
 HUDLOOP_STATE_FN(sub_81894D50)
 HUDLOOP_STATE_FN(sub_8189F050)
 HUDLOOP_STATE_FN(sub_818A21B0)
+
+// ---- Connexion des utilisateurs (DASH_LOGON_TRACE=1) : tâche de XamUserLogonEx et ses étapes, sans rien modifier ----
+namespace {
+bool LogonTraceOn() {
+  static const bool on = std::getenv("DASH_LOGON_TRACE") != nullptr;
+  return on;
+}
+uint32_t Rd32(uint8_t* base, uint32_t a) { return __builtin_bswap32(*reinterpret_cast<const uint32_t*>(base + a)); }
+uint64_t Rd64(uint8_t* base, uint32_t a) { return __builtin_bswap64(*reinterpret_cast<const uint64_t*>(base + a)); }
+}  // namespace
+
+// Tâche de connexion (r3 = bloc de 0x868 octets : XUID demandés à +8, drapeaux à +0x848 ; par emplacement (pas 0x1A0) : compte
+// fourni à +0x1B8, état à +0x1BC). Table des utilisateurs de XAM : 0x81BFD2B0 + 0x1A0 * index (état +0, XUID +0x3C).
+extern "C" void __imp__sub_818B2BF8(PPCContext& __restrict, uint8_t*);
+extern "C" void sub_818B2BF8(PPCContext& __restrict ctx, uint8_t* base) {
+  const uint32_t blk = ctx.r3.u32;
+  if (LogonTraceOn() && blk) {
+    REXLOG_INFO("[logon] tâche : drapeaux {:08X} {:08X}", Rd32(base, blk + 0x848), Rd32(base, blk + 0x84C));
+    for (uint32_t i = 0; i < 4; ++i)
+      REXLOG_INFO("[logon]   demandé {} : XUID {:016X} compte fourni {} état {:08X} ; table : état {:08X} XUID {:016X}", i,
+                  Rd64(base, blk + 8 + 8 * i), Rd32(base, blk + 0x1B8 + 0x1A0 * i), Rd32(base, blk + 0x1BC + 0x1A0 * i),
+                  Rd32(base, 0x81BFD2B0u + 0x1A0 * i), Rd64(base, 0x81BFD2ECu + 0x1A0 * i));
+  }
+  __imp__sub_818B2BF8(ctx, base);
+  if (LogonTraceOn()) REXLOG_INFO("[logon] tâche : retour {:08X}", ctx.r3.u32);
+}
+
+#define XD_LOGON_STEP(A, WHAT)                                                                                              \
+  extern "C" void __imp__sub_##A(PPCContext& __restrict, uint8_t*);                                                       \
+  extern "C" void sub_##A(PPCContext& __restrict ctx, uint8_t* base) {                                                    \
+    const uint64_t a3 = ctx.r3.u64, a4 = ctx.r4.u64, a5 = ctx.r5.u64, a6 = ctx.r6.u64;                                     \
+    const uint32_t lr = static_cast<uint32_t>(ctx.lr);                                                                     \
+    __imp__sub_##A(ctx, base);                                                                                             \
+    if (LogonTraceOn())                                                                                                    \
+      REXLOG_INFO("[logon] " WHAT " sub_" #A "(r3={:X} r4={:X} r5={:X} r6={:X}) lr={:08X} -> {:08X}", a3, a4, a5, a6, lr, \
+                  ctx.r3.u32);                                                                                             \
+  }
+XD_LOGON_STEP(818AF6E8, "XamProfileFindAccount")
+XD_LOGON_STEP(818B2A98, "chargement du compte")
+XD_LOGON_STEP(818AF360, "changement d'utilisateur")
+XD_LOGON_STEP(818B0200, "application")
+XD_LOGON_STEP(818B0590, "notification")
+XD_LOGON_STEP(81A281E0, "étape réseau")
+#undef XD_LOGON_STEP
