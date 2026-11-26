@@ -75,6 +75,10 @@ bool ShowXamMessageBox(const char16_t* title, const char16_t* text, const char16
 // l'appel est refusé ; le journal dit alors lequel des deux.
 bool ShowXamGuide(uint32_t user_index, int wait_ms);
 
+// Notification Xbox (toast) : XNotifyQueueUI de XAM recompilé, non bloquante. À appeler depuis un thread invité
+// (XHostThread). Faux si XAM n'est pas chargé/redirigé ou si XAM refuse (r3 != 0).
+bool ShowXamToast(const char16_t* text);
+
 }  // namespace dash::xamredir
 
 // Accroche typée (comme REX_HOOK) qui, en mode profil XAM, exécute l'export de XAM recompilé de même nom.

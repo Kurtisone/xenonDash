@@ -40,10 +40,10 @@ livrées en AppImage et capables de **lancer des jeux** recompilés à la demand
 
 ## To-Do (Kinect 13604)
 Par ordre de priorité. Ce que le banc ne peut pas vérifier se teste sur le Deck.
-1. **Interface Xbox seulement** : imports d'interface encore servis par le HLE du SDK (`xam_ui.cpp` : fenêtres ImGui invisibles en rendu natif) à rediriger vers XAM recompilé ; texte mis à jour dans la boîte de progression de construction (`XuiTextElementSetText`) ; toasts `XNotifyQueueUI`.
+1. **Interface Xbox seulement (fait en grande partie)** : `XamShowAchievementsUIEx`, `XamShowGamerCardUI` et `XNotifyQueueUI` par XAM recompilé (liste par défaut) ; les autres imports d'interface restent des stubs du SDK, non appelés dans le parcours hors ligne ([docs/xam_recompile.md](docs/xam_recompile.md), section redirection). Progression de construction : boîte puis notification par étape (le texte d'une boîte ouverte est figé). Reste : relier le bouton « Achievements » du hub (`dash_guide_actions.cpp`), confirmer sur une vraie construction.
 2. **Profil** : sous-menus de Customize Profile (image, nom, avatar) ; fenêtre « Save Profile » ; panneau du Guide vide après B ; `XamUserReadProfileSettings(Ex)` et `Write` vers XAM ; « Enter Pass Code » à confirmer sur le Deck.
 3. **Avatar** : Guide refermé après la connexion (`XamShowAvatarMiniCreatorUI`) ; Customize Avatar jusqu'à `XamLaunchAvatarEditor` (`XamPackageManagerGetExperienceMode`, bit 0x2) ; avatar dans My Xbox ; `AvatarEditor.xex` plus tard.
-4. **Succès** : `XamShowAchievementsUI` vers XAM (Guide) ; toasts de succès.
+4. **Succès (à moitié fait)** : `XamShowAchievementsUIEx` et toasts par XAM validés au banc (panneau « Achievements » à 0 succès, toast bas centre). Reste : succès réellement débloqués par un titre (aucun profil de test n'en a), notifications `XN_` de déblocage.
 5. **Manette du Deck** : boutons parfois absents (pad → SDL → InputSystem → XInputd) ; à trancher avec un `dash.log` du Deck.
 6. **Bibliothèques média** : lecture d'un média ; sources Computer, Portable Device et Current Disc.
 7. **Lecteur optique réel** exposé en `\Device\CdRom0` (sans vrai lecteur : vide et muet).

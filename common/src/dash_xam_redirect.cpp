@@ -1,6 +1,7 @@
 // xenondash common - redirection des imports XAM du Dashboard vers XAM recompilé (voir dash_xam_redirect.h).
 
 #include "dash_xam_redirect.h"
+#include "dash_xam_runtime.h"
 
 #include <algorithm>
 #include <atomic>
@@ -323,6 +324,12 @@ void DispatchImpl(Slot& s, PPCContext& ctx, uint8_t* base) {
     REXLOG_INFO("[xamredir] {}([{}], drapeaux {:08X}, overlapped {:08X}) lr={:08X}", s.name, list, ctx.r4.u32, ctx.r5.u32,
                 static_cast<uint32_t>(ctx.lr));
   }
+  if (fn && std::string_view(s.name) == "XNotifyQueueUI") {  // message système posté à la file de tâches de XAM (SetTitleCall)
+    dash::xamrt::SetTitleCall(true);
+    fn(ctx, base);
+    dash::xamrt::SetTitleCall(false);
+    return;
+  }
   if (fn) {
     fn(ctx, base);
     return;
@@ -499,6 +506,57 @@ void RunUiCallTest(rex::system::KernelState* ks, const char* name, uint32_t a3, 
   REXLOG_INFO("[xamredir] test {} : retour r3=0x{:08X}", name, static_cast<uint32_t>(ctx.r3.u64));
 }
 
+// DASH_TEST_UI=<secondes> + DASH_TEST_UI_CALL="<Import>:<arg>,<arg>,..." : appelle un import d'interface du Dashboard (hook de ce fichier)
+// depuis un thread titre, comme le ferait dash.xex ; chaque argument (r3, r4...) est un entier (0x… accepté) ou « w:texte » (chaîne UTF-16
+// invitée). Plusieurs appels : séparés par « ; » (pause d'une seconde entre deux).
+void RunUiCallEnv(rex::system::KernelState* ks) {
+  const char* spec = std::getenv("DASH_TEST_UI_CALL");
+  auto* ts = rex::runtime::ThreadState::Get();
+  if (!spec || !ts) return;
+  uint8_t* base = ks->memory()->virtual_membase();
+  std::string all = spec;
+  size_t pos = 0;
+  while (pos <= all.size()) {
+    size_t end = all.find(';', pos);
+    if (end == std::string::npos) end = all.size();
+    const std::string call = all.substr(pos, end - pos);
+    pos = end + 1;
+    if (call.empty()) continue;
+    const size_t colon = call.find(':');
+    const std::string name = call.substr(0, colon);
+    Slot* slot = FindSlot(name);
+    if (!slot) {
+      REXLOG_WARN("[xamredir] test {} : pas de hook", name);
+      continue;
+    }
+    PPCContext ctx = *ts->context();
+    ctx.r1.u64 = static_cast<uint32_t>(ctx.r1.u64) - 0x100;
+    PPCRegister* regs[] = {&ctx.r3, &ctx.r4, &ctx.r5, &ctx.r6, &ctx.r7, &ctx.r8, &ctx.r9, &ctx.r10};
+    size_t n = 0;
+    if (colon != std::string::npos) {
+      const std::string args = call.substr(colon + 1);
+      size_t a = 0;
+      while (a <= args.size() && n < 8) {
+        size_t b = args.find(',', a);
+        if (b == std::string::npos) b = args.size();
+        const std::string tok = args.substr(a, b - a);
+        a = b + 1;
+        if (tok.rfind("w:", 0) == 0) {
+          std::u16string w;
+          for (char c : tok.substr(2)) w.push_back(static_cast<char16_t>(static_cast<unsigned char>(c)));
+          regs[n++]->u64 = PutWide(w.c_str());
+        } else {
+          regs[n++]->u64 = std::strtoull(tok.c_str(), nullptr, 0);
+        }
+      }
+    }
+    REXLOG_INFO("[xamredir] test {} : appel ({} arguments)", name, n);
+    Dispatch(*slot, ctx, base);
+    REXLOG_INFO("[xamredir] test {} : retour r3=0x{:08X}", name, static_cast<uint32_t>(ctx.r3.u64));
+    std::this_thread::sleep_for(std::chrono::seconds(1));
+  }
+}
+
 void StartTestThread(rex::system::KernelState* ks, const char* env, const char* thread_name,
                      std::function<void(rex::system::KernelState*)> body) {
   const char* test = std::getenv(env);
@@ -575,6 +633,30 @@ bool ShowXamMessageBox(const char16_t* title, const char16_t* text, const char16
     if (choice) *choice = __builtin_bswap32(*reinterpret_cast<uint32_t*>(base + result));
   }
   return true;
+}
+
+// Notification (toast) Xbox du HUD : XNotifyQueueUI de XAM recompilé, appelée depuis l'hôte (même contrat de thread que
+// ShowXamMessageBox). Non bloquante : XAM met le message en file pour la fenêtre de notification. Mêmes arguments que
+// le test de DASH_TEST_UI qui l'a validée (type 34, tous utilisateurs, zone 2, texte, sans paramètre).
+bool ShowXamToast(const char16_t* text) {
+  Slot* slot = FindSlot("XNotifyQueueUI");
+  if (!slot || !slot->guest.load()) {
+    REXLOG_WARN("[xamredir] notification : XAM recompilé non chargé ou XNotifyQueueUI non redirigé");
+    return false;
+  }
+  auto* ts = rex::runtime::ThreadState::Get();
+  auto* ks = g_ks.load();
+  if (!ts || !ks) return false;
+  uint8_t* base = ks->memory()->virtual_membase();
+  PPCContext ctx = *ts->context();
+  ctx.r1.u64 = static_cast<uint32_t>(ctx.r1.u64) - 0x100;
+  ctx.r3.u64 = 34;
+  ctx.r4.u64 = 255;
+  ctx.r5.u64 = 2;
+  ctx.r6.u64 = PutWide(text);
+  ctx.r7.u64 = 0;
+  Dispatch(*slot, ctx, base);
+  return static_cast<uint32_t>(ctx.r3.u64) == 0;
 }
 
 // Guide de la console : XamShowGuideUI(utilisateur, overlapped). Signature XDK : la fonction prend l'index
@@ -806,6 +888,20 @@ bool CallerInModule(uint32_t address, std::string_view module_name) {
   return user->xex_module() && user->xex_module()->ContainsAddress(address);
 }
 
+// Fermeture automatique de la boîte d'erreur de démarrage du HUD : instant d'ouverture (0 = rien en attente) et état du A.
+std::atomic<int64_t> g_boot_box_ms{0};
+std::atomic<bool> g_boot_box_down{false};
+int64_t NowMs() {
+  return std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
+}
+
+// Boîtes d'erreur de démarrage du HUD (lecteur vide, statut 0xC000000F du chargeur de titres) : titre et début du texte.
+bool IsBootErrorBox(uint8_t* base, uint32_t title, uint32_t text) {
+  const std::string t = ReadWide(base, title, 40), x = ReadWide(base, text, 60);
+  return (t == "Unrecognized Disc" && x.rfind("This disc is unreadable", 0) == 0) ||
+         (t == "Game Error" && x.rfind("The game couldn't start", 0) == 0);
+}
+
 // ---------------------------------------------------------------------------------------------------------------------
 // PERSONNALISATION DE L'AVATAR : OPTION 2 (point d'appel unique, à remplacer par l'option 1 plus tard).
 //
@@ -921,30 +1017,40 @@ void CallModuleImport(ModuleImport& imp, PPCContext& ctx, uint8_t* base) {
   }
   const uint64_t n = imp.calls.fetch_add(1) + 1;
   if (n == 1) {
-    REXLOG_INFO("[xamredir] module : {} (ordinal {}) : appel 1 par {}", imp.name, imp.ordinal,
-                imp.guest.load() ? "XAM recompilé" : "HLE");
+    REXLOG_INFO("[xamredir] module : {} (ordinal {}) : appel 1 par {}, lr={:08X}", imp.name, imp.ordinal,
+                imp.guest.load() ? "XAM recompilé" : "HLE", static_cast<uint32_t>(ctx.lr));
+  }
+  // Boîte d'erreur (« Unrecognized Disc / This disc is unreadable » ou « Game Error / The game couldn't start » selon les
+  // démarrages) que XAM fait afficher au HUD au démarrage : le chargeur de titres de XAM (sub_818765F8) signale un échec de
+  // chargement (statut 0xC000000F, lecteur vide) et poste le message 0x2100D (sub_818B5A28). Elle reste cachée sous la scène
+  // de repos, mais le premier toast (XNotifyQueueUI par XAM, scène empilée) la révélait. La supprimer à la source ou la
+  // refuser à l'affichage ne marche pas (mesuré le 26/11) : sans la demande, hud.xex n'est pas chargé au démarrage et le
+  // Guide s'ouvre trop tard (suite KO) ; refusée, la scène reste, vide, et le toast la montre quand même. On laisse donc la
+  // boîte s'ouvrir et on la ferme comme le ferait l'utilisateur : un A au HUD (voir XamInputGetKeystrokeHud ci-dessous).
+  // DASH_HUD_MSGBOX_KEEP=1 la laisse ouverte (diagnostic).
+  if (std::string_view(imp.name) == "XamShowMessageBox" && !std::getenv("DASH_HUD_MSGBOX_KEEP") &&
+      CallerInModule(static_cast<uint32_t>(ctx.lr), "hud.xex") && IsBootErrorBox(base, ctx.r4.u32, ctx.r5.u32)) {
+    REXLOG_INFO("[xamredir] boîte d'erreur de démarrage du HUD (lecteur vide) : fermeture automatique par un A au HUD");
+    g_boot_box_ms.store(NowMs());
   }
   if (AvatarEditorOption2(imp, ctx, base)) return;  // personnalisation de l'avatar : option 2 (voir plus haut)
-  // Boîte de message du HUD au démarrage (« disque illisible » : ERROR_WRONG_DISK, lecteur vide) : supprimée. Renvoyer une
-  // erreur (ERROR_CANCELLED) faisait arrêter la boucle d'images du HUD (vtable+44, docs : mesure du 21/11) ; on renvoie donc
-  // le chemin de succès (r3 = 0). DASH_HUD_MSGBOX_KEEP=1 conserve la boîte (diagnostic).
-  // Seules les boîtes demandées par hud.xex sont supprimées : celles des autres modules d'interface sont légitimes (ex.
-  // createprofile.xex, « nom de profil déjà utilisé » : la supprimer validait un profil sans nom, écran vide, aucun
-  // XamProfileCreate — mesure du 23/11).
-  // Restreint au seul site de la boîte « disque illisible » (hud.xex, appel en dash_recomp.0.cpp ligne 7438, lr 0x913EC15C) :
-  // les autres boîtes de hud.xex (progression/échec de construction, lr 0x913ED690) passent normalement (mesure du 24/11).
-  if (std::string_view(imp.name) == "XamShowMessageBox" && !std::getenv("DASH_HUD_MSGBOX_KEEP") &&
-      static_cast<uint32_t>(ctx.lr) == 0x913EC15C &&
-      CallerInModule(static_cast<uint32_t>(ctx.lr), "hud.xex")) {
-    REXLOG_INFO("[xamredir] XamShowMessageBox refusee (lecteur vide, boite sans cause) lr={:08X}", (uint32_t)ctx.lr);
-    ctx.r3.u64 = 0;
-    return;
-  }
   if (std::string_view(imp.name) == "XamAppUnloadSelf")
     REXLOG_INFO("[xamredir] XamAppUnloadSelf lr={:08X}", (uint32_t)ctx.lr);  // 0x913EC1A4 : sub_913EC0C8 (+92 = 0) ; sinon sub_913EA4C0
   // Frappes données au HUD (XamInputGetKeystrokeHud(utilisateur, X_INPUT_KEYSTROKE*)) : journal de chaque réponse non vide.
   if (std::string_view(imp.name) == "XamInputGetKeystrokeHud") {
     const uint32_t user = ctx.r3.u32, out = ctx.r4.u32;
+    // Fermeture de la boîte de démarrage (voir plus haut) : A enfoncé puis relâché, 1,5 s après son ouverture.
+    if (const int64_t at = g_boot_box_ms.load(); at != 0 && out && NowMs() - at >= 1500) {
+      const bool down = !g_boot_box_down.exchange(true);
+      if (!down) g_boot_box_ms.store(0);
+      uint8_t* k = base + out;
+      k[0] = 0x58; k[1] = 0x00; k[2] = 0; k[3] = 0;  // VK_PAD_A
+      k[4] = 0; k[5] = down ? 0x01 : 0x02;           // XINPUT_KEYSTROKE_KEYDOWN / KEYUP
+      k[6] = static_cast<uint8_t>(user); k[7] = 0;
+      ctx.r3.u64 = 0;
+      REXLOG_INFO("[xamredir] boîte de démarrage du HUD : A {}", down ? "enfoncé" : "relâché");
+      return;
+    }
     fn(ctx, base);
     if (ctx.r3.u32 != 0x10D2 && out) {
       const uint8_t* k = base + out;
@@ -982,7 +1088,8 @@ void Configure(rex::system::KernelState* ks, rex::runtime::ExportResolver* resol
     redirect_list = "XGetVideoMode,XamUserGetXUID,XamUserGetSigninState,XamUserLogon,XamUserLogonEx,XamUserCheckPrivilege,XamUserIsOnlineEnabled,"
                     "XamShowMessageBoxUI,XamShowMessageBoxUIEx,"
                     "XamShowKeyboardUI,XamShowSigninUI,XamShowSigninUIp,XamShowCreateProfileUI,XamShowDeviceSelectorUI,"
-                    "XamShowGamerCardUIForXUID,XamShowGuideUI,";
+                    "XamShowGamerCardUIForXUID,XamShowGuideUI,"
+                    "XamShowAchievementsUIEx,XamShowGamerCardUI,XNotifyQueueUI,";
     redirect_list += kAvatarImports;
     if (const char* e = std::getenv("DASH_XAM_REDIRECT"); e && *e) redirect_list += std::string(",") + e;
     REXLOG_INFO("[xamredir] DASH_PROFILE_MODE=xam : redirections {}", redirect_list);
@@ -1043,6 +1150,7 @@ void Configure(rex::system::KernelState* ks, rex::runtime::ExportResolver* resol
 
   StartTestThread(ks, "DASH_TEST_SIGNIN", "XAM test signin",
                   [](rex::system::KernelState* k) { RunUiCallTest(k, "XamShowSigninUI", 1, 0); });
+  StartTestThread(ks, "DASH_TEST_UI", "XAM test ui", [](rex::system::KernelState* k) { RunUiCallEnv(k); });
   StartTestThread(ks, "DASH_TEST_CREATEPROFILE", "XAM test createprofile",
                   [](rex::system::KernelState* k) { RunUiCallTest(k, "XamShowCreateProfileUI", 0, 0); });
 
@@ -1272,6 +1380,34 @@ DASH_XAM_REDIRECT_HOOK(XamShowCreateProfileUI)
 DASH_XAM_REDIRECT_HOOK(XamShowGamerCardUIForXUID)
 DASH_XAM_REDIRECT_HOOK(XamShowMessageBoxUIEx)
 DASH_XAM_REDIRECT_HOOK(XamShowGuideUI)
+// Autres imports d'interface du Dashboard (inventaire docs/xam_recompile.md) : hooks sans redirection par défaut, pour mesurer les appels
+// ([xamredir] <nom> : appel 1 par HLE) ; ajoutés à la liste de Configure quand ils sont redirigés.
+DASH_XAM_REDIRECT_HOOK(XamShowAchievementsUIEx)
+DASH_XAM_REDIRECT_HOOK(XamShowGamerCardUI)
+DASH_XAM_REDIRECT_HOOK(XamShowMarketplaceUI)
+DASH_XAM_REDIRECT_HOOK(XamShowMarketplaceUIEx)
+DASH_XAM_REDIRECT_HOOK(XamShowFriendRequestUI)
+DASH_XAM_REDIRECT_HOOK(XamShowMessagesUI)
+DASH_XAM_REDIRECT_HOOK(XamShowMessageComposeUI)
+DASH_XAM_REDIRECT_HOOK(XamShowGamesUI)
+DASH_XAM_REDIRECT_HOOK(XamShowJoinPartyUI)
+DASH_XAM_REDIRECT_HOOK(XamShowJoinSessionInProgressUI)
+DASH_XAM_REDIRECT_HOOK(XamShowPrivateChatInviteUI)
+DASH_XAM_REDIRECT_HOOK(XamShowVideoChatInviteUI)
+DASH_XAM_REDIRECT_HOOK(XamShowGoldUpgradeUI)
+DASH_XAM_REDIRECT_HOOK(XamShowLiveSignupUI)
+DASH_XAM_REDIRECT_HOOK(XamShowLiveUpsellUI)
+DASH_XAM_REDIRECT_HOOK(XamShowNuiFriendsUI)
+DASH_XAM_REDIRECT_HOOK(XamShowNuiGamesUI)
+DASH_XAM_REDIRECT_HOOK(XamShowNuiGuideUI)
+DASH_XAM_REDIRECT_HOOK(XamShowNuiHardwareRequiredUI)
+DASH_XAM_REDIRECT_HOOK(XamShowNuiMessageBoxUI)
+DASH_XAM_REDIRECT_HOOK(XamShowNuiSigninUI)
+DASH_XAM_REDIRECT_HOOK(XamShowNuiTroubleshooterUI)
+DASH_XAM_REDIRECT_HOOK(XamShowPasscodeVerifyUI)
+DASH_XAM_REDIRECT_HOOK(XamShowPasscodeVerifyUIEx)
+DASH_XAM_REDIRECT_HOOK(XamResumeUpdaterUI)
+DASH_XAM_REDIRECT_HOOK(XNotifyQueueUI)
 static dash::xamredir::Slot g_slot_XamIsUIActive{"XamIsUIActive"};
 REX_HOOK_RAW(__imp__XamIsUIActive) {
   dash::xamredir::IsUIActive(g_slot_XamIsUIActive, ctx, base);

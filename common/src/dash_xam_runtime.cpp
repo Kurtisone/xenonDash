@@ -241,11 +241,16 @@ void RunInSystemProcessAsync(rex::system::KernelState* ks, std::function<int()> 
 
 // KeGetCurrentProcessType : 2 (système) pour le code de XAM recompilé, quel que soit le fil (voir SetXamImageRange). Le
 // code appelant est reconnu par l'adresse de retour (ctx.lr). La fonction du SDK vient de kernel_sdk_fn.h.
+namespace {
+thread_local bool t_title_call = false;
+}
+void dash::xamrt::SetTitleCall(bool on) { t_title_call = on; }
+
 REX_HOOK_RAW(__imp__KeGetCurrentProcessType) {
   static PPCFunc* fn = dash::SdkFunction("__imp__KeGetCurrentProcessType");
   const uint32_t lr = static_cast<uint32_t>(ctx.lr);
   fn(ctx, base);
-  if (dash::xamrt::InXamImage(lr)) ctx.r3.u64 = 2;
+  if (dash::xamrt::InXamImage(lr)) ctx.r3.u64 = (t_title_call && lr == 0x8187BAC4u) ? 1 : 2;
 }
 
 // KeBugCheck / KeBugCheckEx : plus de crochet ici. Le SDK (xboxkrnl_debug.cpp) arrête le programme au niveau critique

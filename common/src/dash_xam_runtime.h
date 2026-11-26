@@ -57,6 +57,12 @@ void RunInSystemProcessAsync(rex::system::KernelState* ks, std::function<int()> 
 // fils titre du Dashboard qui appellent XAM utilisent donc l'état système.
 void SetXamImageRange(uint32_t base, uint32_t size);
 
+// Appel d'interface venu d'un titre (dash.xex) servi par XAM recompilé : pendant `on`, le fil voit KeGetCurrentProcessType() == 1 (titre)
+// à l'appel de l'envoi de message système (`XNotifyQueueUIEx` -> `sub_8187BA98`, lr 0x8187BAC4). XAM poste alors le message à sa file de
+// tâches (XamTaskSchedule) au lieu d'appeler le gestionnaire sur le fil de l'appelant, qui n'est pas une tâche de XAM : la création de
+// la notification (`sub_8187F6D0`) exige XamTaskGetCurrentTask() != 0, sans quoi XNotifyQueueUI rend E_OUTOFMEMORY.
+void SetTitleCall(bool on);
+
 // Vrai si `addr` (adresse invitée, ex. ctx.lr) est dans l'image de XAM recompilé ou d'un module XUI du HUD (hud, vk, signin...).
 bool InXamImage(uint32_t addr);
 

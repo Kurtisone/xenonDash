@@ -97,6 +97,12 @@ void Push(BoxRequest req) {
   g_cv.notify_one();
 }
 
+// Notifications (toasts) de progression : file propre et second thread invité, car le premier reste bloqué tant que la
+// boîte de démarrage est ouverte et XNotifyQueueUI ne bloque pas (XAM met le message en file).
+std::mutex g_toast_mu;
+std::condition_variable g_toast_cv;
+std::deque<std::u16string> g_toasts;
+
 // Corps du thread invité (motif XHostThread des tests de dash_xam_redirect.cpp, StartTestThread) : sert les demandes
 // les unes après les autres. Vit jusqu'à la fin du processus (object_ref retenu par Init).
 // Demande de Guide en attente (posée par le rendu, servie par le thread invité).
@@ -162,7 +168,7 @@ void ShowStartBox(const dash::launch::BuildStatus& st) {
   } else {
     text += "Cela peut prendre plusieurs dizaines de minutes. ";
   }
-  text += "Le jeu se lancera tout seul à la fin.";
+  text += "Le jeu se lancera tout seul à la fin. L'avancement s'affiche en notifications.";
   text += "\n" + ProgressLine(st);
   if (!st.log_path.empty()) text += "\nJournal : " + st.log_path;
   req.text = Wide(text);
@@ -193,21 +199,84 @@ void ShowFailBox(const dash::launch::BuildStatus& st) {
   Push(std::move(req));
 }
 
-// Surveille l'état de la construction (GetBuildStatus, mis à jour par BuildMonitor/ResumeBuild de dash_launch.cpp, y
-// compris dans l'instance relancée après un lancement par le hub) et affiche les boîtes aux transitions. Côté hôte,
-// 500 ms ; le statut failed reste jusqu'au lancement suivant (g_build réinitialisé), d'où une boîte par transition.
+void PushToast(const std::string& text) {
+  {
+    std::lock_guard<std::mutex> lock(g_toast_mu);
+    g_toasts.push_back(Wide(text));
+  }
+  g_toast_cv.notify_one();
+}
+
+void ToastLoop() {
+  for (;;) {
+    std::u16string t;
+    {
+      std::unique_lock<std::mutex> lock(g_toast_mu);
+      g_toast_cv.wait(lock, [] { return !g_toasts.empty(); });
+      t = std::move(g_toasts.front());
+      g_toasts.pop_front();
+    }
+    if (dash::xamredir::ShowXamToast(t.c_str())) REXLOG_INFO("[hudui] notification : {}", Narrow(t));
+    std::this_thread::sleep_for(std::chrono::milliseconds(2500));  // laisse la notification en cours s'afficher
+  }
+}
+
+// Simulation de progression (DASH_TEST_BUILDBOX=progress) : remplace GetBuildStatus par un état fictif qui avance par
+// étapes, pour exercer le chemin réel (boîte de démarrage puis notifications) sans recompiler de jeu ni toucher au
+// disque. Jamais active hors de cette variable.
+std::mutex g_sim_mu;
+bool g_sim = false;
+dash::launch::BuildStatus g_sim_status;
+
+dash::launch::BuildStatus CurrentStatus() {
+  {
+    std::lock_guard<std::mutex> lock(g_sim_mu);
+    if (g_sim) return g_sim_status;
+  }
+  return dash::launch::GetBuildStatus();
+}
+
+// Clé d'une étape : une notification par changement d'étape ou par tranche de 10 % (évite d'en empiler à chaque
+// lecture de progress.json).
+std::string StageKey(const dash::launch::BuildStatus& st) {
+  return std::to_string(st.index) + "/" + st.stage + "/" + std::to_string(static_cast<int>(st.percent / 10.0));
+}
+
+std::string ToastText(const dash::launch::BuildStatus& st) {
+  char pc[16];
+  std::snprintf(pc, sizeof pc, "%.0f %%", st.percent);
+  std::string t = st.name + " : " + pc;
+  if (st.total > 0) t += " (étape " + std::to_string(st.index) + "/" + std::to_string(st.total) + ")";
+  if (!st.stage.empty()) t += " " + st.stage;
+  return t;
+}
+
+// Surveille l'état de la construction (CurrentStatus = GetBuildStatus, mis à jour par BuildMonitor/ResumeBuild de
+// dash_launch.cpp, y compris dans l'instance relancée après un lancement par le hub) et affiche aux transitions : la
+// boîte de démarrage, une notification Xbox à chaque étape ou tranche de 10 %, la boîte d'échec. Le texte d'une boîte
+// ouverte ne se met pas à jour (la boîte de XAM est figée à sa création) : l'avancement passe donc par les
+// notifications. Côté hôte, 500 ms ; le statut failed reste jusqu'au lancement suivant (g_build réinitialisé), d'où
+// une boîte par transition.
 void BuildWatcher() {
   bool was_active = false, was_failed = false;
+  std::string last_key;
   for (;;) {
-    const dash::launch::BuildStatus st = dash::launch::GetBuildStatus();
+    const dash::launch::BuildStatus st = CurrentStatus();
     if (st.active && !was_active) {
       // Laisse le moniteur lire progress.json (étape et pourcentage réels) avant d'ouvrir la boîte, 3 s au plus.
       dash::launch::BuildStatus cur = st;
       for (int i = 0; i < 6 && cur.stage.empty() && cur.active; i++) {
         std::this_thread::sleep_for(std::chrono::milliseconds(500));
-        cur = dash::launch::GetBuildStatus();
+        cur = CurrentStatus();
       }
       ShowStartBox(cur);
+      last_key = StageKey(cur);
+    } else if (st.active && !st.stage.empty()) {
+      const std::string key = StageKey(st);
+      if (key != last_key) {
+        last_key = key;
+        PushToast(ToastText(st));
+      }
     }
     if (st.failed && !was_failed) ShowFailBox(st);
     was_active = st.active;
@@ -216,9 +285,32 @@ void BuildWatcher() {
   }
 }
 
-// DASH_TEST_BUILDBOX=start|fail : transition simulée 10 s après le démarrage (sans vraie recompilation).
+// DASH_TEST_BUILDBOX=start|fail|progress : transition simulée 10 s après le démarrage (sans vraie recompilation).
 void TestThread(const char* scenario) {
   std::this_thread::sleep_for(std::chrono::seconds(10));
+  if (std::string_view(scenario) == "progress") {
+    // Construction fictive : 6 étapes, 4 s chacune ; le BuildWatcher réel affiche la boîte puis les notifications.
+    static const char* const kStages[] = {"analyse", "décodage", "recompilation", "assemblage", "liens", "vérification"};
+    for (int i = 0; i <= 6; i++) {
+      {
+        std::lock_guard<std::mutex> lock(g_sim_mu);
+        g_sim = true;
+        g_sim_status = dash::launch::BuildStatus();
+        g_sim_status.active = i < 6;
+        g_sim_status.name = "Jeu de test (HUD)";
+        g_sim_status.estimate = 900;
+        g_sim_status.log_path = "/tmp/xenondash-test/build.log";
+        g_sim_status.total = 6;
+        g_sim_status.index = i < 6 ? i + 1 : 6;
+        g_sim_status.stage = kStages[i < 6 ? i : 5];
+        g_sim_status.percent = i * 100.0 / 6.0;
+      }
+      std::this_thread::sleep_for(std::chrono::seconds(4));
+    }
+    std::lock_guard<std::mutex> lock(g_sim_mu);
+    g_sim = false;
+    return;
+  }
   dash::launch::BuildStatus st;
   st.name = "Jeu de test (HUD)";
   st.log_path = "/tmp/xenondash-test/build.log";
@@ -258,6 +350,13 @@ void Init(rex::system::KernelState* ks) {
   }));
   host->set_name("XAM hudui");
   host->Create();
+  static rex::system::object_ref<rex::system::XHostThread> toast_host;
+  toast_host = rex::system::object_ref<rex::system::XHostThread>(new rex::system::XHostThread(ks, 256 * 1024, 0, [] {
+    ToastLoop();
+    return 0;
+  }));
+  toast_host->set_name("XAM hudui toast");
+  toast_host->Create();
   std::thread(BuildWatcher).detach();
   if (const char* test = std::getenv("DASH_TEST_BUILDBOX"); test && *test) {
     const std::string scenario = test;

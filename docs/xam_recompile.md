@@ -75,7 +75,8 @@ git (liste en fin de fichier). État courant : `docs/REPRISE.md`. Les mesures da
   Piège : `librexruntime.so` exporte aussi `__imp__<Nom>` ; le repli HLE passe par `dlsym(RTLD_NEXT)` (sinon récursion).
 - Liste par défaut (mode profil XAM) : `XGetVideoMode`, `XamUserGetXUID`, `XamUserGetSigninState`, `XamUserLogon(Ex)`,
   `XamUserCheckPrivilege`, `XamUserIsOnlineEnabled`, `XamShowMessageBoxUI(Ex)`, `XamShowKeyboardUI`, `XamShowSigninUI(p)`,
-  `XamShowCreateProfileUI`, `XamShowDeviceSelectorUI`, `XamShowGamerCardUIForXUID`, `XamShowGuideUI`, les imports d'avatar
+  `XamShowCreateProfileUI`, `XamShowDeviceSelectorUI`, `XamShowGamerCardUIForXUID`, `XamShowGuideUI`, `XamShowAchievementsUIEx`,
+  `XamShowGamerCardUI`, `XNotifyQueueUI`, les imports d'avatar
   (`kAvatarImports`) ; `DASH_XAM_REDIRECT` ajoute, `DASH_XAM_NOREDIRECT` retire. Les accroches de `dash_profile.cpp` / `dash_user.cpp`
   (`XamUserGetName`, `XamUserGetGamerTag`, `XamProfile*`, `XamReadTileEx`) passent la main à l'export de XAM (`DASH_XAM_FWD`).
   Restent au HLE : `XamUserReadProfileSettings(Ex)`/`Write` (rediriger plante : `0x7008004F` lu comme pointeur), sauf la synchro du gamertag.
@@ -83,6 +84,13 @@ git (liste en fin de fichier). État courant : `docs/REPRISE.md`. Les mesures da
   les autres applications restent au HLE (`DASH_XMP_HLE=1` : tout au HLE).
 - Les modules recompilés appellent `__imp__<Nom>` masqués générés (`gen_module_xam_imports.py`) qui appellent `CallModuleImport` : l'export de
   XAM de même ordinal est exécuté ; sinon repli `dlsym(RTLD_DEFAULT)` avec avertissement. Les imports `xboxkrnl` restent au noyau du SDK.
+- Imports d'interface (`XamShow*UI`, `XNotifyQueueUI`, `XamResumeUpdaterUI`) : tous ont un hook ; ceux qui ne sont pas dans la liste par
+  défaut restent des `REX_EXPORT_STUB` du SDK (r3 résiduel, aucune fenêtre : le SDK n'a de vraie interface HLE que pour la boîte de message,
+  le clavier et le sélecteur de périphérique, déjà redirigés). Mesure (banc, appel par `DASH_TEST_UI_CALL`) : redirigés, Marketplace, Games,
+  Live signup/upsell, Nui hardware/troubleshooter reviennent `0` ; amis, messages, invitations, Nui amis/jeux/guide/signin/boîte : `5` ;
+  parties, Gold, code d'accès : `0x57`. Aucun n'est appelé dans le parcours normal hors ligne (Marketplace et Live demandent une connexion
+  Live : la tuile ouvre déjà la boîte « Xbox LIVE » de XAM par `XamShowMessageBoxUI`) ; ils restent hors de la liste par défaut, activables
+  par `DASH_XAM_REDIRECT=<noms>`.
 - Signatures : `XamShowMessageBoxUI` a 9 arguments (le 9e à `r1 + 0x54`) ; `XamShowGuideUI` un seul (`user_index`).
 - `XamUserGetSigninState` : `XN_SYS_SIGNINCHANGED` est rediffusé côté HLE (le Dashboard écoute les files du SDK, pas celles de XAM).
 - `AvatarEditorOption2` : `XamLaunchAvatarEditor` (ordinal 2011) ouvre `XamShowAvatarMiniCreatorUI(user, 2)` (ordinal 1700) ; ouverture
@@ -192,6 +200,27 @@ Création de profil (N4), causes successives : `0x8000FFFF` (`RtlAppendStringToS
 préfixe) ; `0x80070005` (`Partition1` en lecture seule : `allow_game_relative_writes=true` en mode XAM) ; `0xC0000022` (`CreatePath` du SDK) ; nom de
 paquet vide (`%I64X`, SDK `format.h`) ; `Account` = octets de pile (`XeKeysObfuscate`) ; `0x80070570` (en-tête jamais signé, descripteur STFS sans `0x24`).
 
+Interface Xbox seule (To-Do 1 et 4) :
+- `XNotifyQueueUI` par XAM échouait en `0x8007000E` : l'export crée la notification (`sub_8187F6D0`) et exige une tâche XAM sur le fil appelant
+  (`XamTaskGetCurrentTask`), or `KeGetCurrentProcessType` (crochet de `dash_xam_runtime.cpp`) renvoie 2 pour tout appelant dans l'image de XAM.
+  Le dispatcher passe l'appel à `SetTitleCall(true)` : le crochet répond alors 1 pour le seul `lr 0x8187BAC4`, XAM programme la création par
+  `XamTaskSchedule`. Toast affiché (plan D1OVL du compositeur), y compris sans profil connecté.
+- La boîte d'erreur de démarrage (« Unrecognized Disc / This disc is unreadable » ou « Game Error / The game couldn't start » selon les
+  démarrages) restait cachée sous la scène de repos du HUD ; le premier toast (scène empilée) la révélait. Cause : le chargeur de titres de XAM
+  (`sub_818767A8` -> `sub_818765F8`) signale un échec de chargement (statut `0xC000000F`, lecteur vide) et poste le message `0x2100D`
+  (`sub_818B5A28` -> `XamShowMessageBoxUI`). Mesures : supprimer le message à la source (patch de `sub_818765F8`) empêche le second chargement
+  de `hud.xex` au démarrage, le Guide s'ouvre trop tard (suite KO : guide, signin, signed_in) ; refuser l'affichage (`XamShowMessageBox` du HUD,
+  r3 = 0) laisse une scène vide que le toast montre (cadre et fond atténué). Retenu : laisser la boîte s'ouvrir et la fermer comme l'utilisateur,
+  par un A donné au HUD 1,5 s après son ouverture (`XamInputGetKeystrokeHud`, `g_boot_box_ms` de `dash_xam_redirect.cpp`) ; seules les boîtes de
+  titres et textes connus (`IsBootErrorBox`) demandées par `hud.xex` ; `DASH_HUD_MSGBOX_KEEP=1` la laisse ouverte. Remplace le refus par `lr`
+  `0x913EC15C` (plus jamais atteint), retiré. Hypothèses mesurées et écartées : contenu ouvert par `sub_81B17C98` (message `0x20002`), message
+  de démarrage `0x20023` (`DASH_XAM_NO_BOOTBOX=1` ne retire pas la boîte).
+- `XamShowAchievementsUIEx` et `XamShowGamerCardUI` par XAM : envoient `0x21008` à l'application 254 (gamerprofile.xex) ; panneau « Achievements »
+  et fiche « Profile » affichés (profil connecté, 0 succès). Redirigés par défaut.
+- Progression de construction (`dash_xam_hud_ui.cpp`) : le texte d'une boîte ouverte de XAM est figé à sa création ; l'avancement passe donc par
+  une notification (`ShowXamToast`, second fil invité car le premier est bloqué par la boîte) à chaque étape ou tranche de 10 %. `DASH_TEST_BUILDBOX=progress`
+  simule une construction de 6 étapes (état fictif lu par le même surveillant que la vraie, jamais de simulation de disque).
+
 ### SDK (`third_party/xenondash-sdk`)
 - `7348c20` : `AccessViolationCallback` refusait les tas `kGuestVirtual`. `core/memory_posix.cpp` : `memfd_create` d'abord (voir pièges).
 - `InputSystem::devices_mutex_` : `RefreshDevices()` sans verrou, appelé par `GuideFrame` et les fils invités (plantage `std::stable_sort`).
@@ -219,7 +248,7 @@ paquet vide (`%I64X`, SDK `format.h`) ; `Account` = octets de pile (`XeKeysObfus
 | `DASH_HUD_RESOLVES`, `DASH_HUD_EVLOG`, `DASH_HUD_DUMP`, `DASH_HUD_STATS`, `DASH_HUD_DRAWRANGE`, `DASH_HUD_TEXDUMP`, `DASH_HUD_CALLERS`, `DASH_HUD_D3D_TRACE|SEQ|SEQT|DEVDUMP|PROBE` | traces et dumps du HUD (`hud_front.cpp`, `hud_d3d_trace.cpp`) |
 | `DASH_TRACE_VD`, `DASH_TRACE_VD_SCAN`, `DASH_TRACE_VD_DUMP` | descripteur et contenu PM4 du tampon système |
 | `DASH_GUIDE_TRACE=1`, `DASH_LOGON_TRACE=1`, `DASH_WATCH_APPS=1` | traces de l'ouverture du Guide, de la tâche de connexion (`sub_818B2BF8`), de l'application active `0x817E4B64` |
-| `DASH_TEST_MSGBOX`, `DASH_TEST_KEYBOARD`, `DASH_TEST_SIGNIN`, `DASH_TEST_CREATEPROFILE`, `DASH_TEST_GUIDE`, `DASH_TEST_BUILDBOX=start|fail` (secondes ; `_WAIT` borne l'attente), `DASH_TEST_PEEK=<adresse>` | déclenchent une fenêtre du HUD sans manette ; mémoire invitée |
+| `DASH_TEST_MSGBOX`, `DASH_TEST_KEYBOARD`, `DASH_TEST_SIGNIN`, `DASH_TEST_CREATEPROFILE`, `DASH_TEST_GUIDE`, `DASH_TEST_BUILDBOX=start|fail|progress` (secondes ; `_WAIT` borne l'attente), `DASH_TEST_UI=<s>` + `DASH_TEST_UI_CALL="Import:arg,arg,w:texte;..."`, `DASH_TEST_PEEK=<adresse>` | déclenchent une fenêtre du HUD sans manette (`DASH_TEST_UI_CALL` appelle n'importe quel import hooké) ; mémoire invitée |
 | `DASH_AUDIO=nop`, `DASH_RETURNED_FROM`, `DASH_XENIA` | audio muet ; titre dont on revient ; binaire Xenia |
 | `REX_LOG_THREADS`, `REX_LOG_DLLMAIN` | instrumentation du SDK (création de fils, `DllMain`) |
 
@@ -280,7 +309,8 @@ Welcome). Application XMP : table de `sub_81893EE0` (`0x81C06F78 - 0xB8 * id`), 
 - Fenêtre « Save Profile » absente du parcours Dashboard ; `XamUserReadProfileSettings(Ex)`/`Write` toujours au HLE ; contenu lié au profil HLE.
 - Rendu du HUD : constantes booléennes de pixel shader (`+0x2780`/`+0x2790` supposés, `CopyAlpha` `817E59F0`/`817E5B70` non vérifiés), gamma, MSAA,
   plans de coupe ; cadence ≈ 34 images/s sous lavapipe (`ReadResolved` + `WaitIdle`) : le HUD devrait attendre un vsync.
-- Toasts de progression (`XNotifyQueueUI`), mise à jour du texte d'une boîte ouverte (`XuiTextElementSetText`), `XamShowAchievementsUI` vers XAM.
+- Le texte d'une boîte de message ouverte ne se met pas à jour (`XuiTextElementSetText` non essayé : l'avancement passe par des notifications) ; le toast recouvre l'étiquette du bouton « Masquer » pendant son affichage.
+- Achievements : le Guide et la fiche profil s'ouvrent, mais le bouton « Achievements » du hub n'a pas été relié (`kActionAchievements` de `dash_guide_actions.cpp` journalise seulement) ; succès débloqués par un titre jamais testés (aucun profil avec succès au banc).
 - Lecteur optique réel exposé en `\Device\CdRom0` ; lecture d'un média ; sources Computer, Portable Device, Current Disc.
 - Défauts du SDK contournés dans `common/` (liste en section 3) ; réservations d'alias non sauvegardées ni libérées au déchargement ; `BaseHeap::Reset` efface la table de pages à chaque XEX chargé.
 - `signin`/`createprofile`/`gamerprofile` en même temps : impossible (bases identiques).
