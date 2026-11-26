@@ -16,6 +16,13 @@
 #include <rex/runtime.h>
 
 namespace dash::guide {
+
+// Rempli par dash_guide_actions.cpp (côté Dashboard) : la lame ne sait pas lire un profil elle-même, elle demande la carte
+// du joueur. Null si le Dashboard n'est pas branché. Défini ici (common), pas dans le rendu natif qui le lit
+// (native_gpu/src/dash_guide_front.cpp) : les variantes sans rendu natif lient common seul (6770 et 17559 ne se liaient plus
+// depuis c530708 : référence indéfinie).
+bool (*g_card_source)(PlayerCard*) = nullptr;
+
 namespace {
 
 // ---------------------------------------------------------------------------------------------

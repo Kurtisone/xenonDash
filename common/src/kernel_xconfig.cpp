@@ -17,6 +17,7 @@
 #include <cstring>
 #include <map>
 #include <mutex>
+#include <optional>
 #include <vector>
 
 #include <fmt/format.h>
@@ -26,10 +27,13 @@
 #include <rex/hook.h>
 #include <rex/logging.h>
 #include <rex/ppc/context.h>
+#include <rex/system/kernel_state.h>
+#include <rex/system/user_module.h>
+#include <rex/system/xex_module.h>
 
 #include "host_timezone.h"
 #include "kernel_sdk_fn.h"
-#include "kernel_xconfig.h"
+#include "timezone_table.h"
 
 REXCVAR_DECLARE(std::string, game_data_root);
 
@@ -95,125 +99,79 @@ void PersistLocked(uint32_t val) {
   REXLOG_INFO("[xconfig] 7/0x000C = {} persisté dans {}", val, path.string());
 }
 
-// Table des fuseaux du Dashboard (SetConsoleTimeZoneTable). Initialisation constante : sûre avant les initialiseurs statiques.
-std::atomic<uint32_t> g_tz_table{0}, g_tz_count{0};
-
 std::string_view Name4(const char (&name)[4]) { return {name, strnlen(name, 4)}; }
 
-bool SameDate(const dash::tz::Date& a, const dash::tz::Date& b) {
-  return a.month == b.month && a.week == b.week && a.day_of_week == b.day_of_week && a.hour == b.hour;
-}
-
-bool SameRules(const dash::tz::Zone& a, const dash::tz::Zone& b) {
-  return a.bias == b.bias && a.std_bias == b.std_bias && a.dlt_bias == b.dlt_bias && SameDate(a.std_date, b.std_date) &&
-         SameDate(a.dlt_date, b.dlt_date);
-}
-
-// Entrée de la table des fuseaux d'un Dashboard (format de 2.0.13604.0, convertie par sub_9225C468 ; mêmes champs que les
-// réglages 1 à 7), gros-boutiste, 32 octets : +0x00 identifiant, +0x04 biais, +0x06 biais d'hiver, +0x08 biais d'été (int16,
-// minutes), +0x0C nom d'hiver (pointeur, UTF-16), +0x10 date d'hiver {mois, semaine, jour, heure}, +0x14 nom d'été (pointeur, 0
-// sans heure d'été), +0x18 date d'été, +0x1C heure d'été (0/1). Faux si l'entrée n'est pas plausible (adresse fausse) : les noms
-// doivent pointer dans les 16 Mo de la table et être en ASCII.
-bool ReadTableEntry(const uint8_t* base, uint32_t table, uint32_t entry, dash::tz::Zone& z) {
-  auto be16 = [&](uint32_t a) { return int16_t(uint16_t(base[a]) << 8 | base[a + 1]); };
-  auto be32 = [&](uint32_t a) { return uint32_t(base[a]) << 24 | uint32_t(base[a + 1]) << 16 | uint32_t(base[a + 2]) << 8 | base[a + 3]; };
-  auto name = [&](uint32_t ptr, char (&out)[4]) {
-    std::memset(out, 0, 4);
-    if (!ptr) return true;
-    if ((ptr & 0xFF000000u) != (table & 0xFF000000u)) return false;
-    for (uint32_t i = 0; i < 4; ++i) {
-      const uint16_t c = uint16_t(base[ptr + 2 * i]) << 8 | base[ptr + 2 * i + 1];
-      if (!c) break;
-      if (c < 0x20 || c > 0x7E) return false;
-      out[i] = char(c);
-    }
-    return true;
-  };
-  auto date = [&](uint32_t a, dash::tz::Date& d) {
-    d = {base[a], base[a + 1], base[a + 2], base[a + 3]};
-    return d.month <= 12 && d.week <= 5 && d.day_of_week <= 6 && d.hour <= 23;
-  };
-  z = {};
-  z.bias = be16(entry + 4);
-  z.std_bias = be16(entry + 6);
-  z.dlt_bias = be16(entry + 8);
-  return z.bias >= -14 * 60 && z.bias <= 12 * 60 && z.std_bias >= -120 && z.std_bias <= 120 && z.dlt_bias >= -120 &&
-         z.dlt_bias <= 120 && name(be32(entry + 0x0C), z.std_name) && z.std_name[0] && name(be32(entry + 0x14), z.dlt_name) &&
-         date(entry + 0x10, z.std_date) && date(entry + 0x18, z.dlt_date);
-}
-
-// Entrée de la table pour le fuseau de l'hôte : mêmes biais et mêmes dates ; parmi elles, celle qui porte le nom de l'hôte, sinon
-// la première. Le Dashboard retrouve le fuseau courant par (biais, biais d'hiver, biais d'été) puis par nom (sub_9225C608) et le
-// remplace si les dates de l'entrée trouvée diffèrent (sub_9225C7C0) : une entrée dont le nom désigne d'abord une autre entrée
-// aux dates différentes est écartée.
-bool MatchConsoleZone(const uint8_t* base, const dash::tz::Zone& host, dash::tz::Zone& out, uint32_t& index) {
-  const uint32_t table = g_tz_table.load(), count = g_tz_count.load();
-  if (!table || !count || count > 256) return false;
-  std::vector<dash::tz::Zone> entries(count);
-  for (uint32_t i = 0; i < count; ++i) {
-    if (!ReadTableEntry(base, table, table + i * 32, entries[i])) {
-      REXLOG_WARN("[xconfig] table des fuseaux du Dashboard à {:08X} : entrée {} invalide, table ignorée", table, i);
-      return false;
-    }
-  }
-  int best = -1;
-  for (uint32_t i = 0; i < count; ++i) {
-    const dash::tz::Zone& e = entries[i];
-    if (!SameRules(e, host)) continue;
-    uint32_t found = i;  // entrée que le Dashboard retrouverait pour ces biais et ce nom
-    for (uint32_t j = 0; j < i; ++j) {
-      const dash::tz::Zone& f = entries[j];
-      if (f.bias == e.bias && f.std_bias == e.std_bias && f.dlt_bias == e.dlt_bias && std::memcmp(f.std_name, e.std_name, 4) == 0) {
-        found = j;
-        break;
-      }
-    }
-    if (!SameRules(entries[found], e)) continue;
-    if (best < 0) best = int(i);
-    if (std::memcmp(e.std_name, host.std_name, 4) == 0) {
-      best = int(i);
-      break;
-    }
-  }
-  if (best < 0) return false;
-  out = entries[best];
-  index = uint32_t(best);
-  return true;
+// Image chargée du Dashboard (module exécutable), en adresses invitées [lo, hi). Faux tant qu'elle n'est pas chargée.
+bool DashboardImage(uint32_t& lo, uint32_t& hi) {
+  rex::system::KernelState* ks = rex::system::kernel_state();
+  if (!ks) return false;
+  auto module = ks->GetExecutableModule();
+  if (!module || !module->xex_module()) return false;
+  const rex::runtime::XexModule* xex = module->xex_module();
+  lo = xex->base_address();
+  hi = lo + xex->image_size();
+  return lo != 0 && hi > lo;
 }
 
 // Fuseau horaire rendu par les réglages 1 à 7 de la catégorie 3 : celui de l'hôte (host_timezone.h). Le SDK rend des zéros (UTC) :
 // l'horloge du Guide affichait l'heure UTC (18:33 pour 19:33 à Paris, mesure du 2026-11-25). Les noms ne peuvent pas être ceux de
 // l'hôte : au démarrage, le Dashboard 13604 cherche le fuseau courant dans sa table, par biais puis par nom, et à défaut écrit
 // par-dessus son entrée par défaut (GMT, Londres : l'horloge retombait à l'heure UTC, mesure du 2026-11-25). D'où l'entrée de la
-// table du Dashboard qui a les règles de l'hôte (SetConsoleTimeZoneTable) ; sans elle, des noms vides (le Dashboard ne vérifie
-// pas un fuseau sans nom ; XAM n'utilise que les biais et les dates).
-const dash::tz::Zone& ConsoleZone(const uint8_t* base) {
-  static const dash::tz::Zone zone = [base] {
-    const dash::tz::Zone host = dash::tz::HostZone();
+// table du Dashboard qui a les règles de l'hôte, table trouvée dans l'image chargée du Dashboard (timezone_table.h : 2.0.4532 à
+// 2.0.17559, deux formats) ; sans table ou sans entrée de ces règles, des noms vides (le Dashboard ne vérifie pas un fuseau sans
+// nom ; XAM n'utilise que les biais et les dates), de même pour le format de 17559 (voir plus bas). Le résultat n'est gardé
+// qu'une fois l'image du Dashboard chargée.
+dash::tz::Zone ConsoleZone(const uint8_t* base) {
+  static std::mutex m;
+  static std::optional<dash::tz::Zone> cached;
+  static const dash::tz::Zone host = [] {
+    const dash::tz::Zone h = dash::tz::HostZone();
     REXLOG_INFO("[xconfig] fuseau de l'hôte « {} » : biais {} min, heure d'été {} min, du {:02X}{:02X}{:02X}{:02X} au {:02X}{:02X}{:02X}{:02X}",
-                host.source, host.bias, host.dlt_bias, host.dlt_date.month, host.dlt_date.week, host.dlt_date.day_of_week,
-                host.dlt_date.hour, host.std_date.month, host.std_date.week, host.std_date.day_of_week, host.std_date.hour);
-    dash::tz::Zone z;
-    uint32_t index = 0;
-    if (MatchConsoleZone(base, host, z, index)) {
-      REXLOG_INFO("[xconfig] fuseau de la console : entrée {} de la table du Dashboard ({}/{}), mêmes biais et dates", index,
-                  Name4(z.std_name), Name4(z.dlt_name));
-      z.source = host.source;
-      return z;
-    }
-    z = host;
-    std::memset(z.std_name, 0, 4);
-    std::memset(z.dlt_name, 0, 4);
-    REXLOG_INFO("[xconfig] fuseau de la console : {}, noms vides",
-                g_tz_table.load() ? "aucune entrée de la table du Dashboard n'a ces règles" : "pas de table du Dashboard");
-    return z;
+                h.source, h.bias, h.dlt_bias, h.dlt_date.month, h.dlt_date.week, h.dlt_date.day_of_week, h.dlt_date.hour,
+                h.std_date.month, h.std_date.week, h.std_date.day_of_week, h.std_date.hour);
+    return h;
   }();
-  return zone;
+  std::lock_guard lock(m);
+  if (cached) return *cached;
+  dash::tz::Zone z = host;
+  std::memset(z.std_name, 0, 4);
+  std::memset(z.dlt_name, 0, 4);
+  uint32_t lo = 0, hi = 0;
+  if (!DashboardImage(lo, hi)) {
+    static std::atomic<bool> logged{false};
+    if (!logged.exchange(true)) REXLOG_INFO("[xconfig] fuseau lu avant le chargement du Dashboard : noms vides pour l'instant");
+    return z;
+  }
+  const dash::tz::Table table = dash::tz::FindTable(base, lo, hi);
+  if (!table.count) {
+    REXLOG_INFO("[xconfig] aucune table des fuseaux dans l'image du Dashboard ({:08X}-{:08X}) : noms vides", lo, hi);
+  } else {
+    REXLOG_INFO("[xconfig] table des fuseaux du Dashboard : {:08X}, {} {}", table.address, table.count,
+                dash::tz::FormatName(table.format));
+    dash::tz::Zone entry;
+    uint32_t index = 0;
+    if (table.format == dash::tz::TableFormat::kInline244) {
+      // 2.0.17559 (Metro) : noms vides, comme avant la recherche de la table. Avec les noms de l'entrée retenue, Metro plante
+      // dès que la sélection passe sur Clock (Console Settings) : un de ses fils, lancé au démarrage (entrée 0x92392848), se
+      // termine avec un X_KTHREAD entièrement à zéro et XThread::RundownAPCs lit une liste d'APC nulle (mesure du 2026-11-26 sous
+      // gdb, `banc.py start --gdb` ; cause de la remise à zéro non trouvée, voir docs/REPRISE.md).
+      REXLOG_INFO("[xconfig] fuseau de la console : noms vides pour ce format (plantage de Clock en 2.0.17559)");
+    } else if (dash::tz::MatchZone(base, lo, hi, table, host, entry, index)) {
+      REXLOG_INFO("[xconfig] fuseau de la console : entrée {} de la table du Dashboard ({}/{}), mêmes biais et dates", index,
+                  Name4(entry.std_name), Name4(entry.dlt_name));
+      entry.source = host.source;
+      z = entry;
+    } else {
+      REXLOG_INFO("[xconfig] fuseau de la console : aucune entrée de la table du Dashboard n'a ces règles, noms vides");
+    }
+  }
+  cached = z;
+  return z;
 }
 
 // Réglage 1 à 7 de la catégorie 3 (4 octets, ordre de la console). Faux pour un autre réglage.
 bool TimeZoneSetting(const uint8_t* base, uint32_t setting, uint8_t (&out)[4]) {
-  const dash::tz::Zone& zone = ConsoleZone(base);
+  const dash::tz::Zone zone = ConsoleZone(base);
   auto put32 = [&](int32_t v) {
     const uint32_t u = static_cast<uint32_t>(v);
     out[0] = uint8_t(u >> 24);
@@ -265,11 +223,6 @@ bool ReadSdkUlong(PPCContext& ctx, uint8_t* base, uint32_t category, uint32_t se
 }
 
 }  // namespace
-
-void dash::xconfig::SetConsoleTimeZoneTable(uint32_t address, uint32_t count) {
-  g_tz_count.store(count);
-  g_tz_table.store(address);
-}
 
 // ExReadModifyWriteXConfigSettingUlong(catégorie, réglage, masque ET, valeur OU) : nouvelle = (ancienne & r5) | r6 (sémantique déduite).
 // L'ancienne valeur est celle que lirait ExGetXConfigSetting : la valeur rangée, sinon celle du SDK, sinon 0. Partir de 0 quand le

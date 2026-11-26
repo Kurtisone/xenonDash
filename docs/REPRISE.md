@@ -62,11 +62,14 @@ Voir [compilation.md](compilation.md) : SDK, conteneur, build de test, AppImage.
 - Vérifier chaque résultat visuel par **capture regardée** (Xvfb + lavapipe), jamais par le seul
   journal. Écrans X dédiés par tâche (:92, :94, …) ; `ulimit -c 0` avant dash ; `XKEYS_HOLD=0.12`.
 - `tools/banc.py` : banc pas à pas (`start`, `keys`, `shot`, `wait`, `cpu`, `grep`, `stop`) qui lance la variante -xam
-  comme l'AppImage, sur une COPIE du dossier de données (profils de l'utilisateur intacts) et une COPIE de la
+  (ou une autre : `--build`, et `--unset DASH_XAM_MODULE --unset DASH_PROFILE_MODE` sans XAM recompilé) comme l'AppImage, sur une COPIE du dossier de données (profils de l'utilisateur intacts) et une COPIE de la
   bibliothèque de jeux (`XENONDASH_LIBRARY_DIR` : sans elle, le scan du démarrage réécrit
   `~/.local/share/xenondash/library` avec le dossier de jeux du banc), écran dédié sans pointeur de souris (`Xvfb
   -nocursor` : sinon il apparaît ou non au centre des captures selon l'instant), arrêt par PID.
   `cpu` donne la charge par fil : écarter les fils `llvmpipe-*` (rendu logiciel de lavapipe).
+  Plantage sans trace (pas de core gardé) : `start --gdb` lance dash sous gdb et écrit dans `out.log` la pile du fil
+  fautif, l'instruction et les registres de la faute ; `--gdb-pre F` lit des commandes gdb avant le lancement (points
+  d'arrêt, surveillance matérielle en Python), `--gdb-x F` après la pile.
 - `tools/banc_suite.py run` : suite de non-régression sur ce banc, verdict OK/KO (code de sortie 0/1), ~4 min. Un
   parcours fixe (Welcome, My Xbox, Game Library aller-retour, Video Library (écran Select Source), Console Settings, Screen
   Resolution, Guide, Sign In, Guide connecté) : captures comparées aux références, journal (aucun `*** STOP` ni `[fibre]`, découverte de l'affichage
@@ -141,10 +144,23 @@ Voir [compilation.md](compilation.md) : SDK, conteneur, build de test, AppImage.
   Mediaroom vide dans My Xbox, 2026-11-26). Un prototype FAUX est pire qu'un stub : `XamLoaderGetDvdTrayState` (sans
   argument) écrivait à travers r3 dans l'objet de l'appelant (appel indirect nul plus tard, loin de la cause).
 - **Fuseau horaire** : XConfig 3/1..7 vient du fuseau de l'hôte (`TZ` ou `/etc/localtime`, `common/src/host_timezone.h`),
-  rapproché de la table des fuseaux du Dashboard (`dash_timezone_table.cpp` : 0x929531A8, 77 entrées de 32 octets ; mêmes
-  biais et dates, nom de l'hôte préféré). Un nom absent de la table (« CET ») faisait réécrire GMT par le Dashboard au
-  démarrage : horloge du Guide en UTC. Sans entrée de mêmes règles, ou sans table enregistrée (autres variantes, non vérifié à
-  l'écran), les noms sont rendus vides et le Dashboard ne réécrit rien. Test : `common/tests/host_timezone_test.cpp`.
+  rapproché de la table des fuseaux du Dashboard (mêmes biais et dates, nom de l'hôte préféré). La table est cherchée dans
+  l'image chargée du Dashboard (`common/src/timezone_table.h`), sans adresse par version : 2.0.4532 à 2.0.13604, entrées de
+  32 octets à noms par pointeur (13604 : 0x929531A8, 77 entrées) ; 2.0.17559, entrées de 244 octets avec une
+  TIME_ZONE_INFORMATION de Windows (0x9295C440, 83 entrées). Un nom absent de la table (« CET ») faisait réécrire GMT par le
+  Dashboard au démarrage : horloge du Guide en UTC. Sans entrée de mêmes règles, les noms sont rendus vides et le Dashboard
+  ne réécrit rien. Vu à l'écran (variante -xam, hôte Europe/Paris) : Console Settings > Clock et la liste Time Zone donnent
+  « GMT+01 Berlin », qui a les mêmes règles que « GMT+01 Paris, Madrid » (la chaîne POSIX de l'hôte, CET/CEST, ne les
+  distingue pas : la première entrée de ces règles l'emporte). Tests : `common/tests/host_timezone_test.cpp`,
+  `common/tests/timezone_table_test.cpp` (tables synthétiques ; avec des images écrites par `tools/xexinfo`, la table de
+  chaque Dashboard et l'entrée retenue pour l'hôte). 6770 (Blades) : Clock donne aussi « GMT+01 Berlin » ; ses fuseaux
+  américains ont les règles d'avant 2007, un hôte de New York n'y trouve donc pas d'entrée (noms vides, heure juste).
+  **17559 (Metro) : noms laissés vides** (`kernel_xconfig.cpp`). Avec les noms de l'entrée retenue, Metro plante dès que
+  la sélection passe sur Clock : son fil d'entrée 0x92392848, lancé au démarrage, se termine avec un X_KTHREAD (0x30057018)
+  entièrement à zéro, et `XThread::RundownAPCs` lit une liste d'APC à flink nul (pile obtenue par `banc.py start --gdb`,
+  2026-11-26). Avec des noms vides, pas de plantage. L'auteur de la remise à zéro n'est pas trouvé : une surveillance
+  matérielle de l'en-tête (`--gdb-pre`) n'a vu aucune écriture jusqu'au menu, ce qui oriente vers une remise à zéro sans
+  écriture visible (libération puis réallocation de la page, `BaseHeap::Release`/`Decommit`) ; à reprendre avec Metro.
 - **KeBugCheck est fatal** (SDK `7f60045f`, 2026-11-25) : `[FATAL] *** STOP: 0x<code> (p1, p2, p3, p4), appelant
   lr=0x…, fil …` au niveau critique dans `dash.log`, puis `abort()` (code de sortie -6, SIGABRT). Avant, l'appel revenait
   et le code invité continuait (erreurs secondaires sans lien avec la cause). Le lr est l'adresse de retour de l'appel :

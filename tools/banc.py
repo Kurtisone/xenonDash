@@ -7,9 +7,15 @@ profils, le journal et la bibliothèque de l'utilisateur ne sont pas touchés.
 Chaque exécution a son dossier (captures, journaux, PID) ; les processus ne sont arrêtés que par leur PID.
 
 Sous-commandes :
-  start <nom> [--data D] [--build B] [--display N] [--env K=V ...] [--arg --x=y ...] [--boot S] [--library L]
+  start <nom> [--data D] [--build B] [--display N] [--env K=V ...] [--unset K ...] [--arg --x=y ...] [--boot S]
+        [--library L] [--gdb [--gdb-pre P] [--gdb-x F]]
         démarre Xvfb puis dash, attend S secondes (60 par défaut), donne le focus à la fenêtre, capture <nom>_0.png ;
-        la bibliothèque L (défaut ~/.local/share/xenondash/library) est copiée dans <dossier>/bibliotheque
+        la bibliothèque L (défaut ~/.local/share/xenondash/library) est copiée dans <dossier>/bibliotheque ; --unset
+        retire une variable de l'environnement de dash (variante sans XAM : --unset DASH_XAM_MODULE --unset
+        DASH_PROFILE_MODE, dont la seule présence active XAM recompilé) ; --gdb lance dash sous gdb, qui écrit dans
+        out.log la pile du fil fautif, l'instruction et les registres de la faute quand un signal échappe au SDK
+        (plantage sans autre trace), puis les commandes gdb du fichier F ; P est lu avant le lancement (points
+        d'arrêt ou de surveillance)
   keys  <nom> <touche>... [--pause S]   envoie les touches (tools/xkeys.py), attend S s (3), capture la suivante
   shot  <nom> [étiquette]               capture immédiate
   wait  <nom> <motif> [--timeout S]     attend (S s au plus, 120 par défaut) une ligne NOUVELLE du journal qui contient le motif
@@ -173,9 +179,28 @@ def cmd_start(a):
     for kv in a.env or []:
         k, _, v = kv.partition("=")
         env[k] = v
+    # Options absentes de l'espace de noms que construit tools/banc_suite.py : getattr.
+    for k in getattr(a, "unset", None) or []:
+        env.pop(k, None)
     log = os.path.join(d, "dash.log")
     out = os.path.join(d, "out.log")
     argv = [dash, f"--game_data_root={data}", f"--log_file={log}", "--log_flush_interval=1"] + (a.arg or [])
+    gdb_x, gdb_pre = getattr(a, "gdb_x", None), getattr(a, "gdb_pre", None)
+    if getattr(a, "gdb", False) or gdb_x or gdb_pre:
+        # Plantage sans trace (le noyau n'en garde pas de core) : gdb laisse passer au gestionnaire d'exceptions du SDK
+        # les signaux qu'il traite (accès MMIO, surveillance d'écriture du GPU) et s'arrête sur raise(), qu'appelle
+        # DispatchUnhandledSignal (core/exception_handler_posix.cpp) pour un signal qu'il ne traite pas, après avoir
+        # rétabli le traitement par défaut. La pile du fil fautif va dans out.log, puis le cadre 3 (raise, gestionnaire
+        # du SDK, cadre du signal, puis la fonction fautive) : instruction et registres au moment de la faute ; ensuite
+        # les commandes du fichier --gdb-x, s'il y en a un, et gdb termine dash. Le fichier --gdb-pre est lu avant le
+        # lancement (points d'arrêt ou de surveillance, en Python au besoin).
+        extra = ["-x", os.path.abspath(gdb_x)] if gdb_x else []
+        pre = ["-x", os.path.abspath(gdb_pre)] if gdb_pre else []
+        argv = ["gdb", "-q", "-batch", "-iex", "set debuginfod enabled off", "-ex", "set pagination off",
+                "-ex", "set print thread-events off", "-ex", "set breakpoint pending on",
+                "-ex", "handle SIGSEGV SIGBUS SIGILL SIGPIPE SIGUSR1 SIGUSR2 nostop noprint pass",
+                "-ex", "break raise"] + pre + ["-ex", "run", "-ex", "bt 60", "-ex", "frame 3", "-ex", "x/2i $pc",
+                "-ex", "info registers"] + extra + ["-ex", "kill", "--args"] + argv
 
     def child_setup():
         resource.setrlimit(resource.RLIMIT_CORE, (0, 0))
@@ -331,9 +356,13 @@ def main():
     p.add_argument("--build", default=DEFAULT_BUILD)
     p.add_argument("--display", type=int, default=96)
     p.add_argument("--env", action="append")
+    p.add_argument("--unset", action="append")
     p.add_argument("--arg", action="append")
     p.add_argument("--boot", type=int, default=60)
     p.add_argument("--library", help="bibliothèque copiée pour l'exécution (défaut : celle de l'utilisateur)")
+    p.add_argument("--gdb", action="store_true", help="dash sous gdb : pile du fil fautif dans out.log en cas de plantage")
+    p.add_argument("--gdb-x", help="avec --gdb : fichier de commandes gdb exécutées après la pile, au cadre fautif")
+    p.add_argument("--gdb-pre", help="avec --gdb : fichier de commandes gdb lues avant le lancement (points d'arrêt)")
     p.set_defaults(fn=cmd_start)
     p = sp.add_parser("keys")
     p.add_argument("name")

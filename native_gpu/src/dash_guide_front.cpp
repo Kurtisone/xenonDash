@@ -27,9 +27,8 @@
 
 namespace dash::guide {
 
-// Rempli par dash_guide_actions.cpp (cote Dashboard) : la lame ne sait pas lire un profil
-// elle-meme, elle demande la carte du joueur. Null si le Dashboard n'est pas branche.
-bool (*g_card_source)(PlayerCard*) = nullptr;
+// g_card_source (carte du joueur, remplie par dash_guide_actions.cpp) est défini dans common/src/dash_guide.cpp : les
+// variantes sans rendu natif (6770, 17559...) lient common sans cette bibliothèque.
 
 // Traite une action du volet. Implemente dans dash_guide_actions.cpp.
 void PerformAction(int action);

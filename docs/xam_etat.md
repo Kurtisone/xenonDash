@@ -59,9 +59,10 @@ en +4) → chargeur `sub_8189BE20` (case 20) → ouvreur `sub_818A21B0`.
   2 ouvert, 3 ouverture : `sub_81884580` de XAM). L'ancien prototype écrivait 2 à travers r3, dans la vtable du gestionnaire
   de l'Async Loader du Dashboard : appel indirect nul plus tard dans `sub_922AA018` (lr 0x922AA0D8). Trouvé par point
   d'arrêt matériel en écriture (méthode : [REPRISE.md](REPRISE.md)).
-- **Fuseau horaire** (2026-11-26, `common/src/kernel_xconfig.cpp`, `host_timezone.h`, `dash_timezone_table.cpp`) : XConfig
-  3/1..7 depuis le fuseau de l'hôte, rapproché de la table du Dashboard ; horloge du Guide à l'heure locale (11:23 PM pour
-  23:23 CET au banc) au lieu de l'UTC.
+- **Fuseau horaire** (2026-11-26, `common/src/kernel_xconfig.cpp`, `host_timezone.h`, `timezone_table.h`) : XConfig
+  3/1..7 depuis le fuseau de l'hôte, rapproché de la table du Dashboard, cherchée dans son image chargée (tous les Dashboards,
+  deux formats ; noms laissés vides en 17559, où ils font planter Clock : docs/REPRISE.md) ; horloge du Guide à l'heure
+  locale (11:23 PM pour 23:23 CET au banc) au lieu de l'UTC, Clock et Time Zone sur « GMT+01 Berlin ».
 - **RMW XConfig** (2026-11-25, `kernel_xconfig.cpp`) : `ExReadModifyWriteXConfigSettingUlong` part de la valeur du SDK quand
   rien n'est rangé. Getting Started (RETAIL_FLAGS |= 0x08000000) effaçait le bit 0x40 « console configurée » : le lancement
   suivant (Video Library) ouvrait la première configuration et déconnectait tous les profils.
