@@ -186,6 +186,15 @@ void Dispatch(Slot& s, PPCContext& ctx, uint8_t* base) {
                   static_cast<uint32_t>(ctx.r3.u64), n);
     return;
   }
+  // Journal ciblé (une ligne par appel, rares) : « Profile » du menu principal (sub_923190D8 du Dashboard) demande la carte de joueur
+  // à XAM ; si l'éditeur de profil ne s'ouvre pas chez l'utilisateur, la ligne dit si le Dashboard a bien appelé et ce que XAM a rendu.
+  if (std::string_view(s.name) == "XamShowGamerCardUIForXUID" && s.guest.load()) {
+    const uint32_t user = ctx.r3.u32;
+    const uint64_t xuid = ctx.r4.u64;
+    DispatchImpl(s, ctx, base);
+    REXLOG_INFO("[xamredir] XamShowGamerCardUIForXUID(utilisateur {}, xuid {:016X}) -> 0x{:08X}", user, xuid, ctx.r3.u32);
+    return;
+  }
   if (std::string_view(s.name) == "XamUserGetSigninState" && s.guest.load()) {
     static std::atomic<int> last[4] = {-1, -1, -1, -1};
     const uint32_t user = ctx.r3.u32;
@@ -1115,7 +1124,8 @@ void Configure(rex::system::KernelState* ks, rex::runtime::ExportResolver* resol
                     "XamShowMessageBoxUI,XamShowMessageBoxUIEx,"
                     "XamShowKeyboardUI,XamShowSigninUI,XamShowSigninUIp,XamShowCreateProfileUI,XamShowDeviceSelectorUI,"
                     "XamShowGamerCardUIForXUID,XamShowGuideUI,"
-                    "XamShowAchievementsUIEx,XamShowGamerCardUI,XNotifyQueueUI,";
+                    "XamShowAchievementsUIEx,XamShowGamerCardUI,XNotifyQueueUI,"
+                    "XamAppUnloadStack,XamFormatDateString,XamFormatTimeString,";
     redirect_list += kAvatarImports;
     if (const char* e = std::getenv("DASH_XAM_REDIRECT"); e && *e) redirect_list += std::string(",") + e;
     REXLOG_INFO("[xamredir] DASH_PROFILE_MODE=xam : redirections {}", redirect_list);
@@ -1406,6 +1416,9 @@ DASH_XAM_REDIRECT_HOOK(XamShowCreateProfileUI)
 DASH_XAM_REDIRECT_HOOK(XamShowGamerCardUIForXUID)
 DASH_XAM_REDIRECT_HOOK(XamShowMessageBoxUIEx)
 DASH_XAM_REDIRECT_HOOK(XamShowGuideUI)
+DASH_XAM_REDIRECT_HOOK(XamAppUnloadStack)
+DASH_XAM_REDIRECT_HOOK(XamFormatDateString)
+DASH_XAM_REDIRECT_HOOK(XamFormatTimeString)
 // Autres imports d'interface du Dashboard (inventaire docs/xam_recompile.md) : hooks sans redirection par défaut, pour mesurer les appels
 // ([xamredir] <nom> : appel 1 par HLE) ; ajoutés à la liste de Configure quand ils sont redirigés.
 DASH_XAM_REDIRECT_HOOK(XamShowAchievementsUIEx)

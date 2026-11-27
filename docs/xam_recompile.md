@@ -220,6 +220,27 @@ Création de profil (N4), causes successives : `0x8000FFFF` (`RtlAppendStringToS
 préfixe) ; `0x80070005` (`Partition1` en lecture seule : `allow_game_relative_writes=true` en mode XAM) ; `0xC0000022` (`CreatePath` du SDK) ; nom de
 paquet vide (`%I64X`, SDK `format.h`) ; `Account` = octets de pile (`XeKeysObfuscate`) ; `0x80070570` (en-tête jamais signé, descripteur STFS sans `0x24`).
 
+Retour du Deck du 27/11 (lot deckB), mesures au banc :
+- Bibliothèques du Guide (Games/Media) sans effet : XAM traite le choix par `XamLoaderRebootToDash` (`sub_8187A970`), qui, le Dashboard étant déjà le
+  titre courant, ne relance rien et diffuse `XNotifyBroadcast(0x80040016, utilisateur << 16 | paramètre)` (`sub_8187E240`). Cette notification restait
+  dans la file de XAM, le Dashboard n'écoute que celle du HLE. `src_xam_patch/xam_notify_patch.cpp` la rediffuse au HLE (Game, Video, Music Library
+  ouvertes depuis le Guide). Les tuiles de My Xbox n'étaient pas touchées (autre chemin, intérieur au Dashboard).
+- Clock vide (« Date and Time », « Time Format ») : le Dashboard formate par `XamFormatDateString` (0x929023A4) et `XamFormatTimeString` (0x92902394),
+  que Ghidra nomme à tort `XInputdNotify`/`XInputdWriteState` (noms des ordinaux du noyau) ; le SDK les laisse vides hors Win32. Ajoutés à la liste
+  de redirection par défaut (XAM recompilé les implémente : « 11/27/2026 7:23 PM », fuseau déjà appliqué). Hypothèse écartée : `SystemTime` de
+  `KeTimeStampBundle` (0 dans le SDK) n'est pas lu par le Dashboard.
+- Display > Screen Resolution : `sub_9225EC80` appelle `VdSetDisplayModeOverride(f1 = fréquence, r3 = largeur, r4 = hauteur)` ; le SDK renvoie 0 =
+  « mode refusé », le Dashboard remet aussitôt XConfig 3/0x15 et 3/0x0A sans question (choisir 1080 « ne faisait rien »). `kernel_video_output.cpp`
+  accepte le mode (retour 1), l'annonce par `VdQueryVideoMode`, `VdQueryRealVideoMode` et `VdQueryVideoFlags` (donc `XGetVideoMode` de XAM et
+  « Current Setting ») ; `VdSetDisplayModeOverride(0, 0)` revient au mode configuré. Comportement de la console : mode appliqué, question « Your display
+  settings have changed. Do you want to keep the new settings? » (Yes/No, 10 s), Non ou délai : retour au mode précédent. Le délai passe par
+  `XamAppUnloadStack`, stub du SDK qui laissait la boîte ouverte : redirigé vers XAM (liste par défaut). Avec la prise AV 6 (VGA) le Dashboard repose
+  la question tant qu'on ne répond pas Yes (boucle de `sub_9225EC80`) ; les deux premières relances échouent (`XamShowMessageBoxUI` rend 5 tant que la
+  boîte précédente n'est pas déchargée, `XamIsUIActive` restant celui du HLE). Le rendu natif ne change pas de résolution (tampon 1280x720).
+- « Profile » / Customize Avatar du menu principal : non reproduits (HEAD et AppImage du Deck contiennent 8b078c8). Journal ciblé `[xamredir]
+  XamShowGamerCardUIForXUID(utilisateur, xuid) -> code`. Toast de déconnexion : non affiché au banc, même sans les redirections ci-dessus ; XAM n'appelle
+  pas `XNotifyQueueUI` (journal ciblé `[notify] XNotifyQueueUI type ... -> code`), seulement `XamUser` 0x20003 (déconnexion) ; cause à établir (To-Do 9).
+
 Interface Xbox seule (To-Do 1 et 4) :
 - `XNotifyQueueUI` par XAM échouait en `0x8007000E` : l'export crée la notification (`sub_8187F6D0`) et exige une tâche XAM sur le fil appelant
   (`XamTaskGetCurrentTask`), or `KeGetCurrentProcessType` (crochet de `dash_xam_runtime.cpp`) renvoie 2 pour tout appelant dans l'image de XAM.

@@ -128,6 +128,8 @@ if(TARGET dash_xam)
     target_sources(dash_xam PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src_xam_patch/xam_hud_trace.cpp)
     # Changement de fibre interne de XAM (sub_819BF2E0) : bascule réelle de pile hôte (ucontext, pile mmap avec page de garde).
     target_sources(dash_xam PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src_xam_patch/xam_fiber_switch.cpp)
+    # Notifications de XAM que le Dashboard attend sur le HLE (navigation vers les bibliothèques du Guide).
+    target_sources(dash_xam PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src_xam_patch/xam_notify_patch.cpp)
 endif()
 
 # Code partagé entre versions (bibliothèque OBJECT : tous les hooks sont liés)
