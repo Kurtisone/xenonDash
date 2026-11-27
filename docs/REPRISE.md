@@ -2,7 +2,8 @@
 
 Ce document permet de reprendre le travail sans l'historique de conversation. Dernière mise à jour : 2026-11-27 (`main` = `fe48c98`).
 **État bref** : AppImage `XenonDash-Kinect.AppImage` validée sur le Steam Deck (27/11) : hub, Guide, connexion et création de profil, clavier virtuel, plusieurs manettes, bibliothèques,
-Clock, résolution, succès et toasts par XAM. Ouverts en tête : Customize Avatar et la boîte « mise à jour » à la connexion (éditeur `AvatarEditor.xex` non recompilé), toast « signed out » absent.
+Clock, résolution, succès et toasts par XAM. Corrigés le 27/11 au soir, à vérifier sur le Deck : boîte « mise à jour » à la connexion (question Xbox LIVE de signin, réponse Non automatique)
+et avatar choisi non relu pour un profil de la seconde manette. Ouverts en tête : profil de la seule manette 2 absent du hub, toast « signed out » absent (PLAN, To-Do 1 et 2).
 Détail avant condensation : `git show d96c252:docs/REPRISE.md`.
 
 ## Comment reprendre

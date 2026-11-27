@@ -13,7 +13,11 @@ python3 tools/ghidra/xd_ghidra.py import xam|dash                       # (re)cr
 python3 tools/ghidra/xd_ghidra.py decompile xam sub_819BE610 XamFiber_Switch   # un .c par fonction
 python3 tools/ghidra/xd_ghidra.py apply xam                             # après modification de symbols/2.0.13604.0/xam.tsv
 python3 tools/function_inventory.py xam --find XamFiber                 # les mêmes noms dans l'inventaire
+python3 tools/ghidra/xd_ghidra.py import signin                         # modules XUI : signin, gamerprofile, createprofile, Guide_AvatarMiniCreator
 ```
+Modules XUI (chargés à la demande à `0x90100000`, un programme chacun) : XEX lu dans `<données>/flash/<nom>.xex`, débuts de fonctions dans `generated/dash/<module>/`. Un `lr` du journal en `0x901xxxxx`
+appartient à l'un d'eux : `grep -l "lr = 0x<lr>;" dashboards/2.0.13604.0-xam/generated/dash/*/dash_recomp.*.cpp` dit lequel. Leurs tables de chaînes (`XUIS`, une par langue, chaînes UTF-8 terminées par zéro
+après un en-tête de 12 octets ; l'anglais en premier) sont dans l'image : l'index de `XuiLookupStringTableByIndex` donne le texte d'une boîte.
 
 Projet `xd13604.gpr`, images et sorties : `work/ghidra/2.0.13604.0/` de la copie **principale** (un seul projet pour tous les worktrees ; Ghidra refuse un chemin contenant `.claude`) ou `XD_GHIDRA_WORK`.
 Jamais dans le dépôt (code Microsoft). Interface : `ghidraRun`, File > Open Project ; la fermer avant une commande (projet verrouillé).

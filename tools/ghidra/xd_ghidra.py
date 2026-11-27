@@ -17,7 +17,7 @@ Sous-commandes :
   import    <module>                    (re)crée le programme <module>.img du projet et applique les entrées
   apply     <module>                    réapplique les entrées (après modification du fichier de symboles)
   decompile <module> <cible>... [-o D]  C décompilé, un fichier par fonction (cible : 0x819BE610, sub_819BE610 ou un nom)
-Modules : xam, dash. Les XEX sont lus dans --data (dossier de données de l'AppImage, par défaut
+Modules : xam, dash, et les modules XUI (signin, gamerprofile, createprofile, Guide_AvatarMiniCreator). Les XEX sont lus dans --data (dossier de données de l'AppImage, par défaut
 ~/.local/share/xenondash/2.0.13604.0-xam). Dossier de travail : XD_GHIDRA_WORK, sinon work/ghidra/2.0.13604.0 ; le
 projet (xd13604.gpr) et les images restent hors du dépôt : ils contiennent du code Microsoft. Ghidra : GHIDRA_INSTALL_DIR,
 sinon /opt/ghidra. Le projet ne doit pas être ouvert dans l'interface de Ghidra pendant une commande (verrou).
@@ -37,6 +37,10 @@ VARIANT = VERSION + "-xam"
 PROJECT = "xd13604"
 LANG = "PowerPC:BE:64:A2ALT-32addr"
 MODULES = {"xam": "xam.xex", "dash": "dash.xex"}
+# Modules XUI recompilés (chargés à la demande à 0x90100000) : XEX dans flash/, code généré dans generated/dash/<module>.
+XUI_MODULES = ("signin", "gamerprofile", "createprofile", "Guide_AvatarMiniCreator")
+for _m in XUI_MODULES:
+    MODULES[_m] = "flash/" + _m.replace("_", ".") + ".xex"
 SDK_XAM_EXPORTS = os.path.join(ROOT, "third_party/xenondash-sdk/src/kernel/xam/export_table.inc")
 NAME_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 HELPER_RE = re.compile(r"\t// bl? 0x([0-9a-f]+)\n(?:\t[^\n]*\n)?\t(__(?:save|rest)[a-z]+_\d+)\(ctx, base\)")
@@ -172,7 +176,7 @@ def helpers(gen_dir):
 def build_entries(module, data):
     xex, img, info = image(module, data)
     base = info["base"]
-    gen = os.path.join(ROOT, "dashboards", VARIANT, "generated", module)
+    gen = os.path.join(ROOT, "dashboards", VARIANT, "generated", *(("dash", module) if module in XUI_MODULES else (module,)))
     part = os.path.join(gen, "codegen.partition.json")
     if not os.path.exists(part):
         sys.exit(f"code généré absent : {part} (il est produit par la compilation de {VARIANT})")

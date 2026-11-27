@@ -244,27 +244,50 @@ void Dispatch(Slot& s, PPCContext& ctx, uint8_t* base) {
   DispatchImpl(s, ctx, base);
 }
 
-// Lit dans XAM recompilé le XUID et le gamertag de l'utilisateur 0 (appel invité, tampons pris sous la pile de l'appelant) et les
-// donne au profil HLE. `wanted` : XUID demandé au HLE (0 = par index) ; un XUID étranger au compte connecté n'est pas adopté.
+// XUID (masque 3 : hors ligne ou en ligne) de l'utilisateur `user` dans XAM recompilé, 0 si l'emplacement est vide. Appel invité,
+// tampon pris sous la pile de l'appelant.
+uint64_t XamXuidOfUser(const PPCContext& ctx, uint8_t* base, uint32_t user) {
+  const uint32_t xuid_buf = ctx.r1.u32 - 0x40;  // entre la pile de l'appelant et celle de l'appel (tmp.r1)
+  PPCContext tmp = ctx;
+  tmp.r1.u64 = ctx.r1.u32 - 0x400;
+  std::memset(base + xuid_buf, 0, 8);
+  tmp.r3.u64 = user;
+  tmp.r4.u64 = 3;
+  tmp.r5.u64 = xuid_buf;
+  if (!CallXamExport("XamUserGetXUID", tmp, base) || tmp.r3.u32 != 0) return 0;
+  return __builtin_bswap64(*reinterpret_cast<const uint64_t*>(base + xuid_buf));
+}
+
+// Emplacement (0 à 3) du compte connecté dans XAM recompilé : celui de XUID `xuid`, ou le premier occupé si `xuid` = 0 ; -1 sinon.
+// Le profil HLE est unique, mais le compte peut être connecté à n'importe quel emplacement : celui de sa manette (mesure du Steam
+// Deck du 2026-11-27, seconde manette, emplacement 1 : XamAvatarGetManifestLocalUser(0) -> 0x80070525, avatar choisi jamais
+// donné au hub).
+int XamUserIndex(const PPCContext& ctx, uint8_t* base, uint64_t xuid, uint64_t* found = nullptr) {
+  for (uint32_t user = 0; user < 4; ++user) {
+    const uint64_t x = XamXuidOfUser(ctx, base, user);
+    if (x && (!xuid || x == xuid)) {
+      if (found) *found = x;
+      return static_cast<int>(user);
+    }
+  }
+  return -1;
+}
+
+// Lit dans XAM recompilé le XUID et le gamertag du compte connecté (`wanted`, sinon le premier emplacement occupé ; appels invités,
+// tampons pris sous la pile de l'appelant) et les donne au profil HLE. Un XUID étranger aux comptes connectés n'est pas adopté.
 void SyncHleProfileWithXam(const PPCContext& ctx, uint8_t* base, uint64_t wanted) {
   rex::system::KernelState* ks = g_ks.load();
   auto* profile = ks ? ks->user_profile() : nullptr;
   if (!profile) return;
   const uint32_t sp = ctx.r1.u32;
-  const uint32_t xuid_buf = sp - 0x40, tag_buf = sp - 0x80;  // entre la pile de l'appelant et celle de l'appel (tmp.r1)
+  const uint32_t tag_buf = sp - 0x80;
+  uint64_t xuid = 0;
+  const int user = XamUserIndex(ctx, base, wanted, &xuid);
+  if (user < 0 || xuid == profile->xuid()) return;
+  std::memset(base + tag_buf, 0, 32);
   PPCContext tmp = ctx;
   tmp.r1.u64 = sp - 0x400;
-  std::memset(base + xuid_buf, 0, 8);
-  tmp.r3.u64 = 0;
-  tmp.r4.u64 = 3;  // XUID hors ligne ou en ligne (masque du Dashboard)
-  tmp.r5.u64 = xuid_buf;
-  if (!CallXamExport("XamUserGetXUID", tmp, base) || tmp.r3.u32 != 0) return;
-  const uint64_t xuid = __builtin_bswap64(*reinterpret_cast<const uint64_t*>(base + xuid_buf));
-  if (!xuid || (wanted && wanted != xuid) || xuid == profile->xuid()) return;
-  std::memset(base + tag_buf, 0, 32);
-  tmp = ctx;
-  tmp.r1.u64 = sp - 0x400;
-  tmp.r3.u64 = 0;
+  tmp.r3.u64 = static_cast<uint32_t>(user);
   tmp.r4.u64 = tag_buf;
   tmp.r5.u64 = 16;
   std::string gamertag;
@@ -275,8 +298,8 @@ void SyncHleProfileWithXam(const PPCContext& ctx, uint8_t* base, uint64_t wanted
       gamertag += c < 0x80 ? static_cast<char>(c) : '?';
     }
   }
-  REXLOG_INFO("[xamredir] profil HLE aligné sur le compte XAM connecté : XUID {:016X} -> {:016X}, gamertag '{}'", profile->xuid(),
-              xuid, gamertag);
+  REXLOG_INFO("[xamredir] profil HLE aligné sur le compte XAM connecté (emplacement {}) : XUID {:016X} -> {:016X}, gamertag '{}'",
+              user, profile->xuid(), xuid, gamertag);
   profile->SetIdentity(xuid, gamertag);
 }
 
@@ -294,12 +317,17 @@ void SyncHleAvatarManifest(const PPCContext& ctx, uint8_t* base) {
   std::lock_guard<std::mutex> lock(mu);
   const bool refresh = g_manifest_refresh.load() > 0;  // XamAvatarSetManifest vient de réussir : relire jusqu'à voir le nouveau
   if (synced == profile->xuid() && !refresh) return;
+  const int user = XamUserIndex(ctx, base, profile->xuid());  // emplacement du compte dont le HLE a le XUID
+  if (user < 0) {
+    if (refresh) g_manifest_refresh.fetch_sub(1);
+    return;
+  }
   const uint32_t buf = REX_KERNEL_MEMORY()->SystemHeapAlloc(kSize);
   if (!buf) return;
   std::memset(base + buf, 0, kSize);
   PPCContext tmp = ctx;
   tmp.r1.u64 = ctx.r1.u32 - 0x400;
-  tmp.r3.u64 = 0;  // utilisateur 0 (celui dont SyncHleProfileWithXam a adopté le XUID)
+  tmp.r3.u64 = static_cast<uint32_t>(user);
   tmp.r4.u64 = buf;
   tmp.r5.u64 = 0;  // sans OVERLAPPED : appel synchrone
   const bool called = CallXamExport("XamAvatarGetManifestLocalUser", tmp, base);
@@ -309,8 +337,8 @@ void SyncHleAvatarManifest(const PPCContext& ctx, uint8_t* base) {
   const bool empty = std::all_of(manifest.begin(), manifest.end(), [](uint8_t b) { return b == 0; });
   std::string head;
   for (int i = 0; i < 16; ++i) head += fmt::format("{:02X}", manifest[i]);
-  REXLOG_INFO("[avatar] manifeste du profil {:016X} : XamAvatarGetManifestLocalUser -> 0x{:08X}{} ; {} ; début {}", profile->xuid(),
-              hr, called ? "" : " (export absent)", empty ? "vide" : "donné au HLE (réglage 0x63E80044)", head);
+  REXLOG_INFO("[avatar] manifeste du profil {:016X} (emplacement {}) : XamAvatarGetManifestLocalUser -> 0x{:08X}{} ; {} ; début {}",
+              profile->xuid(), user, hr, called ? "" : " (export absent)", empty ? "vide" : "donné au HLE (réglage 0x63E80044)", head);
   synced = profile->xuid();
   static std::vector<uint8_t> given;  // dernier manifeste donné au HLE
   if (!called || hr != 0 || empty || (refresh && manifest == given)) {
@@ -916,6 +944,40 @@ bool CallerInModule(uint32_t address, std::string_view module_name) {
   return user->xex_module() && user->xex_module()->ContainsAddress(address);
 }
 
+// Question Xbox LIVE de signin.xex à la connexion d'un profil qui a un XUID en ligne : « An update may be required to connect to
+// Xbox LIVE. [...] Do you want to sign in to Xbox LIVE? » (Yes/No, chaîne 0x1D de sa table ; sub_90109110, XamShowMessageBox
+// au retour 0x9010917C). signin ne la pose que si le bit 0x4 de XCONFIG_USER_RETAIL_FLAGS (3/0x000C) est nul ; Oui pose ce bit
+// (et 0x10000000) et XAM tente alors une connexion Xbox LIVE, qui échoue hors ligne (« One or more profiles aren't valid »,
+// mesure du banc du 2026-11-27) ; Non connecte le profil hors ligne. Retour du Steam Deck du 2026-11-27 : boîte à chaque connexion.
+// Ici la boîte n'est pas affichée : son rappel (r9, sub_90109078) est appelé tout de suite avec la réponse Non (bouton 1),
+// comme si l'utilisateur l'avait choisie ; signin enchaîne la connexion hors ligne. DASH_LIVE_PROMPT=1 garde la question.
+bool LivePromptAnsweredNo(ModuleImport& imp, PPCContext& ctx, uint8_t* base) {
+  constexpr uint32_t kSigninLivePromptLr = 0x9010917Cu;
+  static const bool keep = [] {
+    const char* v = std::getenv("DASH_LIVE_PROMPT");
+    return v && *v && *v != '0';
+  }();
+  const uint32_t lr = static_cast<uint32_t>(ctx.lr);
+  if (keep || lr != kSigninLivePromptLr || std::string_view(imp.name) != "XamShowMessageBox" ||
+      !CallerInModule(lr, "signin.xex"))
+    return false;
+  rex::system::KernelState* ks = g_ks.load();
+  const uint32_t callback = ctx.r9.u32;
+  PPCFunc* fn = (ks && callback) ? ks->function_dispatcher()->GetFunction(callback) : nullptr;
+  if (!fn) {
+    REXLOG_WARN("[xamredir] question Xbox LIVE de signin : rappel {:08X} introuvable, boîte affichée", callback);
+    return false;
+  }
+  REXLOG_INFO("[xamredir] question Xbox LIVE de signin (lr {:08X}) : réponse Non donnée sans boîte (DASH_LIVE_PROMPT=1 la montre)", lr);
+  PPCContext tmp = ctx;
+  tmp.r1.u64 = ctx.r1.u32 - 0x100;
+  tmp.r3.u64 = 1;  // bouton 1 = No
+  tmp.lr = lr;
+  fn(tmp, base);
+  ctx.r3.u64 = 0;
+  return true;
+}
+
 // Fermeture automatique de la boîte d'erreur de démarrage du HUD : instant d'ouverture (0 = rien en attente) et état du A.
 std::atomic<int64_t> g_boot_box_ms{0};
 std::atomic<bool> g_boot_box_down{false};
@@ -1062,6 +1124,7 @@ void CallModuleImport(ModuleImport& imp, PPCContext& ctx, uint8_t* base) {
     g_boot_box_ms.store(NowMs());
   }
   if (AvatarEditorOption2(imp, ctx, base)) return;  // personnalisation de l'avatar : option 2 (voir plus haut)
+  if (LivePromptAnsweredNo(imp, ctx, base)) return;  // question « sign in to Xbox LIVE? » de signin.xex : Non (voir plus haut)
   if (std::string_view(imp.name) == "XamAppUnloadSelf")
     REXLOG_INFO("[xamredir] XamAppUnloadSelf lr={:08X}", (uint32_t)ctx.lr);  // 0x913EC1A4 : sub_913EC0C8 (+92 = 0) ; sinon sub_913EA4C0
   // Frappes données au HUD (XamInputGetKeystrokeHud(utilisateur, X_INPUT_KEYSTROKE*)) : journal de chaque réponse non vide.

@@ -101,6 +101,13 @@ git (liste en fin de fichier). État courant : `docs/REPRISE.md`. Les mesures da
   `XamLaunchAvatarEditor`, servi par l'option 2. Le MiniCreator n'a pas de bouton B (légende A / Y) : on ne quitte le choix qu'en choisissant.
 - Après `XamAvatarSetManifest` (choix d'avatar), le manifeste donné au profil HLE est relu aux lectures suivantes de `0x63E80044` et
   `XN_SYS_PROFILESETTINGCHANGED` (0xE) est rediffusé (sinon My Xbox gardait l'ancien avatar, ou la silhouette grise pour un profil neuf).
+  Le compte est cherché à son emplacement (XUID du profil HLE comparé à `XamUserGetXUID` 0 à 3), pas à l'emplacement 0 : connecté par la seconde manette, le profil
+  n'était jamais relu (`0x80070525`, Steam Deck du 2026-11-27). Même recherche pour l'alignement du profil HLE (`SyncHleProfileWithXam`).
+- Question Xbox LIVE de `signin.xex` (`sub_90109110`, `XamShowMessageBox` au retour `0x9010917C`, chaîne `0x1D` de sa table) : « An update may be required to connect to
+  Xbox LIVE. [...] Do you want to sign in to Xbox LIVE? », posée à la connexion d'un profil qui a un XUID en ligne (compte `+0x28`, `sub_90109DB8`) tant que le bit `0x4`
+  de XCONFIG_USER_RETAIL_FLAGS (3/0x000C) est nul (`sub_90104F78`). Oui pose les bits `0x4` et `0x10000000` (`sub_90109078`) et XAM tente une connexion Xbox LIVE
+  (« One or more profiles aren't valid... », mesuré au banc) ; Non connecte hors ligne. `LivePromptAnsweredNo` appelle le rappel de la boîte (r9) avec Non, sans boîte ;
+  `DASH_LIVE_PROMPT=1` la montre. Banc : compte de l'instantané avec un XUID en ligne de test (copie, CRC-32 de l'en-tête `XDASHOBF` recalculé).
 
 ### Rendu natif du HUD (palier N2)
 - XAM embarque sa propre D3D9 2.0.2099.16 (celle du Dashboard : 2.0.20158) : groupes de registres décalés de 1088 octets, shaders à

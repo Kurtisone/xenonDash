@@ -41,13 +41,17 @@ livrées en AppImage et capables de **lancer des jeux** recompilés à la demand
 ## To-Do (Kinect 13604)
 Par ordre de priorité. Ce que le banc ne peut pas vérifier se teste sur le Deck. **Validé sur le Deck le 2026-11-27** : lancement et texte, manette du Deck et Afterglow
 (Guide, clavier virtuel, bouton Guide de chaque manette, rebranchement), bibliothèques depuis le Guide, Clock, question de résolution, sous-menu Profile, connexion, création de profil.
-1. **Avatar (priorité)** : sur le Deck, Customize Avatar atteint bien `XamLaunchAvatarEditor` → MiniCreator (option 2), mais le MiniCreator relance aussitôt `XamLaunchAvatarEditor`
-   (lr `0x90103CE8`, après `XamIsCurrentTitleDash`/`XamGetDashContext`) puis `XamAppUnloadStack` : rien de visible pour l'utilisateur. À la connexion d'un profil, `signin.xex` affiche une
-   boîte (`XamShowMessageBox`, lr `0x9010917C`, après `XamPackageManagerGetExperienceMode` lr `0x9010A85C`) : « mise à jour requise » selon l'utilisateur. Piste : le vrai éditeur
-   `AvatarEditor.xex` (partition système étendue `20352400`, 15 Mo, en-têtes lus) n'est pas recompilé ; le recompiler comme module (comme `Guide.AvatarMiniCreator.xex`) ou établir ce qu'attendent
-   signin et le MiniCreator (texte de la boîte, valeur du mode d'expérience vue par signin). Le MiniCreator d'option 2 n'a pas de bouton B.
-2. **Toast « signed out »** absent (banc et Deck) : XAM n'appelle pas `XNotifyQueueUI` à la déconnexion (journal `[notify]`, `xam_notify_patch.cpp`). Pistes : XAM attend sa propre
-   `XN_SYS_SIGNINCHANGED` (seule la file du HLE la reçoit) ; régression depuis `f97da85`.
+1. **Avatar (priorité)** — établi le 2026-11-27 d'après le journal du Deck (`dash_1127b.log`) : la boîte de `signin.xex` (lr `0x9010917C`) n'avait rien à voir avec l'avatar.
+   C'est la question Xbox LIVE « An update may be required to connect to Xbox LIVE [...] Do you want to sign in to Xbox LIVE? », posée pour un profil qui a un XUID en ligne
+   (corrigé : réponse Non donnée sans boîte, connexion hors ligne, voir [docs/xam_recompile.md](docs/xam_recompile.md)). Customize Avatar (depuis `gamerprofile.xex`, lr `0x9010A85C`/`0x90109820`) ouvrait bien le MiniCreator ;
+   l'utilisateur y a appuyé sur Y (`0x8000`, ouverture de l'éditeur complet → choix rouvert, option 2), puis sur B (sans effet), puis sur A : `XamAvatarSetManifest` a réussi, mais le profil,
+   connecté par la seconde manette (emplacement 1), n'était jamais relu (`XamAvatarGetManifestLocalUser(0)` → `0x80070525`) : corrigé (emplacement cherché par XUID, `dash_xam_redirect.cpp`).
+   **À vérifier sur le Deck.** Reste : au banc, un profil connecté par la seule manette 2 n'apparaît pas dans le hub (« Sign In / 1 Profile Found », silhouette grise) alors que le Guide le montre connecté ;
+   le MiniCreator d'option 2 n'a pas de bouton B et Y y rouvre le même écran ; l'éditeur complet `AvatarEditor.xex` (15 Mo) n'est pas recompilé.
+2. **Toast « signed out »** absent (banc et Deck). Mesuré le 2026-11-27 (`DASH_LOGON_TRACE=1`) : la déconnexion par le Guide (X, Yes) vient de `hud.xex` (`XamUserLogon`, lr `0x913F9D80`,
+   drapeaux `0x28`, `0x29` dans la tâche) ; l'étape « application » de XAM (`sub_818B0200`) ne met en file les toasts signed out/in (`XNotifyQueueUI` 6, 7/9, 8) que si le bit `0x20` est NUL :
+   cette déconnexion ne passe donc jamais par là, ni sur console. La connexion par signin (`0x425`) non plus. Reste à trouver d'où venait le toast observé au banc avec `f97da85`
+   (autre chemin de déconnexion, par le hub, `XamUserLogon` de `dash.xex` ?) : ne pas chercher dans les notifications XN_.
 3. **Interface Xbox** : relier le bouton « Achievements » du hub (`dash_guide_actions.cpp`) ; texte d'une boîte ouverte figé (`XuiTextElementSetText`) ; progression d'une vraie construction ;
    `XamIsUIActive` encore au HLE (relances de la boîte de résolution) ; autres imports d'interface en stubs du SDK, non appelés hors ligne.
 4. **Profil** : `XamUserReadProfileSettings(Ex)` et `Write` vers XAM (lecture par XAM : image du joueur absente ; voir [docs/xam_recompile.md](docs/xam_recompile.md)).
