@@ -107,6 +107,7 @@ std::deque<std::u16string> g_toasts;
 // les unes après les autres. Vit jusqu'à la fin du processus (object_ref retenu par Init).
 // Demande de Guide en attente (posée par le rendu, servie par le thread invité).
 std::atomic<bool> g_guide_requested{false};
+std::atomic<uint32_t> g_guide_user{0};
 
 void GuestLoop() {
   for (;;) {
@@ -125,7 +126,7 @@ void GuestLoop() {
     }
     if (guide) {
       // Guide de la console, pas la lame maison : XAM recompilé l'affiche (ou dit pourquoi il ne peut pas).
-      const bool ok = dash::xamredir::ShowXamGuide(0, 0);
+      const bool ok = dash::xamredir::ShowXamGuide(g_guide_user.load(), 0);
       if (!ok) {
         REXLOG_WARN("[guide] XamShowGuideUI n'a pas abouti (voir la ligne [guide] ci-dessus : XAM non chargé, "
                     "non redirigé, ou appel refusé)");
@@ -325,17 +326,18 @@ void TestThread(const char* scenario) {
 
 }  // namespace
 
-void RequestGuide() {
+void RequestGuide(uint32_t user) {
   if (!std::getenv("DASH_XAM_MODULE")) {
     REXLOG_WARN("[guide] demande de Guide ignorée : DASH_XAM_MODULE absent (pas de XAM recompilé)");
     return;
   }
   {
     std::lock_guard<std::mutex> lock(g_mu);
+    g_guide_user.store(user < 4 ? user : 0);
     g_guide_requested.store(true);
   }
   g_cv.notify_one();
-  REXLOG_INFO("[guide] bouton Guide : demande déposée pour le thread invité");
+  REXLOG_INFO("[guide] bouton Guide (utilisateur {}) : demande déposée pour le thread invité", user);
 }
 
 void Init(rex::system::KernelState* ks) {

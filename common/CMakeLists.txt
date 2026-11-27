@@ -35,6 +35,7 @@ add_library(xenondash_common OBJECT
     src/kernel_obfuscate.cpp
     src/kernel_video.cpp
     src/kernel_xinputd.cpp
+    src/dash_test_pads.cpp
 )
 target_include_directories(xenondash_common PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src)
 # Racine de XenonDash (tools/recipe_build.py, moteur de recettes) ; XENONDASH_ROOT dans l'environnement la remplace.

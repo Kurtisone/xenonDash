@@ -182,5 +182,8 @@ native_gpu/tools/run_headless_native.sh <affichage> <secondes> <nom>   # DASH_BI
 - **Diagnostics** (variables d'environnement) : `DASH_NGPU_DRAWINFO=<image>` (état, constantes, premiers sommets), `DASH_NGPU_DRAWRANGE=a:b` (bissection) et `DRAWSKIP=a:b`, `DASH_NGPU_REGVARY=<image>`, `REGDUMP=<image>`, `DASH_NGPU_DUMP=<image>:f.ppm` (image présentée),
   `DUMPRES` (texture résolue), `DASH_NGPU_STATS=1`, `DASH_NGPU_EVLOG`, `DASH_NGPU_GAMMA`, `DASH_NGPU_PIXLOG=<image>:x,y`, `DASH_NGPU_TEXPIX`, `DASH_NGPU_POINT=1`, `DASH_NGPU_NODRAW=1`, `DASH_NGPU_UPMAX=N`,
   `DASH_NGPU_OBSERVE=N` (+ `--gpu_plugin=xenos` : l'oracle ne dessine que les N premiers dessins UP/indexés de chaque image ; comparer avec `UPMAX` natif localise le premier dessin divergent, c'est ainsi qu'a été trouvé le +0x1000).
+- **`DASH_NGPU_DIAG=1`** : mesures périodiques sur stderr, `[ngpu-diag]` (fps, rendu/copie/présentation toutes les 600 images ; attente et profondeur de pile de la boucle du HUD, mesures du correctif des fibres). Muet par défaut.
+- **Dessin sans pixel shader** (`SetPixelShader(NULL)`, `ps_obj` 0) : passe de profondeur / stencil seule, rendue par un pipeline sans étage fragment (`call.ps_key` 0, `desc.pixelShader` nul). Mesuré le 2026-11-27 : l'avatar du profil connecté (My Xbox) fait 6 dessins par image
+  (vs `410C3FD0`/`410C44E0`, `RB_COLOR_MASK` 0, profondeur en écriture, fonction LEQUAL) avant sa passe couleur ; ils étaient ignorés (« aucun shader lie », ~3 lignes d'erreur par image). Un dessin sans PS avec écriture de couleur reste ignoré, signalé une fois.
 
 Historique détaillé avant condensation : `git show d96c252:docs/ngpu_core.md` et `git show d96c252:docs/rendu_natif.md`.

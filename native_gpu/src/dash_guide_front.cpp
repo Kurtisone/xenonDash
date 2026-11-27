@@ -56,6 +56,7 @@ Edge e_guide, e_up, e_down, e_accept, e_back;
 
 struct Buttons {
   bool guide = false, up = false, down = false, accept = false, back = false;
+  uint32_t guide_user = 0;  // utilisateur (emplacement de manette) dont le bouton Guide est enfoncé
 };
 
 // GetStateForUI : lecture cote hote, sans toucher au suivi des fronts du code invite.
@@ -65,14 +66,21 @@ Buttons ReadButtons() {
   if (!rt) return b;
   auto* is = static_cast<rex::input::InputSystem*>(rt->input_system());
   if (!is) return b;
-  rex::input::X_INPUT_STATE st{};
-  if (is->GetStateForUI(0, &st) != 0) return b;
-  const uint32_t btn = uint32_t(uint16_t(st.gamepad.buttons));
-  b.guide = (btn & 0x0400u) != 0;   // X_INPUT_GAMEPAD_GUIDE
-  b.up = (btn & 0x0001u) != 0;      // DPAD_UP
-  b.down = (btn & 0x0002u) != 0;    // DPAD_DOWN
-  b.accept = (btn & 0x1000u) != 0;  // A
-  b.back = (btn & 0x2000u) != 0;    // B
+  // Comme sur la console, le bouton Guide de N'IMPORTE QUELLE manette compte (utilisateurs 0 a 3 : SlotAssignment, ordinal N =
+  // utilisateur N ; le clavier est l'utilisateur 0). Le premier utilisateur dont le bouton est enfonce ouvre le Guide.
+  for (uint32_t user = 0; user < 4; ++user) {
+    rex::input::X_INPUT_STATE st{};
+    if (is->GetStateForUI(user, &st) != 0) continue;
+    const uint32_t btn = uint32_t(uint16_t(st.gamepad.buttons));
+    if (!b.guide && (btn & 0x0400u)) {  // X_INPUT_GAMEPAD_GUIDE
+      b.guide = true;
+      b.guide_user = user;
+    }
+    b.up |= (btn & 0x0001u) != 0;      // DPAD_UP
+    b.down |= (btn & 0x0002u) != 0;    // DPAD_DOWN
+    b.accept |= (btn & 0x1000u) != 0;  // A
+    b.back |= (btn & 0x2000u) != 0;    // B
+  }
   return b;
 }
 
@@ -112,14 +120,14 @@ bool GuideFrame(uint32_t* pixels, uint32_t w, uint32_t h) {
   if (!test_fired && test_after >= 0.0 && now >= test_after) {
     test_fired = true;
     REXLOG_INFO("[guide] DASH_TEST_GUIDE : déclenchement après {:.1f} s", test_after);
-    if (!legacy) dash::hudui::RequestGuide();
+    if (!legacy) dash::hudui::RequestGuide(0);
   }
   if (e_guide.Rising(b.guide)) {
     if (legacy) {
       Toggle(g_state);
       REXLOG_INFO("[guide] lame (mode diagnostic) {}", g_state.open ? "ouverte" : "fermee");
     } else {
-      dash::hudui::RequestGuide();
+      dash::hudui::RequestGuide(b.guide_user);
     }
   }
 

@@ -430,10 +430,25 @@ void ExecuteDraw(const uint8_t* base, uint32_t vs_obj, uint32_t ps_obj, const ui
     if (g.skipped < 20 || g.skipped % 1000 == 0) NGPU_ERR("dessin %llu ignore : %s (vs %08X ps %08X, %llu ignores)", (unsigned long long)g.draws, why, vs_obj, ps_obj, (unsigned long long)g.skipped);
   };
   if (std::getenv("DASH_NGPU_NODRAW") || !EnsureCore()) return;
-  if (!vs_obj || !ps_obj) return skip("aucun shader lie");
+  if (!vs_obj) return skip("aucun vertex shader lie");
+  // Sans pixel shader (SetPixelShader(NULL)), le Xenos ne produit aucune couleur : passe de profondeur / stencil seule. Mesure du
+  // 2026-11-27 (My Xbox, avatar du profil connecte) : 6 dessins par image (vs 410C3FD0 / 410C44E0 du Dashboard), RB_COLOR_MASK = 0,
+  // profondeur en ecriture : la passe Z de l'avatar, suivie de sa passe couleur avec shader. Rendue par un pipeline sans etage
+  // fragment (ps_key 0). Un dessin sans PS qui ecrirait de la couleur n'a pas de sens : ignore, journalise une fois.
+  const bool depth_only = !ps_obj;
+  if (depth_only && (xenos::DeviceState{state}.Reg(xenos::reg::RB_COLOR_MASK) & 0xF) != 0) {
+    static bool warned = false;
+    if (!warned) {
+      warned = true;
+      NGPU_ERR("dessin sans pixel shader mais avec ecriture de couleur (RB_COLOR_MASK %08X, vs %08X) : ignore (journalise une fois)",
+               xenos::DeviceState{state}.Reg(xenos::reg::RB_COLOR_MASK), vs_obj);
+    }
+    ++g.skipped;
+    return;
+  }
   const ShaderObject* vs = RegisterObject(base, vs_obj, false);
-  const ShaderObject* ps = RegisterObject(base, ps_obj, true);
-  if (!vs || !ps) return skip("objet shader illisible");
+  const ShaderObject* ps = depth_only ? nullptr : RegisterObject(base, ps_obj, true);
+  if (!vs || (!ps && !depth_only)) return skip("objet shader illisible");
   BeginFrameIfNeeded();
   ng::DrawCall call;
   call.state.data = state;
@@ -477,7 +492,7 @@ void ExecuteDraw(const uint8_t* base, uint32_t vs_obj, uint32_t ps_obj, const ui
     }
   }
   call.vs_key = vs->key;
-  call.ps_key = ps->key;
+  call.ps_key = ps ? ps->key : 0;  // 0 : passe de profondeur / stencil seule
   call.vs_physical = vs_physical;
   call.vs_physical_size = vs_physical_size;
   uint32_t prim = src.primitive;
@@ -551,7 +566,7 @@ void ExecuteDraw(const uint8_t* base, uint32_t vs_obj, uint32_t ps_obj, const ui
     if (const char* di = std::getenv("DASH_NGPU_DRAWINFO"); di && g.frames == uint64_t(std::atoll(di))) {
       const xenos::DeviceState st{state};
       std::fprintf(stderr, "[di %llu] prim=%u n=%u stride=%u vs=%016llX ps=%016llX blend=%08X cc=%08X dc=%08X mode=%08X vp=%g,%g,%g,%g r200E=%08X r200F=%08X r2011=%08X r2012=%08X r2080=%08X\n",
-                   (unsigned long long)k, prim, src.count, src.stride, (unsigned long long)vs->key, (unsigned long long)ps->key, st.Reg(0x2201), st.Reg(0x2202), st.Reg(0x2200),
+                   (unsigned long long)k, prim, src.count, src.stride, (unsigned long long)vs->key, (unsigned long long)(ps ? ps->key : 0), st.Reg(0x2201), st.Reg(0x2202), st.Reg(0x2200),
                    st.Reg(0x2205), st.RegF(0x210F), st.RegF(0x2110), st.RegF(0x2111), st.RegF(0x2112), st.Reg(0x200E), st.Reg(0x200F), st.Reg(0x2011), st.Reg(0x2012), st.Reg(0x2080));
       std::fprintf(stderr, "     vsc0:");
       for (int c = 0; c < 8; ++c) std::fprintf(stderr, " %g", BeF32(state + xenos::device::kVertexConstants + 4 * c));
@@ -566,7 +581,7 @@ void ExecuteDraw(const uint8_t* base, uint32_t vs_obj, uint32_t ps_obj, const ui
   }
   if (Evlog() && g.draws <= 40) {
     std::fprintf(stderr, "[ev] draw %llu prim=%u count=%u stride=%u vs=%016llX ps=%016llX inline=%d indexed=%d\n", (unsigned long long)g.draws, prim, src.count,
-                 src.stride, (unsigned long long)vs->key, (unsigned long long)ps->key, src.vertices != nullptr, src.indices != nullptr || src.indices_address != 0);
+                 src.stride, (unsigned long long)vs->key, (unsigned long long)(ps ? ps->key : 0), src.vertices != nullptr, src.indices != nullptr || src.indices_address != 0);
   }
   g.core->renderer().Draw(call);
 }
@@ -892,7 +907,8 @@ NGPU_HOOK(NGP_Swap) {
         VkPresent();
         diag_t3 = std::chrono::steady_clock::now();
       }
-      {  // mesure seule : moyennes sur 600 images
+      static const bool diag_on = std::getenv("DASH_NGPU_DIAG") != nullptr;  // mesure de temps par image : opt-in
+      if (diag_on) {  // mesure seule : moyennes sur 600 images
         using ms = std::chrono::duration<double, std::milli>;
         static double s_rendu = 0, s_copie = 0, s_present = 0;
         static int s_n = 0;

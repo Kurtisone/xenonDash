@@ -9,6 +9,8 @@
 
 #pragma once
 
+#include <cstdint>
+
 namespace rex::system {
 class KernelState;
 }
@@ -21,7 +23,8 @@ void Init(rex::system::KernelState* ks);
 // Ouvre le Guide de la console : appelle XamShowGuideUI de XAM recompilé depuis un thread invité, comme les
 // boîtes de message. C'est ce que fait le bouton Guide (0x0400) depuis que la lame maison a été retirée.
 // Peut être appelé depuis n'importe quel fil (le rendu) : la demande est déposée et servie par le thread
-// invité du HUD. Sans effet (et journalisé) si XAM n'est pas chargé.
-void RequestGuide();
+// invité du HUD. Sans effet (et journalisé) si XAM n'est pas chargé. `user` : utilisateur (emplacement de manette 0 à 3) dont le
+// bouton Guide a été pressé, comme XamShowGuideUI(dwUserIndex) sur la console.
+void RequestGuide(uint32_t user = 0);
 
 }  // namespace dash::hudui

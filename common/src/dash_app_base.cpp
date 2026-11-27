@@ -32,6 +32,9 @@ void ApplyProfileSettings();
 namespace dash::disc {
 void Init();
 }
+namespace dash::testpads {
+void Init();  // manettes SDL virtuelles de test (DASH_TEST_PAD_FIFO), sans effet sinon
+}
 namespace dash::hudui {
 void Init(rex::system::KernelState* ks);
 }  // namespace dash::hudui
@@ -45,6 +48,7 @@ void DashAppBase::OnPreSetup(rex::RuntimeConfig& config) {
   if (config.gpu_plugin.empty()) config.gpu_plugin = "xenos";
   // Clavier → manette avec une disposition adaptée au Dashboard (voir dash_input.h).
   dash::input::ApplyDashKeyboardLayout();
+  dash::input::ApplyDashGuideButton();
   // XAM recompilé écrit ses paquets de contenu (profils : Content\<XUID>\FFFE07D1\00010000\...) sur
   // \Device\Harddisk0\Partition1, c'est-à-dire dans <game_data_root> : la racine du jeu doit être inscriptible.
   if (std::getenv("DASH_XAM_MODULE")) REXCVAR_SET(allow_game_relative_writes, true);
@@ -98,6 +102,7 @@ void DashAppBase::OnPostSetup() {
   dash::profile::ApplyProfileSettings();
   dash::launch::Init();
   dash::disc::Init();
+  dash::testpads::Init();
   // Palier N5 : progression de construction par les boîtes de message Xbox du HUD de XAM (rendu natif, sans
   // superposition ImGui). Les fenêtres ImGui ont été retirées : seul le HUD de XAM affiche la progression.
   dash::hudui::Init(runtime()->kernel_state());

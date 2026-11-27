@@ -53,7 +53,7 @@ Manette SDL (Xbox, DualShock, DualSense...) directement. Clavier, positions QWER
 | `WASD` (AZERTY `ZQSD`) | stick gauche | `Shift` + flèches | stick droit |
 | `G` | **Guide** | `F6` | rescanner les jeux |
 
-`Entrée` envoie **A**, pas Start. Redéfinition : `--keybind_a=Return,Space`, `--keybind_right_shoulder=E` (noms X11 : `space`, `Return`, `BackSpace`, `Tab`, `Escape`, `Down`...).
+Plusieurs manettes : chacune pilote le Guide, le clavier virtuel et les boîtes ; le bouton Guide (bouton Xbox) de n'importe laquelle ouvre le Guide. `Entrée` envoie **A**, pas Start. Redéfinition : `--keybind_a=Return,Space`, `--keybind_right_shoulder=E` (noms X11 : `space`, `Return`, `BackSpace`, `Tab`, `Escape`, `Down`...).
 
 ## En cas de problème
 

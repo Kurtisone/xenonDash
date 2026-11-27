@@ -123,12 +123,26 @@ git (liste en fin de fichier). État courant : `docs/REPRISE.md`. Les mesures da
 - Le HUD tourne en continu dès l'image 2 : sans demande, il dessine le chrome de chargement (barre + anneau) ; `DASH_HUD_CHROME=1` l'affiche toujours.
 
 ### Entrées (palier H, `common/src/kernel_xinputd.cpp`)
-- XAM découvre une manette par `DrvSetUserBindingCallback(0x818AD898)` ; un fil hôte annonce la manette virtuelle `0x10000001` (rappel
-  d'arrivée `0x81BE1E10 + 4 * type`), tableau des ports `0x81BFD948` (entrée `+8 + 8 * (7 * port + type)`). `XInputdGetCapabilities`
-  (manette standard), `XInputdReadState` (`InputSystem::GetState(0)` du SDK, port 0 seulement), `XInputdNotify` (sans effet).
-- `src_xam_patch/xam_input_patch.cpp` : `sub_818C4240` (cœur de `XamInputGetState`) lit la manette virtuelle quand XAM répond `0x48F`.
-- Le Dashboard et le HUD lisent le même `InputSystem` ; l'exclusivité est côté Dashboard (voir `HudActive`). Frappes du HLE vidées tant que
-  le HUD a le focus. Touches de test : `tools/xkeys.py` (`XKEYS_HOLD=0.12`).
+- XAM découvre une manette par `DrvSetUserBindingCallback(0x818AD898)` ; un fil hôte appelle son rappel `(poignée, id, type 0, retrait, &port)` :
+  `0x10000001 + N` pour l'emplacement N de l'`InputSystem` du SDK (`SlotAssignment` : ordinal N = utilisateur N, le clavier du pilote MnK est
+  sur l'utilisateur 0). Emplacement 0 annoncé au démarrage (port quelconque, comme avant) ; 1 à 3 annoncés à la connexion d'une manette
+  (relevé toutes les 250 ms, port imposé = emplacement) et retirés (`r6 = 1`) après 1 s d'absence. XAM range le port par poignée (`sub_818AD508`) :
+  tableau `0x81BFD948` (entrée `+8 + 8 * (7 * port + type)`). `XInputdGetCapabilities` (manette standard), `XInputdReadState(id)` =
+  `InputSystem::GetState(id - 0x10000001)`, `XInputdNotify` (sans effet).
+- `src_xam_patch/xam_input_patch.cpp` : `sub_818C4240` (cœur de `XamInputGetState`) (1) lit la manette virtuelle du port quand XAM répond `0x48F` avec le
+  drapeau système `0x80000000`, (2) y ajoute l'état des autres manettes annoncées (boutons OU, gâchettes max, sticks de plus grande amplitude ;
+  `DASH_XAM_INPUT_MERGE=0` le retire). Mesuré le 2026-11-27 (manettes SDL virtuelles, `DASH_TEST_PAD_FIFO`) : les interfaces du HUD (Guide, clavier virtuel,
+  boîtes) ne lisent QUE le port de leur utilisateur (`XamInputGetKeystrokeEx` par utilisateur, `sub_818C63E8`, flags système, utilisateur 0) ; annoncer la
+  manette 1 ne suffit donc pas (Guide sourd), la fusion fait répondre chaque manette. Cause de « l'Afterglow ne répond plus » (Steam Deck, 2026-11-27) : une
+  seule manette virtuelle (`0x10000001` lisait `GetState(0)`), l'Afterglow étant l'utilisateur 1.
+- Bouton Guide : le pilote SDL ignore `guide_button` faux (défaut) : le bouton Xbox des manettes n'arrivait jamais ; `dash_input.h` l'active
+  (`DASH_GUIDE_BUTTON=0` le retire). `dash_guide_front.cpp` lit les utilisateurs 0 à 3 ; `RequestGuide(utilisateur)` appelle `XamShowGuideUI(utilisateur)` pour
+  la manette qui a appuyé (le Guide ouvert par la manette 1 est piloté par toutes les manettes et le clavier).
+- Le Dashboard lit l'`InputSystem` par le HLE du SDK (`XamInputGetState`/`GetKeystrokeEx` avec `ANY_USER` : utilisateurs 0 à 3) ; le HUD lit le même ; l'exclusivité est côté
+  Dashboard (voir `HudActive`). Frappes du HLE vidées tant que le HUD a le focus. Touches de test : `tools/xkeys.py` (`XKEYS_HOLD=0.12`).
+- **Manettes de test sans matériel** : `DASH_TEST_PAD_FIFO=<tube>` (+ `SDL_JOYSTICK_ALLOW_BACKGROUND_EVENTS=1`) crée des manettes SDL virtuelles
+  (`common/src/dash_test_pads.cpp`) : `echo "attach 0" > tube`, `attach 1`, `detach 1`, `1 down 1` / `1 down 0` (a b x y back guide start ls rs lb rb up down left right),
+  `1 axis lx 20000`. L'ordinal suit l'ordre de branchement (la première manette est l'utilisateur 0).
 
 ### Stockage du profil (palier N4)
 - XAM écrit un paquet CON (`Content\<XUID>\FFFE07D1\00010000\<XUID>`) et demande au pilote STFS du noyau de monter le volume. Pilote
@@ -313,7 +327,7 @@ Welcome). Application XMP : table de `sub_81893EE0` (`0x81C06F78 - 0xB8 * id`), 
   (image, nom, avatar), création de profil jusqu'à « Save Profile » (scène Congratulations de `createprofile.xex`, après le choix d'avatar),
   panneau du Guide après B : tout fonctionne ; la fermeture du Guide et le panneau vide venaient du MiniCreator non recompilé (voir plus haut).
 - MiniCreator d'option 2 sans bouton B ; avatar complet (`AvatarEditor.xex`) à recompiler ; créer un profil nommé `a` (déjà existant) affiche « must begin with a letter » (hypothèse : code d'erreur « nom pris » mal traduit ; non mesuré).
-- AppImage avec ces correctifs non vérifiée sur le Deck ; entrées manette inégales (SDL voit les manettes, boutons parfois absents du hook `XInputdReadState`).
+- AppImage avec ces correctifs non vérifiée sur le Deck. Plusieurs manettes (2026-11-27) : validé au banc avec des manettes SDL virtuelles (Guide, clavier virtuel, bouton Guide d'une seconde manette, branchement et retrait) ; reste à confirmer avec l'Afterglow réelle. `XamShowGuideUI(1)` affiche le même Guide que `(0)` (profil connecté, mesuré au banc).
 - `XamUserReadProfileSettings(Ex)`/`Write` toujours au HLE ; contenu lié au profil HLE. Mesure : `DASH_XAM_REDIRECT=XamUserReadProfileSettings,XamUserReadProfileSettingsEx`
   (lecture par XAM) donne gamertag et avatar corrects, mais l'image du joueur (haut à droite) disparaît (hypothèse : un réglage lu par le hub, ex. `0x402C0011`, absent du GPD) :
   désactivé par défaut tant que ce réglage n'est pas rempli.

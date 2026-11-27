@@ -1253,8 +1253,8 @@ void Renderer::Draw(const DrawCall& call) {
     return;
   }
   Shader* vs = GetShader(call.vs_key);
-  Shader* ps = GetShader(call.ps_key);
-  if (!vs || !ps) {
+  Shader* ps = call.ps_key ? GetShader(call.ps_key) : nullptr;  // ps_key 0 : sans pixel shader (profondeur / stencil seuls)
+  if (!vs || (call.ps_key && !ps)) {
     ++stats_["draw skipped: shader not in cache"];
     return;
   }
@@ -1566,7 +1566,7 @@ void Renderer::Draw(const DrawCall& call) {
   RenderGraphicsPipelineDesc desc;
   desc.pipelineLayout = layout_.get();
   desc.vertexShader = vs->shader.get();
-  desc.pixelShader = ps->shader.get();
+  desc.pixelShader = ps ? ps->shader.get() : nullptr;
   desc.depthEnabled = (depthControl >> 1) & 1;
   desc.depthWriteEnabled = (depthControl >> 2) & 1;
   desc.depthFunction = RenderComparisonFunction(((depthControl >> 4) & 7) + 1);

@@ -692,7 +692,9 @@ void Handle(uint32_t addr, PPCContext& ctx, uint8_t* base, void (*orig)(PPCConte
       g.next_frame += std::chrono::microseconds(16667);
       const auto diag_a = std::chrono::steady_clock::now();
       std::this_thread::sleep_until(g.next_frame);
-      {  // mesure seule : moyenne sur 600 iterations
+      // Mesures du correctif des fibres (hud_attente_ms, hud_pile) : seulement avec DASH_NGPU_DIAG=1 (comme [ngpu-diag] de front_profile.cpp).
+      static const bool diag = std::getenv("DASH_NGPU_DIAG") != nullptr;
+      if (diag) {  // mesure seule : moyenne sur 600 iterations
         static double s_att = 0;
         static int s_n = 0;
         s_att += std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - diag_a).count();
@@ -702,7 +704,7 @@ void Handle(uint32_t addr, PPCContext& ctx, uint8_t* base, void (*orig)(PPCConte
           s_n = 0;
         }
       }
-      {  // mesure seule : profondeur de pile toutes les 60 images
+      if (diag) {  // mesure seule : profondeur de pile toutes les 60 images
         static int s_pile_n = 0;
         if (++s_pile_n >= 60) {
           s_pile_n = 0;

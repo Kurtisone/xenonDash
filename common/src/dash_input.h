@@ -10,9 +10,11 @@
 
 #pragma once
 
+#include <cstdlib>
 #include <string>
 
 #include <rex/cvar.h>
+#include <rex/input/flags.h>
 
 REXCVAR_DECLARE(bool, mnk_mode);
 REXCVAR_DECLARE(std::string, keybind_a);
@@ -70,6 +72,14 @@ inline void ApplyDashKeyboardLayout() {
   // (REXCVAR_DEFINE_STRING(keybind_guide, "", ...)), ce qui rend le Guide inatteignable au clavier
   // sans option. On le lie ici pour qu'il fonctionne des le premier lancement.
   Rebind(REXCVAR_GET(keybind_guide), "", "G");
+}
+
+// Bouton Guide des manettes : le pilote SDL du SDK l'ignore tant que `guide_button` est faux (valeur par défaut), si bien que le
+// bouton Xbox d'une manette (« guide » du mappage SDL, aussi « misc1 » du Steam Deck et le pavé tactile PlayStation) n'arrivait jamais
+// au Dashboard : seule la touche G ouvrait le Guide. Actif par défaut ; DASH_GUIDE_BUTTON=0 le retire (diagnostic).
+inline void ApplyDashGuideButton() {
+  const char* e = std::getenv("DASH_GUIDE_BUTTON");
+  REXCVAR_SET(guide_button, !(e && e[0] == '0'));
 }
 
 }  // namespace dash::input
