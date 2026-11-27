@@ -1,8 +1,9 @@
 # Reprise du projet par une autre session ou un autre modèle
 
-Ce document permet de reprendre le travail sans l'historique de conversation. Dernière mise à jour : 2026-11-27 (`main` = `fe48c98`).
+Ce document permet de reprendre le travail sans l'historique de conversation. Dernière mise à jour : 2026-11-28.
 **État bref** : AppImage `XenonDash-Kinect.AppImage` validée sur le Steam Deck (27/11) : hub, Guide, connexion et création de profil, clavier virtuel, plusieurs manettes, bibliothèques,
-Clock, résolution, succès et toasts par XAM. Corrigés le 27/11 au soir, à vérifier sur le Deck : boîte « mise à jour » à la connexion (question Xbox LIVE de signin, réponse Non automatique)
+Clock, résolution, succès et toasts par XAM. Le 28/11 : **Customize Avatar ouvre le vrai éditeur `AvatarEditor.xex` recompilé** (second exécutable `avatar`, aller-retour par le superviseur,
+validé au banc et depuis l'AppImage, à vérifier sur le Deck). Corrigés le 27/11 au soir, à vérifier sur le Deck : boîte « mise à jour » à la connexion (question Xbox LIVE de signin, réponse Non automatique)
 et avatar choisi non relu pour un profil de la seconde manette. Ouverts en tête : profil de la seule manette 2 absent du hub, toast « signed out » absent (PLAN, To-Do 1 et 2).
 Détail avant condensation : `git show d96c252:docs/REPRISE.md`.
 
@@ -73,8 +74,11 @@ Règle : le README reste court et destiné aux utilisateurs ; tout détail techn
   bibliothèques ouvertes depuis le Guide ; `dash_xam_redirect.cpp` : `XN_SYS_SIGNINCHANGED`, `XN_SYS_PROFILESETTINGCHANGED`). L'inverse (XAM qui attend une notification du HLE) est la piste du toast « signed out ».
 - **Clock et résolution** : `XamFormatDateString/TimeString` servis par XAM (vides dans le SDK ; Ghidra les nomme à tort `XInputd*`) ; `VdSetDisplayModeOverride` accepté
   (`kernel_video_output.cpp`) : le Dashboard pose la question de confirmation, le rendu reste en 1280x720.
-- **Avatar** : `XamPackageManagerGetExperienceMode`/`GetFileSize` par XAM seulement aux retours `0x9231DC44`/`0x9231DC64` (Customize Avatar) ; la redirection globale ouvre `AvatarEditor.xex` au
-  démarrage. Après `XamAvatarSetManifest`, manifeste relu et `XN_SYS_PROFILESETTINGCHANGED` rediffusé (avatar à jour dans My Xbox). Diagnostic sur le Deck : PLAN, To-Do 1.
+- **Avatar** : Customize Avatar (`XamLaunchAvatarEditor`) lance l'éditeur complet `AvatarEditor.xex` (titre `584D07D1`, base `0x92000000` comme dash.xex, d'où un second exécutable
+  `avatar`, `dashboards/2.0.13604.0-avatar/`, mêmes XAM et HUD recompilés, façade ngpu `avatar13604`). Le Dashboard écrit `<DASH_XAM_STATE>/session.txt` (XUID et données de lancement EPIX,
+  `common/src/dash_session.cpp`), l'éditeur reconnecte le compte, Save and Exit (`XamLoaderLaunchTitleEx(NULL)`) rend la main au superviseur qui relance le Dashboard. Sous AppImage :
+  AppRun relancé avec `XENONDASH_EXE=avatar`, journal `avatar.log`, shaders `shaders/avatar` générés à l'import. Repli MiniCreator journalisé si `avatar` manque ; `DASH_AVATAR_EXE` (diagnostic).
+  Détails : [xam_recompile.md](xam_recompile.md). Après `XamAvatarSetManifest`, manifeste relu et `XN_SYS_PROFILESETTINGCHANGED` rediffusé (avatar à jour dans My Xbox).
 - **Terminal** : `[ngpu-diag]` seulement avec `DASH_NGPU_DIAG=1` ; les dessins sans pixel shader à masque couleur nul (passe de profondeur de l'avatar) sont rendus.
 - **Fibres de XAM** (`src_xam_patch/xam_fiber_switch.cpp`) : `sub_819BF2E0` bascule vraiment de pile (ucontext) ; sans cela un fil tourne à 99 % d'un cœur ; `DASH_XAM_FIBER_FIX=0` désactive.
 

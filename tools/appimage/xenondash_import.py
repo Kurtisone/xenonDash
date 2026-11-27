@@ -8,6 +8,7 @@ Python 3 système requis.
 Avec --native-shaders (AppImage native, 13604), génère aussi les shaders SPIR-V du rendu natif, à partir des
 fichiers importés et des outils de l'AppImage (XenosRecomp et dxc : XD_XENOSRECOMP, xxhsum : XD_XXHSUM, définis par AppRun) :
   <root>/shaders/dash  <- dash.xex (conteneurs 0x102A11xx)
+  <root>/shaders/avatar <- SystemExtPartition/20352400/AvatarEditor.xex (éditeur d'avatar, 2e exécutable ; absent : ignoré)
   <root>/shaders/hud   <- xam.xex de la mise à jour, copié à l'import (conteneurs 0x102A0E0x du HUD ; rechiffré si besoin)
 Idempotent : <part>.stamp décrit les entrées (empreintes du XEX, de XenosRecomp, version du format) ; une génération n'est
 refaite que si elles changent. Un échec est signalé (ligne « ÉCHEC ») sans interrompre l'import ; les shaders non traduits
@@ -67,7 +68,7 @@ def generate_part(root, part, xex, xenos_root, tmp, force):
     shutil.rmtree(new, ignore_errors=True)
     if os.path.exists(stamp_path):
         os.remove(stamp_path)
-    if part == "dash":
+    if part in ("dash", "avatar"):  # mêmes conteneurs de shaders (D3D 2.0.20158 identique)
         src = xex
         pe = os.path.join(tmp, "dash.pe")
         pd.run([pd.XEXINFO, src, pe], log_path=os.path.join(tmp, "dash_xexinfo.txt"))
@@ -105,7 +106,11 @@ def generate_native_shaders(root, force=False):
         say("ÉCHEC : xxhsum introuvable (XD_XXHSUM=<chemin>)")
         return ["dash", "hud"]
     failed = []
-    for part, xex in (("dash", os.path.join(root, "dash.xex")), ("hud", os.path.join(root, "xam.xex"))):
+    avatar_xex = os.path.join(root, "SystemExtPartition", "20352400", "AvatarEditor.xex")
+    for part, xex in (("dash", os.path.join(root, "dash.xex")), ("hud", os.path.join(root, "xam.xex")), ("avatar", avatar_xex)):
+        if part == "avatar" and not os.path.isfile(xex):
+            say("avatar : AvatarEditor.xex absent de la partition système étendue : shaders de l'éditeur non générés (Customize Avatar : MiniCreator)")
+            continue
         if not os.path.isfile(xex):
             say(f"{part} : {os.path.basename(xex)} absent de la mise à jour : shaders non générés")
             failed.append(part)

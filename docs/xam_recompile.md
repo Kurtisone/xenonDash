@@ -104,7 +104,13 @@ git (liste en fin de fichier). État courant : `docs/REPRISE.md`. Les mesures da
   `DASH_AVATAR_EXE` (diagnostic), sinon `avatar` à côté du Dashboard, sinon le dossier de build voisin (`-xam` -> `-avatar`). Repli (journalisé) sur
   l'option 2 si l'exécutable est absent : `XamShowAvatarMiniCreatorUI(user, 2)` (ordinal 1700), ouverture différée depuis le MiniCreator (un appel
   synchrone après `XamAppUnloadStack` renvoie 5). Les appels de `signin.xex` (profil sans avatar), de `createprofile.xex` et du MiniCreator (Y)
-  gardent l'option 2.
+  gardent l'option 2. AppImage : `make_appimage.sh` embarque `usr/bin/avatar` (mêmes libdash_*.so que le Dashboard) ; le superviseur relance
+  l'AppImage avec `XENONDASH_EXE=avatar` (le montage du Dashboard disparaît avec lui) et l'AppRun lance `avatar` sur les mêmes données (chemin
+  court, journal `avatar.log`). L'import génère `shaders/avatar` depuis `SystemExtPartition/20352400/AvatarEditor.xex` (89 shaders sur 91 ;
+  `92093410_PS` et `92093B30_PS` : constante de boucle `i16` des pixel shaders, non fournie hors extensions Trials). Banc : `banc.py start --appimage`.
+  Restes mesurés (phase 3) : icônes d'objets des grilles (Tops...) vides ou brouillées alors que XamPngDecode réussit (PNG 64x64 et 32x32 bien décodés,
+  pas de texture périmée ni de shader manquant : à chercher côté textures XUI) ; retour au Dashboard sur Welcome (commande 0x35 des données de
+  retour non traitée par la chaîne de `sub_9216B740`).
 - « Customize Avatar » de dash.xex (`sub_9231DC28`) : `XamPackageManagerGetExperienceMode` (retour `0x9231DC44`) et `XamPackageManagerGetFileSize`
   (retour `0x9231DC64`) vont à XAM recompilé pour CET appel seulement (mesuré le 2026-11-26 : mode `0x2`, `AvatarEditor.xex` 15 556 608 octets
   dans l'index) ; ailleurs le HLE (r3 = 0), car la redirection globale ouvre `AvatarEditor.xex` au démarrage. Le Dashboard appelle alors

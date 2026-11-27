@@ -865,7 +865,12 @@ bool LaunchAvatarEditor() {
   g.keep_ld = true;  // SDK partagé : même LD_LIBRARY_PATH que le Dashboard
   g.command = "exec " + Q(exe);
   const auto args = SelfArgs();
-  for (size_t i = 1; i < args.size(); i++) {
+  // Sous AppImage, le montage d'où tourne le Dashboard disparaît avec lui : le superviseur relance l'AppImage (comme pour le retour au
+  // Dashboard), dont l'AppRun lance usr/bin/avatar avec les mêmes données (XENONDASH_EXE=avatar ; options et journal posés par l'AppRun).
+  const char* ai = std::getenv("APPIMAGE");
+  const bool in_appimage = ai && *ai && fs::exists(ai);
+  if (in_appimage) g.command = "XENONDASH_EXE=avatar exec " + Q(ai);
+  for (size_t i = 1; i < args.size() && !in_appimage; i++) {
     if (args[i].rfind("--dash_launch", 0) == 0) {  // lancement de test du Dashboard : pas pour l'éditeur
       if (args[i].find('=') == std::string::npos && i + 1 < args.size()) i++;
       continue;

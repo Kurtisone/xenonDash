@@ -64,6 +64,15 @@ A=$R/work/appimage/AppDir-$V
 rm -rf "$A"
 mkdir -p "$A/usr/bin" "$A/usr/share/xenondash/tools"
 cp "$BIN" "$A/usr/bin/dash"
+# Éditeur d'avatar (2e exécutable, dashboards/<version sans -xam>-avatar) : même dossier de build, mêmes libdash_*.so (octet pour octet
+# ceux du Dashboard : le chargeur les cherche à côté de l'exécutable). Le superviseur le relance par l'AppImage (XENONDASH_EXE=avatar).
+AV=$R/dashboards/$(echo "$V" | sed 's/-xam$//')-avatar/out/build/$BUILD/avatar
+if [ -x "$AV" ]; then
+  cp "$AV" "$A/usr/bin/avatar"
+  echo "éditeur d'avatar embarqué : $AV"
+else
+  echo "avertissement : éditeur d'avatar absent ($AV) : Customize Avatar retombera sur le MiniCreator" >&2
+fi
 LIBS="librexruntime.so"; [ $GPU = xenos ] && LIBS="$LIBS librexgpu-xenos.so"
 for l in $LIBS; do cp "$R/sdk/lib/$l" "$A/usr/bin/$l"; done
 # Modules recompilés de la variante (libdash_xam.so, libdash_hud.so…) : le chargeur les cherche
@@ -72,7 +81,7 @@ for l in $LIBS; do cp "$R/sdk/lib/$l" "$A/usr/bin/$l"; done
 for m in "$BDIR/$BUILD"/libdash_*.so; do
   [ -f "$m" ] && cp "$m" "$A/usr/bin/" && echo "module recompilé embarqué : $(basename "$m")"
 done
-if [ $STRIP = 1 ]; then strip --strip-unneeded "$A/usr/bin/dash" "$A/usr/bin/"*.so; fi
+if [ $STRIP = 1 ]; then strip --strip-unneeded "$A/usr/bin/dash" "$A/usr/bin/"*.so; [ -f "$A/usr/bin/avatar" ] && strip --strip-unneeded "$A/usr/bin/avatar"; fi
 # Dépendances dynamiques non système : SDL3, spdlog, ffmpeg... sont liés statiquement. Reste : libc/libstdc++/X11/
 # wayland/xcb/Vulkan (loader et pilote) du système, volontairement non embarqués.
 echo "dépendances système restantes :"

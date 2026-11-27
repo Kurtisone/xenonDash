@@ -143,6 +143,9 @@ def cmd_start(a):
     data = os.path.abspath(a.data)
     build = os.path.abspath(a.build)
     dash = os.path.join(build, getattr(a, "exe", None) or "dash")  # --exe avatar : éditeur d'avatar (dashboards/2.0.13604.0-avatar)
+    appimage = getattr(a, "appimage", None)
+    if appimage:  # --appimage : l'AppImage elle-même (AppRun : import, options et journal $DATA/dash.log) ; --data = son dossier de données
+        dash = os.path.abspath(appimage)
     for p in (data, dash):
         if not os.path.exists(p):
             sys.exit(f"absent : {p}")
@@ -186,6 +189,12 @@ def cmd_start(a):
     log = os.path.join(d, "dash.log")
     out = os.path.join(d, "out.log")
     argv = [dash, f"--game_data_root={data}", f"--log_file={log}", "--log_flush_interval=1"] + (a.arg or [])
+    if appimage:
+        log = os.path.join(data, "dash.log")
+        argv = [dash] + (a.arg or [])
+        env["APPIMAGE_EXTRACT_AND_RUN"] = "1"
+        for k in ("LD_LIBRARY_PATH", "DASH_XAM_MODULE", "DASH_PROFILE_MODE", "XENONDASH_ROOT"):
+            env.pop(k, None)
     gdb_x, gdb_pre = getattr(a, "gdb_x", None), getattr(a, "gdb_pre", None)
     if getattr(a, "gdb", False) or gdb_x or gdb_pre:
         # Plantage sans trace (le noyau n'en garde pas de core) : gdb laisse passer au gestionnaire d'exceptions du SDK
@@ -209,7 +218,7 @@ def cmd_start(a):
     with open(out, "wb") as fo:
         p = subprocess.Popen(argv, cwd=data, env=env, stdout=fo, stderr=subprocess.STDOUT, preexec_fn=child_setup, start_new_session=True)
     st = {"name": a.name, "dir": d, "display": a.display, "dash_pid": p.pid, "xvfb_pid": xvfb.pid, "log": log, "out": out,
-          "data": data, "build": build, "env": a.env or [], "args": a.arg or [], "t0": time.time(), "shots": 0}
+          "data": data, "build": build, "marker": os.path.basename(dash) if appimage else log, "appimage": bool(appimage), "env": a.env or [], "args": a.arg or [], "t0": time.time(), "shots": 0}
     save_state(a.name, st)
     print(f"dash pid {p.pid}, Xvfb pid {xvfb.pid}, écran :{a.display}, journal {log}")
     t_end = time.time() + a.boot
@@ -350,7 +359,7 @@ def relaunched_pids(st):
                 env = f.read().decode("utf-8", "replace")
         except OSError:
             continue
-        if f"DISPLAY=:{st['display']}\0" in env + "\0" and st["dir"] in cmd and "Xvfb" not in cmd:
+        if f"DISPLAY=:{st['display']}\0" in env + "\0" and (st["dir"] in cmd or st.get("appimage")) and "Xvfb" not in cmd:
             out.append(int(e))
     return out
 
@@ -358,7 +367,7 @@ def relaunched_pids(st):
 def cmd_stop(a):
     st = load_state(a.name)
     was = alive(st["dash_pid"])
-    stop_pid(st["dash_pid"], st["log"])
+    stop_pid(st["dash_pid"], st.get("marker", st["log"]))
     # Dashboard relancé par le superviseur après un titre natif : d'abord le shell superviseur (sinon il relancerait le Dashboard),
     # puis les processus restants.
     kids = relaunched_pids(st)
@@ -385,6 +394,7 @@ def main():
     p.add_argument("name")
     p.add_argument("--data", required=True)
     p.add_argument("--build", default=DEFAULT_BUILD)
+    p.add_argument("--appimage", help="chemin d'une AppImage à lancer à la place de dash (--data : son dossier de données, ex. <XDG>/xenondash/<version> ; XDG_DATA_HOME via --env)")
     p.add_argument("--exe", default="dash", help="exécutable du dossier de build (dash ; avatar : éditeur d'avatar)")
     p.add_argument("--display", type=int, default=96)
     p.add_argument("--env", action="append")

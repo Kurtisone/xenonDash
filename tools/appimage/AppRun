@@ -158,6 +158,21 @@ fi
 # xxhsum (XXH3 des shaders) : embarqué dans l'AppImage (tools/xxhsum), sinon celui du système
 [ -x "$SHARE/tools/xxhsum" ] && export XD_XXHSUM=$SHARE/tools/xxhsum
 
+# Éditeur d'avatar (2e exécutable, AvatarEditor.xex recompilé) : le Dashboard cède la place au superviseur, qui relance l'AppImage avec
+# XENONDASH_EXE=avatar (le montage de l'AppImage d'où tournait le Dashboard disparaît avec lui). Chemin court : pas d'import ni de contrôle
+# de shaders, mêmes données, journal à part. Même XAM recompilé et mêmes modules (libdash_*.so) que le Dashboard.
+if [ "${XENONDASH_EXE:-dash}" = avatar ]; then
+  ready || { echo "Données absentes : $DATA (utiliser --import)" >&2; exit 1; }
+  [ -x "$HERE/usr/bin/avatar" ] || { echo "XenonDash : éditeur d'avatar absent de cette AppImage" >&2; exit 1; }
+  unset XENONDASH_EXE
+  if [ -f "$SHARE/xam" ]; then
+    DASH_XAM_MODULE=$(cat "$SHARE/xam") ; export DASH_XAM_MODULE
+    DASH_PROFILE_MODE=xam ; export DASH_PROFILE_MODE
+  fi
+  cd "$DATA" || exit 1
+  exec "$HERE/usr/bin/avatar" --game_data_root="$DATA" --log_file="$DATA/avatar.log" "$@"
+fi
+
 IMPORTED=0
 if [ "$REIMPORT" = 1 ] || [ -n "$UPDATE" ] || ! ready; then
   detect_side_files
