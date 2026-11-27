@@ -4,9 +4,9 @@
 #include <cstdlib>
 
 #include "dash_app_base.h"
+#include "dash_launch.h"
 
 void RegisterRecompiledModules(rex::system::KernelState*);  // src/module_registry.cpp
-void AvatarReplayLogon(rex::system::KernelState*);           // src/avatar_session.cpp
 
 class AvatarApp : public xenondash::DashAppBase {
  public:
@@ -21,8 +21,12 @@ class AvatarApp : public xenondash::DashAppBase {
   // Le codegen de l'éditeur ne déclare aucun module : le registre (xam, hud, XUI) est celui du Dashboard, enregistré avant le chargement de XAM.
   void OnPostSetup() override {
     RegisterRecompiledModules(runtime()->kernel_state());
+    // Cache de shaders de l'éditeur (le Dashboard exporte DASH_NGPU_SHADERS=<données>/shaders/dash dans l'environnement hérité).
+    setenv("DASH_NGPU_SHADERS", (game_data_root() / "shaders" / "avatar").string().c_str(), 1);
+    // Titre natif sous le superviseur : XamLoaderLaunchTitleEx(NULL) = retour au Dashboard (common/src/dash_launch.cpp).
+    dash::launch::SetChildMode(true);
+    // La session du Dashboard (comptes, données de lancement 'EPIX') est restaurée par DashAppBase::OnPostSetup.
     xenondash::DashAppBase::OnPostSetup();
-    AvatarReplayLogon(runtime()->kernel_state());
   }
 
   // Rendu natif (native_gpu/, profil avatar13604) : pas de plugin GPU Xenos.

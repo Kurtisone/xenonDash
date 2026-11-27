@@ -334,10 +334,40 @@ def stop_pid(pid, marker, sig=signal.SIGKILL):
     return not alive(pid)
 
 
+def relaunched_pids(st):
+    """Processus nés du dash de cette exécution après un changement de titre (superviseur de common/src/dash_launch.cpp : Dashboard ->
+    éditeur d'avatar -> Dashboard, PID différents, nouvelle session) : ceux dont l'environnement contient DISPLAY=:<écran> ET le dossier
+    de journal de l'exécution dans la ligne de commande (--log_file=<dossier>/dash.log[.avatar])."""
+    out = []
+    me = os.getpid()
+    for e in os.listdir("/proc"):
+        if not e.isdigit() or int(e) in (me, st["dash_pid"], st["xvfb_pid"]):
+            continue
+        try:
+            with open(f"/proc/{e}/cmdline", "rb") as f:
+                cmd = f.read().decode("utf-8", "replace")
+            with open(f"/proc/{e}/environ", "rb") as f:
+                env = f.read().decode("utf-8", "replace")
+        except OSError:
+            continue
+        if f"DISPLAY=:{st['display']}\0" in env + "\0" and st["dir"] in cmd and "Xvfb" not in cmd:
+            out.append(int(e))
+    return out
+
+
 def cmd_stop(a):
     st = load_state(a.name)
     was = alive(st["dash_pid"])
     stop_pid(st["dash_pid"], st["log"])
+    # Dashboard relancé par le superviseur après un titre natif : d'abord le shell superviseur (sinon il relancerait le Dashboard),
+    # puis les processus restants.
+    kids = relaunched_pids(st)
+    for pid in sorted(kids, key=lambda p: 0 if "sh -c" in open(f"/proc/{p}/cmdline", "rb").read().decode("utf-8", "replace") else 1):
+        try:
+            os.kill(pid, signal.SIGKILL)
+            was = True
+        except OSError:
+            pass
     stop_pid(st["xvfb_pid"], f":{st['display']}", signal.SIGTERM)
     print(f"dash {'vivant' if was else 'déjà arrêté'} au moment de l'arrêt ; {log_lines(st)} lignes de journal ; dossier {st['dir']}")
 

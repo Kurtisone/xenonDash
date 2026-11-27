@@ -51,6 +51,7 @@
 
 #include "dash_gpd.h"
 #include "dash_launch.h"
+#include "dash_session.h"
 
 REXCVAR_DEFINE_STRING(dash_xenia, "", "Dash",
                       "Commande Xenia pour les jeux `xenia = \"...\"` de games.toml (défaut : [xenia] command, "
@@ -837,6 +838,51 @@ bool LaunchGame(const Game& g0) {
   std::_Exit(0);
 }
 
+std::string AvatarEditorExe() {
+  if (const char* e = std::getenv("DASH_AVATAR_EXE"); e && *e) return fs::exists(e) ? e : std::string();
+  const std::string self = SelfExe();
+  if (self.empty()) return {};
+  std::error_code ec;
+  const fs::path beside = fs::path(self).parent_path() / "avatar";
+  if (fs::is_regular_file(beside, ec) && beside != self) return beside.string();
+  const std::string from = "/2.0.13604.0-xam/", to = "/2.0.13604.0-avatar/";
+  if (const size_t p = self.find(from); p != std::string::npos) {
+    std::string dev = self;
+    dev.replace(p, from.size(), to);
+    dev = (fs::path(dev).parent_path() / "avatar").string();
+    if (fs::is_regular_file(dev, ec)) return dev;
+  }
+  return {};
+}
+
+bool LaunchAvatarEditor() {
+  const std::string exe = AvatarEditorExe();
+  if (exe.empty()) return false;
+  Game g;
+  g.title_id = 0x584D07D1;
+  g.name = "Avatar Editor";
+  g.kind = "native";
+  g.keep_ld = true;  // SDK partagé : même LD_LIBRARY_PATH que le Dashboard
+  g.command = "exec " + Q(exe);
+  const auto args = SelfArgs();
+  for (size_t i = 1; i < args.size(); i++) {
+    if (args[i].rfind("--dash_launch", 0) == 0) {  // lancement de test du Dashboard : pas pour l'éditeur
+      if (args[i].find('=') == std::string::npos && i + 1 < args.size()) i++;
+      continue;
+    }
+    // Journal séparé : celui du Dashboard est conservé pour le diagnostic.
+    g.command += " " + Q(args[i].rfind("--log_file=", 0) == 0 ? args[i] + ".avatar" : args[i]);
+  }
+  REXLOG_INFO("[dash] éditeur d'avatar : {}", exe);
+  return LaunchGame(g);
+}
+
+namespace {
+std::atomic<bool> g_child_mode{false};
+}
+void SetChildMode(bool on) { g_child_mode.store(on); }
+bool ChildMode() { return g_child_mode.load(); }
+
 namespace {
 
 std::string GuestStr(uint8_t* base, uint32_t addr) {
@@ -943,6 +989,20 @@ REX_HOOK_RAW(__imp__XamLoaderLaunchTitle) {
 REX_HOOK_RAW(__imp__XamLoaderLaunchTitleEx) {
   REXLOG_INFO("[dash] XamLoaderLaunchTitleEx(r3={:#x} r4={:#x} r5={:#x} r6={:#x})", ctx.r3.u64, ctx.r4.u64,
               ctx.r5.u64, ctx.r6.u64);
+  // Titre natif lancé par le Dashboard (éditeur d'avatar) : chemin NULL = requête 10 de XAM, retour au Dashboard. Les comptes connectés
+  // et les données de lancement que le titre vient de poser (XamLoaderSetLaunchData) passent au Dashboard par le fichier de session ; le
+  // processus quitte et le superviseur relance le Dashboard.
+  if (dash::launch::ChildMode() && ctx.r3.u32 == 0) {
+    dash::session::Session s;
+    s.xuid = dash::session::SignedInXuids(ctx, base);
+    if (auto xam = REX_KERNEL_STATE()->GetKernelModule<rex::kernel::xam::XamModule>("xam.xex")) {
+      if (xam->loader_data().launch_data_present) s.launch = xam->loader_data().launch_data;
+    }
+    dash::session::Write(s);
+    REXLOG_INFO("[dash] retour au Dashboard demandé par le titre : le processus se termine, le superviseur relance le Dashboard");
+    rex::FlushLogging();
+    std::_Exit(0);
+  }
   dash::launch::OnLaunchRequest("XamLoaderLaunchTitleEx", dash::launch::GuestStr(base, ctx.r3.u32), ctx.r6.u32);
   ctx.r3.u64 = 0x80004005u;  // E_FAIL : le jeu n'a pas été lancé (construction en cours, refus ou jeu inconnu)
 }

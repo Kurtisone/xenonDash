@@ -21,6 +21,7 @@
 #include <rex/system/user_module.h>
 
 #include "dash_input.h"
+#include "dash_session.h"
 #include "dash_launch.h"
 #include "dash_xam_redirect.h"
 #include "dash_xam_runtime.h"
@@ -152,6 +153,9 @@ void DashAppBase::OnPostSetup() {
       REXLOG_WARN("[dash] DASH_XAM_MODULE défini mais le projet ne déclare pas de module xam.xex");
     }
   }
+  // Session léguée par le processus précédent (Dashboard -> éditeur d'avatar -> Dashboard) : après le lancement du chargement de XAM
+  // (la connexion en dépend), avant le démarrage du titre : les comptes sont reconnectés quand le titre vérifie l'utilisateur.
+  dash::session::Restore(runtime()->kernel_state());
 }
 
 }  // namespace xenondash

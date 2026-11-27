@@ -38,7 +38,7 @@ add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/../../common xenondash_common)
 # Sources partagées avec le Dashboard (sans rapport avec dash.xex : noyau vidéo, accroches de XAM, trace du HUD) ; pas dash_font_patch.cpp.
 set(DASH_SRC ${CMAKE_CURRENT_SOURCE_DIR}/../2.0.13604.0-xam/src)
 add_executable(avatar
-    src/main.cpp src/module_registry.cpp src/avatar_session.cpp
+    src/main.cpp src/module_registry.cpp
     ${DASH_SRC}/kernel_video_output.cpp ${DASH_SRC}/hud_d3d_trace.cpp ${DASH_SRC}/xam_neutralize.cpp)
 target_include_directories(avatar PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
 target_link_libraries(avatar PRIVATE xenondash_common)

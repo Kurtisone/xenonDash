@@ -52,6 +52,18 @@ std::optional<Game> Find(uint32_t title_id);
 // 2026-11-21) — le lecteur ne réagira qu'à un véritable lecteur optique. Les lancements passent par LaunchGame.
 bool LibraryEnabled();
 bool LaunchGame(const Game& g);  // ne revient pas si le lancement réussit
+
+// Éditeur d'avatar (AvatarEditor.xex recompilé, 2e exécutable `avatar`, dashboards/2.0.13604.0-avatar). Chemin de l'exécutable, vide s'il
+// est absent : DASH_AVATAR_EXE (diagnostic), sinon `avatar` à côté du Dashboard, sinon le dossier de build voisin
+// (2.0.13604.0-xam -> 2.0.13604.0-avatar, développement).
+std::string AvatarEditorExe();
+// Lance l'éditeur sous le superviseur (même chemin que LaunchGame : le Dashboard cède la place, puis est relancé à la sortie de
+// l'éditeur). Mêmes options que le Dashboard, journal à part (<journal>.avatar). Ne revient pas si le lancement réussit.
+bool LaunchAvatarEditor();
+// Dans un titre natif lancé par le superviseur (l'éditeur) : XamLoaderLaunchTitleEx(NULL) = retour au Dashboard (écrit la session,
+// quitte le processus).
+void SetChildMode(bool on);
+bool ChildMode();
 void Init();                     // --dash_launch
 
 }  // namespace dash::launch

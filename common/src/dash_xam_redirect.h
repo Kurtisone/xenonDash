@@ -79,6 +79,10 @@ bool ShowXamGuide(uint32_t user_index, int wait_ms);
 // (XHostThread). Faux si XAM n'est pas chargé/redirigé ou si XAM refuse (r3 != 0).
 bool ShowXamToast(const char16_t* text);
 
+// XUID (masque 3) de l'utilisateur `user` (0 à 3) connecté dans XAM recompilé, 0 si l'emplacement est vide. Appel invité : `ctx` est le
+// contexte de l'appelant (sa pile sert de tampon).
+uint64_t UserXuid(const PPCContext& ctx, uint8_t* base, uint32_t user);
+
 }  // namespace dash::xamredir
 
 // Accroche typée (comme REX_HOOK) qui, en mode profil XAM, exécute l'export de XAM recompilé de même nom.

@@ -93,8 +93,18 @@ git (liste en fin de fichier). État courant : `docs/REPRISE.md`. Les mesures da
   par `DASH_XAM_REDIRECT=<noms>`.
 - Signatures : `XamShowMessageBoxUI` a 9 arguments (le 9e à `r1 + 0x54`) ; `XamShowGuideUI` un seul (`user_index`).
 - `XamUserGetSigninState` : `XN_SYS_SIGNINCHANGED` est rediffusé côté HLE (le Dashboard écoute les files du SDK, pas celles de XAM).
-- `AvatarEditorOption2` : `XamLaunchAvatarEditor` (ordinal 2011) ouvre `XamShowAvatarMiniCreatorUI(user, 2)` (ordinal 1700) ; ouverture
-  différée depuis le MiniCreator (un appel synchrone après `XamAppUnloadStack` renvoie 5).
+- `AvatarEditorOption2` : `XamLaunchAvatarEditor` (ordinal 2011) lance l'éditeur réel, 2e exécutable `avatar`
+  (`dashboards/2.0.13604.0-avatar`, AvatarEditor.xex recompilé, même base 0x92000000 que dash.xex : un processus à part, relancé par le superviseur
+  de `LaunchGame`). Le Dashboard écrit `<DASH_XAM_STATE>/session.txt` (`common/src/dash_session.cpp` : XUID des 4 emplacements, données de
+  lancement `EPIX` de 0x10C octets construites comme XAM 13604 : +4 utilisateur, +8 r4, +12 chaîne large) puis cède la place. L'éditeur lit le
+  fichier avant le démarrage du titre (`DashAppBase::OnPostSetup`), pose les données de lancement et rejoue `XamUserLogon(XUID[4], 0x424)` dans
+  son XAM recompilé (4 s). « Save and Exit » : l'éditeur écrit le manifeste (XamAvatarSetManifest : GPD du profil, réglage 0x63E80044) puis
+  `XamLoaderSetLaunchData` et `XamLoaderLaunchTitleEx(NULL)` : le processus réécrit `session.txt` (comptes, données de retour de 1020 octets) et
+  quitte, le superviseur relance le Dashboard, qui reconnecte le compte. Pas de B au menu principal de l'éditeur. Chemin de l'exécutable :
+  `DASH_AVATAR_EXE` (diagnostic), sinon `avatar` à côté du Dashboard, sinon le dossier de build voisin (`-xam` -> `-avatar`). Repli (journalisé) sur
+  l'option 2 si l'exécutable est absent : `XamShowAvatarMiniCreatorUI(user, 2)` (ordinal 1700), ouverture différée depuis le MiniCreator (un appel
+  synchrone après `XamAppUnloadStack` renvoie 5). Les appels de `signin.xex` (profil sans avatar), de `createprofile.xex` et du MiniCreator (Y)
+  gardent l'option 2.
 - « Customize Avatar » de dash.xex (`sub_9231DC28`) : `XamPackageManagerGetExperienceMode` (retour `0x9231DC44`) et `XamPackageManagerGetFileSize`
   (retour `0x9231DC64`) vont à XAM recompilé pour CET appel seulement (mesuré le 2026-11-26 : mode `0x2`, `AvatarEditor.xex` 15 556 608 octets
   dans l'index) ; ailleurs le HLE (r3 = 0), car la redirection globale ouvre `AvatarEditor.xex` au démarrage. Le Dashboard appelle alors

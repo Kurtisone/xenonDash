@@ -1,5 +1,7 @@
 // xenondash common - redirection des imports XAM du Dashboard vers XAM recompilé (voir dash_xam_redirect.h).
 
+#include "dash_launch.h"
+#include "dash_session.h"
 #include "dash_xam_redirect.h"
 #include "dash_xam_runtime.h"
 
@@ -1050,6 +1052,29 @@ void ReopenAvatarChooserLater(uint32_t user) {
   hosts.back()->Create();
 }
 
+// Données de lancement de XamLaunchAvatarEditor (XAM 13604, 0x818B7C20) : 268 octets (0x10C) gros-boutiste, +0 'EPIX', +4 indice de
+// l'utilisateur (r3), +8 r4, +12 chaîne large optionnelle (r5, 127 caractères au plus). Elles passent à l'éditeur, qui les lit par
+// XamLoaderGetLaunchData (0x920C9A88), avec les comptes connectés (session). Vrai si l'éditeur est lancé (ne revient pas).
+bool LaunchAvatarEditorProcess(uint32_t user, PPCContext& ctx, uint8_t* base) {
+  if (dash::launch::AvatarEditorExe().empty()) return false;
+  dash::session::Session s;
+  s.xuid = dash::session::SignedInXuids(ctx, base);
+  s.launch.assign(0x10C, 0);
+  auto put32 = [&](size_t off, uint32_t v) {
+    for (int i = 0; i < 4; ++i) s.launch[off + i] = uint8_t(v >> (24 - 8 * i));
+  };
+  put32(0, 0x45504958u);  // 'EPIX'
+  put32(4, user);
+  put32(8, ctx.r4.u32);
+  if (ctx.r5.u32) {
+    const auto* src = reinterpret_cast<const uint16_t*>(base + ctx.r5.u32);  // déjà gros-boutiste en mémoire invitée
+    for (size_t i = 0; i < 127 && src[i]; ++i) std::memcpy(&s.launch[12 + 2 * i], &src[i], 2);
+  }
+  dash::session::Write(s);
+  REXLOG_INFO("[avatar] XamLaunchAvatarEditor(utilisateur {}) : lancement de l'éditeur d'avatar (exécutable séparé)", user);
+  return dash::launch::LaunchAvatarEditor();
+}
+
 // Vrai si l'import a été servi ici (XamLaunchAvatarEditor).
 bool AvatarEditorOption2(ModuleImport& imp, PPCContext& ctx, uint8_t* base) {
   if (std::string_view(imp.name) != "XamLaunchAvatarEditor") return false;
@@ -1062,7 +1087,18 @@ bool AvatarEditorOption2(ModuleImport& imp, PPCContext& ctx, uint8_t* base) {
     ctx.r3.u64 = 0;
     return true;
   }
-  REXLOG_INFO("[avatar] XamLaunchAvatarEditor(utilisateur {}) lr={:08X} -> choix d'avatar (option 2)", user, lr);
+  // Éditeur réel (exécutable séparé) pour « Customize Avatar » et « Avatar » d'Edit Profile ; les flux de signin.xex (profil sans avatar) et de
+  // createprofile.xex gardent l'écran de choix du MiniCreator (option 2).
+  const bool old_flow = CallerInModule(lr, "signin.xex") || CallerInModule(lr, "createprofile.xex");
+  if (!old_flow && LaunchAvatarEditorProcess(user, ctx, base)) {  // ne revient pas : le Dashboard cède la place à l'éditeur
+    ctx.r3.u64 = 0;
+    return true;
+  }
+  if (old_flow)
+    REXLOG_INFO("[avatar] XamLaunchAvatarEditor(utilisateur {}) lr={:08X} : flux signin/createprofile -> choix d'avatar du MiniCreator (option 2)", user, lr);
+  else
+    REXLOG_WARN("[avatar] XamLaunchAvatarEditor(utilisateur {}) lr={:08X} : exécutable `avatar` absent ou lancement refusé, REPLI sur le "
+                "choix d'avatar du MiniCreator (option 2)", user, lr);
   const uint32_t err = ShowAvatarChooser(user, ctx, base);
   if (err == kErrorAccessDenied) {
     ReopenAvatarChooserLater(user);
@@ -1345,6 +1381,8 @@ void Configure(rex::system::KernelState* ks, rex::runtime::ExportResolver* resol
     }).detach();
   }
 }
+
+uint64_t UserXuid(const PPCContext& ctx, uint8_t* base, uint32_t user) { return XamXuidOfUser(ctx, base, user); }
 
 }  // namespace dash::xamredir
 
