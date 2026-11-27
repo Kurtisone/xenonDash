@@ -10,11 +10,18 @@ option(NGPU_CORE "Facade 6770 sur le noyau ngpu_core (OFF : ancien backend vk_ba
 # NGPU_PROFILE : XDK D3D liee dans le Dashboard (defini par le CMakeLists de la version avant add_subdirectory ; defaut 6770).
 #   6770  : D3D 2.0.6132, crochets d'adresses fixes (front6770.cpp, hooks_frame.cpp), entrees de trace d3d6770_entries.inc.
 #   13604 : D3D 2.0.20158, facade front_profile.cpp pilotee par profiles/dash13604.h (adresses retrouvees par tools/d3d_match.py).
+#   avatar13604 : meme D3D lie dans AvatarEditor.xex (profiles/avatar13604.h).
 set(NGPU_PROFILE "6770" CACHE STRING "Version du D3D invite : 6770 ou 13604")
-if(NGPU_PROFILE STREQUAL "13604")
+if(NGPU_PROFILE STREQUAL "13604" OR NGPU_PROFILE STREQUAL "avatar13604")
   set(NGPU_CORE ON)
-  set(NGPU_PROFILE_FILE dash13604.h)
-  set(NGPU_ENTRIES_FILE d3d13604_entries.inc)
+  if(NGPU_PROFILE STREQUAL "avatar13604")
+    # AvatarEditor.xex 13604 (titre 584D07D1) : meme bibliotheque D3D que dash.xex, autres adresses (profiles/avatar13604.h).
+    set(NGPU_PROFILE_FILE avatar13604.h)
+    set(NGPU_ENTRIES_FILE avatar13604_entries.inc)
+  else()
+    set(NGPU_PROFILE_FILE dash13604.h)
+    set(NGPU_ENTRIES_FILE d3d13604_entries.inc)
+  endif()
   set(NGPU_SOURCES src/d3d_trace.cpp src/null_gpu.cpp src/vk_backend.cpp src/front_profile.cpp
                    src/dash_guide_front.cpp)
   # NGPU_HUD (defini par le projet avec XAM recompile) : facade du HUD de XAM (D3D 2099), crochets appeles par dash_xam (palier N2).

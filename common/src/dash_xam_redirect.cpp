@@ -1482,6 +1482,24 @@ DASH_XAM_REDIRECT_HOOK(XamShowGuideUI)
 DASH_XAM_REDIRECT_HOOK(XamAppUnloadStack)
 DASH_XAM_REDIRECT_HOOK(XamFormatDateString)
 DASH_XAM_REDIRECT_HOOK(XamFormatTimeString)
+// Imports de l'éditeur d'avatar (AvatarEditor.xex, dashboards/2.0.13604.0-avatar) : hooks sans redirection par défaut (le Dashboard ne les
+// importe pas), activés par DASH_XAM_REDIRECT dans le main de l'éditeur. Sans eux le HLE du SDK les laisse en stubs : XamAvatarEnumAssets
+// rendait sans rien écrire et l'éditeur le rappelait en boucle (12 millions de lignes de journal en 50 s, un cœur à 100 %).
+DASH_XAM_REDIRECT_HOOK(XamAvatarBeginEnumAssets)
+DASH_XAM_REDIRECT_HOOK(XamAvatarEnumAssets)
+DASH_XAM_REDIRECT_HOOK(XamAvatarEndEnumAssets)
+DASH_XAM_REDIRECT_HOOK(XamAvatarGetAssetBinary)
+DASH_XAM_REDIRECT_HOOK(XamAvatarGetAssetIcon)
+DASH_XAM_REDIRECT_HOOK(XamAvatarGetInstalledAssetPackageDescription)
+DASH_XAM_REDIRECT_HOOK(XamAvatarSetManifest)
+DASH_XAM_REDIRECT_HOOK(XamUserCreateAvatarAssetEnumerator)
+DASH_XAM_REDIRECT_HOOK(XamUserValidateAvatarManifest)
+DASH_XAM_REDIRECT_HOOK(XamPngDecode)
+DASH_XAM_REDIRECT_HOOK(XamPngEncodeEx)
+DASH_XAM_REDIRECT_HOOK(XamWriteGamerTile)
+DASH_XAM_REDIRECT_HOOK(XamWriteGamerTileEx)
+DASH_XAM_REDIRECT_HOOK(XamWriteTile)
+DASH_XAM_REDIRECT_HOOK(XamUserProfileSync)  // « Save and Exit » : le stub du SDK rendait un résidu de r3 (« Can't save your avatar »)
 // Autres imports d'interface du Dashboard (inventaire docs/xam_recompile.md) : hooks sans redirection par défaut, pour mesurer les appels
 // ([xamredir] <nom> : appel 1 par HLE) ; ajoutés à la liste de Configure quand ils sont redirigés.
 DASH_XAM_REDIRECT_HOOK(XamShowAchievementsUIEx)

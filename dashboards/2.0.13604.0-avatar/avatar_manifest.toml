@@ -1,0 +1,13 @@
+# AvatarEditor.xex 2.0.13604 (titre 584D07D1) : éditeur d'avatar complet, lancé par XamLaunchAvatarEditor. Prototype de phase 1
+# (docs : étude d'architecture) : second exécutable du Dashboard Kinect, même runtime et mêmes modules XAM/HUD que dash.
+# Base 0x92000000 comme dash.xex : les deux ne peuvent pas cohabiter dans un processus (sur console aussi, le Dashboard est
+# relancé à la sortie de l'éditeur).
+[project]
+name = "avatar"
+sdk_version = "0.10.0"
+game_root = "assets"
+
+[entrypoint]
+file_path = "assets/AvatarEditor.xex"
+out_directory_path = "generated/avatar"
+includes = ["avatar_overrides.toml"]

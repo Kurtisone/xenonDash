@@ -142,7 +142,7 @@ def cmd_start(a):
     os.makedirs(os.path.join(d, "fb"))
     data = os.path.abspath(a.data)
     build = os.path.abspath(a.build)
-    dash = os.path.join(build, "dash")
+    dash = os.path.join(build, getattr(a, "exe", None) or "dash")  # --exe avatar : éditeur d'avatar (dashboards/2.0.13604.0-avatar)
     for p in (data, dash):
         if not os.path.exists(p):
             sys.exit(f"absent : {p}")
@@ -355,6 +355,7 @@ def main():
     p.add_argument("name")
     p.add_argument("--data", required=True)
     p.add_argument("--build", default=DEFAULT_BUILD)
+    p.add_argument("--exe", default="dash", help="exécutable du dossier de build (dash ; avatar : éditeur d'avatar)")
     p.add_argument("--display", type=int, default=96)
     p.add_argument("--env", action="append")
     p.add_argument("--unset", action="append")
