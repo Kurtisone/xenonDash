@@ -348,7 +348,7 @@ Welcome). Application XMP : table de `sub_81893EE0` (`0x81C06F78 - 0xB8 * id`), 
   (image, nom, avatar), création de profil jusqu'à « Save Profile » (scène Congratulations de `createprofile.xex`, après le choix d'avatar),
   panneau du Guide après B : tout fonctionne ; la fermeture du Guide et le panneau vide venaient du MiniCreator non recompilé (voir plus haut).
 - MiniCreator d'option 2 sans bouton B ; avatar complet (`AvatarEditor.xex`) à recompiler ; créer un profil nommé `a` (déjà existant) affiche « must begin with a letter » (hypothèse : code d'erreur « nom pris » mal traduit ; non mesuré).
-- AppImage avec ces correctifs non vérifiée sur le Deck. Plusieurs manettes (2026-11-27) : validé au banc avec des manettes SDL virtuelles (Guide, clavier virtuel, bouton Guide d'une seconde manette, branchement et retrait) ; reste à confirmer avec l'Afterglow réelle. `XamShowGuideUI(1)` affiche le même Guide que `(0)` (profil connecté, mesuré au banc).
+- Validé sur le Steam Deck le 2026-11-27 : manette du Deck et Afterglow (Guide, clavier virtuel, bouton Guide de chaque manette, rebranchement). `XamShowGuideUI(1)` affiche le même Guide que `(0)` (profil connecté, mesuré au banc).
 - `XamUserReadProfileSettings(Ex)`/`Write` toujours au HLE ; contenu lié au profil HLE. Mesure : `DASH_XAM_REDIRECT=XamUserReadProfileSettings,XamUserReadProfileSettingsEx`
   (lecture par XAM) donne gamertag et avatar corrects, mais l'image du joueur (haut à droite) disparaît (hypothèse : un réglage lu par le hub, ex. `0x402C0011`, absent du GPD) :
   désactivé par défaut tant que ce réglage n'est pas rempli.

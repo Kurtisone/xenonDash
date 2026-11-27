@@ -1,8 +1,8 @@
 # Reprise du projet par une autre session ou un autre modèle
 
-Ce document permet de reprendre le travail sans l'historique de conversation. Dernière mise à jour : 2026-11-26.
-**État bref** : boot propre, hub Kinect navigable au clavier, Game Library stable, boîtes système et HUD rendus, Guide, création de profil, connexion et avatar prédéfini fonctionnels (banc),
-une seule AppImage `XenonDash-Kinect.AppImage`. Non vérifié : l'AppImage sur le Deck avec les derniers correctifs, l'éditeur d'avatar complet.
+Ce document permet de reprendre le travail sans l'historique de conversation. Dernière mise à jour : 2026-11-27 (`main` = `fe48c98`).
+**État bref** : AppImage `XenonDash-Kinect.AppImage` validée sur le Steam Deck (27/11) : hub, Guide, connexion et création de profil, clavier virtuel, plusieurs manettes, bibliothèques,
+Clock, résolution, succès et toasts par XAM. Ouverts en tête : Customize Avatar et la boîte « mise à jour » à la connexion (éditeur `AvatarEditor.xex` non recompilé), toast « signed out » absent.
 Détail avant condensation : `git show d96c252:docs/REPRISE.md`.
 
 ## Comment reprendre
@@ -65,6 +65,16 @@ Règle : le README reste court et destiné aux utilisateurs ; tout détail techn
   (« CET ») faisait réécrire GMT au démarrage. **17559 : noms laissés vides** (`kernel_xconfig.cpp`) : plantage de Clock non expliqué (cause non trouvée), détail dans `git show d96c252:docs/REPRISE.md`.
 - **Police** : `dash_font_patch.cpp` ne remplace la police principale (JKLatin) par XenonSCLatin que si `flash/XenonSCLatin.xtt` est importée ; sinon tout le texte disparaissait. Le glyphe Gamerscore U+E00A n'est que dans SCLatin ; `DASH_FONT_PATCH=0` désactive.
 - **KeBugCheck fatal** (SDK `7f60045f`) : `[FATAL] *** STOP: 0x<code> ... appelant lr=0x…` puis `abort()` ; `xd_ghidra.py decompile <module> 0x<lr>` donne l'appelant. Le recompilateur termine aussi le bloc après un `bl` vers KeBugCheck.
+- **Manettes** (2026-11-27) : une manette virtuelle XInputd par emplacement de l'`InputSystem` (`kernel_xinputd.cpp`) et fusion des autres manettes dans les lectures système de XAM
+  (`xam_input_patch.cpp`, `DASH_XAM_INPUT_MERGE=0`) : le Guide, le clavier virtuel et les boîtes ne lisent que le port de leur utilisateur. Bouton Guide SDL activé (`DASH_GUIDE_BUTTON=0`).
+  Banc sans matériel : `DASH_TEST_PAD_FIFO=<tube>` (manettes SDL virtuelles, `dash_test_pads.cpp`, syntaxe dans [xam_recompile.md](xam_recompile.md)).
+- **Notifications** : XAM recompilé et le Dashboard (HLE) ont deux files ; ce que XAM diffuse et que le Dashboard attend doit être rediffusé (`xam_notify_patch.cpp` : `0x80040016`,
+  bibliothèques ouvertes depuis le Guide ; `dash_xam_redirect.cpp` : `XN_SYS_SIGNINCHANGED`, `XN_SYS_PROFILESETTINGCHANGED`). L'inverse (XAM qui attend une notification du HLE) est la piste du toast « signed out ».
+- **Clock et résolution** : `XamFormatDateString/TimeString` servis par XAM (vides dans le SDK ; Ghidra les nomme à tort `XInputd*`) ; `VdSetDisplayModeOverride` accepté
+  (`kernel_video_output.cpp`) : le Dashboard pose la question de confirmation, le rendu reste en 1280x720.
+- **Avatar** : `XamPackageManagerGetExperienceMode`/`GetFileSize` par XAM seulement aux retours `0x9231DC44`/`0x9231DC64` (Customize Avatar) ; la redirection globale ouvre `AvatarEditor.xex` au
+  démarrage. Après `XamAvatarSetManifest`, manifeste relu et `XN_SYS_PROFILESETTINGCHANGED` rediffusé (avatar à jour dans My Xbox). Diagnostic sur le Deck : PLAN, To-Do 1.
+- **Terminal** : `[ngpu-diag]` seulement avec `DASH_NGPU_DIAG=1` ; les dessins sans pixel shader à masque couleur nul (passe de profondeur de l'avatar) sont rendus.
 - **Fibres de XAM** (`src_xam_patch/xam_fiber_switch.cpp`) : `sub_819BF2E0` bascule vraiment de pile (ucontext) ; sans cela un fil tourne à 99 % d'un cœur ; `DASH_XAM_FIBER_FIX=0` désactive.
 
 ## Pièges
@@ -77,6 +87,8 @@ Règle : le README reste court et destiné aux utilisateurs ; tout détail techn
 - **Journaux** : `dash.log` n'est pas stdout (`[ngpu]` va sur stderr ; lire les deux, `> run.out 2>&1`). Demander le FICHIER `~/.local/share/xenondash/2.0.13604.0-xam/dash.log` à l'utilisateur, pas un collage de console.
   `DASH_GUIDE_TRACE=1` (ouverture du Guide), `DASH_LOGON_TRACE=1` (tâche de connexion `sub_818B2BF8`), `DASH_HUD_RESOLVES=1` (formes de Resolve du HUD).
 - Tas invités 0x8… et 0x9… : deux vues du même fichier (`REX_ALIAS_XEX_HEAPS=1` rétablit l'ancien mode) ; une `function_table_base` par module, sans recouvrement en adresses PHYSIQUES.
+- **`banc.py start --data D` ne copie pas D** : il le modifie. Toujours passer une copie de `work/banc/refs/2.0.13604.0-xam/donnees` (un agent a abîmé l'instantané le 2026-11-26, restauré).
+- **Journal du Deck** : `dash.log` s'accumule d'un lancement à l'autre ; ne garder que les sessions à partir du dernier `dash starting` utile. L'utilisateur peut le supprimer entre deux séries de tests.
 - **Pas de `pgrep -f`/`pkill -f`** (ils se retrouvent eux-mêmes) : `pkill -9 -x dash` ou PID, toute attente `while pgrep` bornée. Plusieurs instances de dash : touches vers la mauvaise fenêtre et OOM (~2 Go d'arène chacune) ;
   `pgrep -c -x dash` avant d'interagir.
 - `tools/dash_shaders.py` attend `xxhsum` ≤ 0.8.1. Les instrumentations dans `dashboards/*/generated/**` sont perdues à la régénération : sondes temporaires seulement, le correctif durable va dans `common/src`, `native_gpu` ou le SDK.

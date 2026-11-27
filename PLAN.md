@@ -39,14 +39,22 @@ livrées en AppImage et capables de **lancer des jeux** recompilés à la demand
 - Temps, disque et mémoire de la recompilation d'un jeu ; chaîne de compilation chez l'utilisateur.
 
 ## To-Do (Kinect 13604)
-Par ordre de priorité. Ce que le banc ne peut pas vérifier se teste sur le Deck.
-1. **Interface Xbox seulement (fait en grande partie)** : `XamShowAchievementsUIEx`, `XamShowGamerCardUI` et `XNotifyQueueUI` par XAM recompilé (liste par défaut) ; les autres imports d'interface restent des stubs du SDK, non appelés dans le parcours hors ligne ([docs/xam_recompile.md](docs/xam_recompile.md), section redirection). Progression de construction : boîte puis notification par étape (le texte d'une boîte ouverte est figé). Reste : relier le bouton « Achievements » du hub (`dash_guide_actions.cpp`), confirmer sur une vraie construction.
-2. **Profil (fait en grande partie)** : sous-menus de Customize Profile (image, nom, avatar), connexion d'un profil sans avatar, création jusqu'à « Save Profile » et panneau du Guide après B validés au banc (2026-11-26). Reste : `XamUserReadProfileSettings(Ex)` et `Write` vers XAM (lecture par XAM : gamertag et avatar justes, image du joueur absente ; voir [docs/xam_recompile.md](docs/xam_recompile.md), problèmes ouverts) ; « Enter Pass Code » à confirmer sur le Deck.
-3. **Avatar (fait en grande partie)** : Customize Avatar atteint `XamLaunchAvatarEditor` (mode d'expérience et index lus dans XAM pour cet appel), choix d'avatar par le MiniCreator (option 2) et avatar mis à jour dans My Xbox. Reste : le MiniCreator d'option 2 n'a pas de bouton B ; `AvatarEditor.xex` plus tard.
-4. **Succès (à moitié fait)** : `XamShowAchievementsUIEx` et toasts par XAM validés au banc (panneau « Achievements » à 0 succès, toast bas centre). Reste : succès réellement débloqués par un titre (aucun profil de test n'en a), notifications `XN_` de déblocage.
-5. **Manettes (corrigé au banc, à confirmer sur le Deck)** : une manette virtuelle par emplacement de l'`InputSystem` annoncée à XAM, lecture système fusionnée (chaque manette pilote Guide, clavier virtuel et boîtes), bouton Guide activé (`guide_button`) et lu sur les 4 utilisateurs ; causes et mesures dans [docs/xam_recompile.md](docs/xam_recompile.md), section Entrées. Reste : Deck + Afterglow réelle (Guide par chaque manette, branchement à chaud), boutons absents signalés avant le 2026-11-27.
-9. **Retour du Deck (27/11, lot deckB)** : corrigés au banc : bibliothèques du Guide (rediffusion de `XNotifyBroadcast 0x80040016`), Clock (`XamFormatDateString/TimeString` par XAM), changement de résolution (`VdSetDisplayModeOverride`, confirmation, `XamAppUnloadStack`). À tester sur le Deck. Reste : toast « signed out » absent au banc (XAM n'appelle pas `XNotifyQueueUI` à la déconnexion ; voir le journal `[notify]`), « Profile »/Customize Avatar du menu principal non reproduits (journal `XamShowGamerCardUIForXUID`), `XamIsUIActive` encore au HLE (relances de la boîte de résolution).
-6. **Bibliothèques média** : lecture d'un média ; sources Computer, Portable Device et Current Disc.
-7. **Lecteur optique réel** exposé en `\Device\CdRom0` (sans vrai lecteur : vide et muet).
-8. **Jeux** : XDK tardives (Trials Fusion : image noire) ; ISO et GOD réels ; plusieurs jeux en mode générique.
-Reportés à la demande de l'utilisateur : étirement 32:9 ; Blades (6770) et Metro (17559).
+Par ordre de priorité. Ce que le banc ne peut pas vérifier se teste sur le Deck. **Validé sur le Deck le 2026-11-27** : lancement et texte, manette du Deck et Afterglow
+(Guide, clavier virtuel, bouton Guide de chaque manette, rebranchement), bibliothèques depuis le Guide, Clock, question de résolution, sous-menu Profile, connexion, création de profil.
+1. **Avatar (priorité)** : sur le Deck, Customize Avatar atteint bien `XamLaunchAvatarEditor` → MiniCreator (option 2), mais le MiniCreator relance aussitôt `XamLaunchAvatarEditor`
+   (lr `0x90103CE8`, après `XamIsCurrentTitleDash`/`XamGetDashContext`) puis `XamAppUnloadStack` : rien de visible pour l'utilisateur. À la connexion d'un profil, `signin.xex` affiche une
+   boîte (`XamShowMessageBox`, lr `0x9010917C`, après `XamPackageManagerGetExperienceMode` lr `0x9010A85C`) : « mise à jour requise » selon l'utilisateur. Piste : le vrai éditeur
+   `AvatarEditor.xex` (partition système étendue `20352400`, 15 Mo, en-têtes lus) n'est pas recompilé ; le recompiler comme module (comme `Guide.AvatarMiniCreator.xex`) ou établir ce qu'attendent
+   signin et le MiniCreator (texte de la boîte, valeur du mode d'expérience vue par signin). Le MiniCreator d'option 2 n'a pas de bouton B.
+2. **Toast « signed out »** absent (banc et Deck) : XAM n'appelle pas `XNotifyQueueUI` à la déconnexion (journal `[notify]`, `xam_notify_patch.cpp`). Pistes : XAM attend sa propre
+   `XN_SYS_SIGNINCHANGED` (seule la file du HLE la reçoit) ; régression depuis `f97da85`.
+3. **Interface Xbox** : relier le bouton « Achievements » du hub (`dash_guide_actions.cpp`) ; texte d'une boîte ouverte figé (`XuiTextElementSetText`) ; progression d'une vraie construction ;
+   `XamIsUIActive` encore au HLE (relances de la boîte de résolution) ; autres imports d'interface en stubs du SDK, non appelés hors ligne.
+4. **Profil** : `XamUserReadProfileSettings(Ex)` et `Write` vers XAM (lecture par XAM : image du joueur absente ; voir [docs/xam_recompile.md](docs/xam_recompile.md)).
+5. **Succès** débloqués par un titre (aucun profil de test n'en a), notifications `XN_` de déblocage.
+6. **Résolutions et format d'image** : le mode choisi est annoncé mais le rendu reste en 1280x720 ; étirement 32:9 (reporté).
+7. **Bibliothèques média** : lecture d'un média ; sources Computer, Portable Device et Current Disc.
+8. **Lecteur optique réel** exposé en `\Device\CdRom0` (sans vrai lecteur : vide et muet).
+9. **Jeux** : XDK tardives (Trials Fusion : image noire) ; Crackdown refusé par le mode générique (Resolve 0,83, Swap 0,75 < 0,85 : recette dédiée) ; ISO et GOD réels.
+10. **Kinect** (capteur branché sur la machine de développement, USB `045e:02ae` caméra, `02b0` moteur, `02ad` audio) : servir les imports NUI en natif ; chantier à lancer seulement à la demande de l'utilisateur.
+Reportés à la demande de l'utilisateur : Blades (6770) et Metro (17559).
