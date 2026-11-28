@@ -37,7 +37,7 @@ import dash_shaders as ds  # noqa: E402
 import hud_shaders as hs  # noqa: E402
 
 # À incrémenter si le format des shaders générés change (force une régénération chez les utilisateurs).
-SHADER_VERSION = "1"
+SHADER_VERSION = "2"
 
 
 def say(msg):

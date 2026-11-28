@@ -36,7 +36,7 @@ VERSION = "2.0.13604.0"
 VARIANT = VERSION + "-xam"
 PROJECT = "xd13604"
 LANG = "PowerPC:BE:64:A2ALT-32addr"
-MODULES = {"xam": "xam.xex", "dash": "dash.xex"}
+MODULES = {"xam": "xam.xex", "dash": "dash.xex", "avatar": "SystemExtPartition/20352400/AvatarEditor.xex"}  # avatar : éditeur d'avatar (même D3D que dash.xex)
 # Modules XUI recompilés (chargés à la demande à 0x90100000) : XEX dans flash/, code généré dans generated/dash/<module>.
 XUI_MODULES = ("signin", "gamerprofile", "createprofile", "Guide_AvatarMiniCreator")
 for _m in XUI_MODULES:
@@ -166,7 +166,7 @@ def xam_exports(xex, img, base):
 def helpers(gen_dir):
     res = {}
     for fn in sorted(os.listdir(gen_dir)):
-        if re.match(r"dash_recomp\.\d+\.cpp$", fn):
+        if re.match(r"(dash|avatar)_recomp\.\d+\.cpp$", fn):
             with open(os.path.join(gen_dir, fn), encoding="utf-8", errors="replace") as f:
                 for m in HELPER_RE.finditer(f.read()):
                     res[int(m.group(1), 16)] = m.group(2)
@@ -176,7 +176,10 @@ def helpers(gen_dir):
 def build_entries(module, data):
     xex, img, info = image(module, data)
     base = info["base"]
-    gen = os.path.join(ROOT, "dashboards", VARIANT, "generated", *(("dash", module) if module in XUI_MODULES else (module,)))
+    if module == "avatar":  # 2e exécutable (dashboards/2.0.13604.0-avatar)
+        gen = os.path.join(ROOT, "dashboards", VERSION + "-avatar", "generated", "avatar")
+    else:
+        gen = os.path.join(ROOT, "dashboards", VARIANT, "generated", *(("dash", module) if module in XUI_MODULES else (module,)))
     part = os.path.join(gen, "codegen.partition.json")
     if not os.path.exists(part):
         sys.exit(f"code généré absent : {part} (il est produit par la compilation de {VARIANT})")

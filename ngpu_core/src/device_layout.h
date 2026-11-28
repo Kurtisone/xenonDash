@@ -23,6 +23,7 @@ struct DeviceLayout {
   uint32_t pixel_constants = device::kPixelConstants;            // 256 float4
   uint32_t vertex_bool_constants = device::kVertexBoolConstants;  // 4 mots
   uint32_t pixel_bool_constants = device::kPixelBoolConstants;    // 4 mots
+  uint32_t pixel_loop_constants = device::kPixelLoopConstants;    // 16 mots
   // Decalage de chaque groupe de registres (meme ordre et memes tailles que kRegisterGroups)
   uint32_t register_groups[7] = {10368, 10444, 10528, 10548, 10596, 10680, 10832};
   // Champs lus par la facade
@@ -51,6 +52,7 @@ inline void Canonicalize(const DeviceLayout& layout, const uint8_t* device, uint
   std::memcpy(out + device::kPixelConstants, device + layout.pixel_constants, 256 * 16);
   std::memcpy(out + device::kVertexBoolConstants, device + layout.vertex_bool_constants, 16);
   std::memcpy(out + device::kPixelBoolConstants, device + layout.pixel_bool_constants, 16);
+  std::memcpy(out + device::kPixelLoopConstants, device + layout.pixel_loop_constants, 64);
   for (uint32_t g = 0; g < 7; ++g) {
     std::memcpy(out + kRegisterGroups[g].offset, device + layout.register_groups[g], 4 * kRegisterGroups[g].count);
   }

@@ -43,8 +43,9 @@ Par ordre de priorité. Ce que le banc ne peut pas vérifier se teste sur le Dec
 (Guide, clavier virtuel, bouton Guide de chaque manette, rebranchement), bibliothèques depuis le Guide, Clock, question de résolution, sous-menu Profile, connexion, création de profil.
 1. **Avatar (priorité)** — 2026-11-28 : Customize Avatar ouvre le **vrai éditeur** `AvatarEditor.xex` recompilé (second exécutable `avatar`, aller-retour par le superviseur, AppImage `f19d6c5a…`) ;
    au banc : Change My Features, My Style, changement d'habit, Save and Exit, avatar modifié dans My Xbox et conservé après relance. **À vérifier sur le Deck** (journal `avatar.log` à côté de `dash.log`).
-   Reste : icônes des objets brouillées dans les grilles (`XamPngDecode` correct, piste : textures XUI, Xenia en oracle) ; retour sur Welcome au lieu de My Xbox (commande `0x35` des données de retour
-   sans consommateur trouvé) ; 2 pixel shaders sur 91 non traduits (constante de boucle `i16` non passée par ngpu_core) ; branches non résolues `0x920E7EC0`/`0x92231D1C` ; Marketplace (hors ligne) ;
+   Corrigés le 28/11 : icônes des grilles (Resolve recadré, [docs/ngpu_core.md](docs/ngpu_core.md)), 2 pixel shaders à constante de boucle `i16` (91/91), retour sur My Xbox
+   (commande de retour `0x35`), paramètres système persistants (`xconfig.toml`, langue appliquée). Reste : Marketplace (hors ligne) ; branches non résolues `0x920E7EC0`/`0x92231D1C` ;
+   Family Settings (code d'accès) non vérifié au banc ;
    au banc, un profil connecté par la seule manette 2 n'apparaît pas dans le hub alors que le Guide le montre connecté.
 2. **Toast « signed out »** absent (banc et Deck). Mesuré le 2026-11-27 (`DASH_LOGON_TRACE=1`) : la déconnexion par le Guide (X, Yes) vient de `hud.xex` (`XamUserLogon`, lr `0x913F9D80`,
    drapeaux `0x28`, `0x29` dans la tâche) ; l'étape « application » de XAM (`sub_818B0200`) ne met en file les toasts signed out/in (`XNotifyQueueUI` 6, 7/9, 8) que si le bit `0x20` est NUL :

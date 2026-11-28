@@ -50,6 +50,10 @@ r.EndFrame(front_buffer_address);       // r.presented() ; r.WaitIdle() ; SetRen
 - `DrawCall` : clés de microcode VS/PS, primitive Xenos (1, 2, 3, 4, 6, 13), comptes, **partie physique du VS telle que D3D l'a patchée** (le noyau y lit les `vfetch`), indices physiques (`indices_address`) ou en ligne (`inline_indices`),
   sommets en ligne (`inline_vertices`), `has_scissor/scissor` (pixels invités ; faux par défaut, sans effet pour 6770 et Skate).
 - `Resolve` lit la destination dans `RB_COPY_DEST_BASE/PITCH` (0x2319/0x231A) ; `EndFrame(adresse)` empaquette la texture résolue.
+  Resolve « recadré » (éditeur d'avatar, icônes des grilles) : rectangle aux coordonnées multiples de 32 qui déborde du pitch, sans point de destination ; le matériel écrit
+  les tuiles 32x32 dans l'ordre mémoire à partir de la tuile `(y/32)*pitch/32 + x/32` (base + n*0x1000), le titre y lit une image autonome. `Renderer::Resolve` décale l'adresse
+  et écrit une texture de la taille du rectangle (sinon : icônes presque vides et bruitées). Constantes de boucle du pixel shader `i16..i31` : `SharedConstants.pixelLoops`
+  (+1312), patch XenosRecomp `0010` (sans l'extension Trials) ; 91 shaders sur 91 pour l'éditeur ; `SHADER_VERSION` 2 à l'import (régénération).
 - `ShaderProvider` : SPIR-V non compressé par clé. `MapShaderProvider` (Dashboard : fichiers) et `StaticShaderProvider` (Skate : cache compilé). `WriteWatcher` (`PhysicalWriteWatcher`, pages protégées) ne reconvertit que ce qui change.
 - `Profile` : `interface_vertex_shaders`, `corner_vertex_shaders`, `scene_pitch_min/max` (échelle de rendu, image élargie) ; plage vide pour le Dashboard.
 

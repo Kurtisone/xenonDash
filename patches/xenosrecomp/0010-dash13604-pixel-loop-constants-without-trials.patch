@@ -1,0 +1,49 @@
+From: Kurtisone <104103601+Kurtisone@users.noreply.github.com>
+Date: Sat, 28 Nov 2026 10:00:00 +0100
+Subject: [PATCH 10/10] XenonDash : constantes de boucle du pixel shader (i16..i31) sans l'extension Trials
+
+Les boucles `rep`/`loop` d'un pixel shader lisent leur nombre d'iterations dans i16..i31 (constantes de boucle du
+pixel shader). Hors extension Trials, ces variables n'etaient pas declarees : le shader ne compilait pas. Elles sont
+maintenant lues dans la table SharedConstants a +1312 (apres indexedFetches), un mot par constante, nombre
+d'iterations dans l'octet de poids faible ; celles que le shader definit lui-meme (table de definitions) sont gardees.
+
+---
+diff --git a/XenosRecomp/shader_recompiler.cpp b/XenosRecomp/shader_recompiler.cpp
+--- a/XenosRecomp/shader_recompiler.cpp
++++ b/XenosRecomp/shader_recompiler.cpp
+@@ -1565,6 +1565,8 @@
+     }
+ #endif
+ 
++    std::set<int> int4Definitions;
++
+     if (shaderContainer->definitionTableOffset != NULL)
+     {
+         auto definitionTable = reinterpret_cast<const DefinitionTable*>(shaderData + shaderContainer->definitionTableOffset);
+@@ -1603,6 +1605,7 @@
+ 
+                 value = definition->values[i].get();
+ 
++                int4Definitions.insert((definition->registerIndex - 8992) / 4 + i);
+                 println("\tint4 i{} = int4({}, {}, {}, {});",
+                     (definition->registerIndex - 8992) / 4 + i, x, y, z, w);
+             }
+@@ -1624,6 +1627,18 @@
+         out += "#else\n\tint4 i16 = int4(1, 0, 0, 0);\n\tint4 i17 = int4(1, 0, 0, 0);\n#endif\n";
+     }
+ 
++    // Pixel shader loop constants i16..i31 (the loop count is the low byte), kept per draw after the SharedConstants table.
++    if (!trialsExt && isPixelShader)
++    {
++        out += "#ifdef __spirv__\n";
++        for (int n = 16; n < 32; n++)
++        {
++            if (!int4Definitions.count(n))
++                println("\tint4 i{} = int4(vk::RawBufferLoad<uint>(g_PushConstants.SharedConstants + {}) & 0xFF, 0, 0, 0);", n, 1312 + (n - 16) * 4);
++        }
++        out += "#endif\n";
++    }
++
+     uint32_t interpolatorCount = (shader->interpolatorInfo >> 5) & 0x1F;
+ 
+     for (uint32_t i = 0; i < interpolatorCount; i++)

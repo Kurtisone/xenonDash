@@ -3,7 +3,8 @@
 Ce document permet de reprendre le travail sans l'historique de conversation. Dernière mise à jour : 2026-11-28.
 **État bref** : AppImage `XenonDash-Kinect.AppImage` validée sur le Steam Deck (27/11) : hub, Guide, connexion et création de profil, clavier virtuel, plusieurs manettes, bibliothèques,
 Clock, résolution, succès et toasts par XAM. Le 28/11 : **Customize Avatar ouvre le vrai éditeur `AvatarEditor.xex` recompilé** (second exécutable `avatar`, aller-retour par le superviseur,
-validé au banc et depuis l'AppImage, à vérifier sur le Deck). Corrigés le 27/11 au soir, à vérifier sur le Deck : boîte « mise à jour » à la connexion (question Xbox LIVE de signin, réponse Non automatique)
+validé au banc et depuis l'AppImage, à vérifier sur le Deck), icônes de ses grilles nettes, retour sur My Xbox ; paramètres système persistants (`xconfig.toml` dans le dossier
+de données, langue appliquée). Corrigés le 27/11 au soir, à vérifier sur le Deck : boîte « mise à jour » à la connexion (question Xbox LIVE de signin, réponse Non automatique)
 et avatar choisi non relu pour un profil de la seconde manette. Ouverts en tête : profil de la seule manette 2 absent du hub, toast « signed out » absent (PLAN, To-Do 1 et 2).
 Détail avant condensation : `git show d96c252:docs/REPRISE.md`.
 
@@ -78,7 +79,10 @@ Règle : le README reste court et destiné aux utilisateurs ; tout détail techn
   `avatar`, `dashboards/2.0.13604.0-avatar/`, mêmes XAM et HUD recompilés, façade ngpu `avatar13604`). Le Dashboard écrit `<DASH_XAM_STATE>/session.txt` (XUID et données de lancement EPIX,
   `common/src/dash_session.cpp`), l'éditeur reconnecte le compte, Save and Exit (`XamLoaderLaunchTitleEx(NULL)`) rend la main au superviseur qui relance le Dashboard. Sous AppImage :
   AppRun relancé avec `XENONDASH_EXE=avatar`, journal `avatar.log`, shaders `shaders/avatar` générés à l'import. Repli MiniCreator journalisé si `avatar` manque ; `DASH_AVATAR_EXE` (diagnostic).
+  Retour : commande `0x35` des données de retour → chaîne My Xbox (`dash_return_channel.cpp`, `DASH_RETURN_CHANNEL=0` désactive).
   Détails : [xam_recompile.md](xam_recompile.md). Après `XamAvatarSetManifest`, manifeste relu et `XN_SYS_PROFILESETTINGCHANGED` rediffusé (avatar à jour dans My Xbox).
+- **Paramètres système** : `ExSetXConfigSetting` (catégories 3 à 7) persisté dans `<données>/xconfig.toml` (`kernel_xconfig.cpp`, seulement les valeurs différentes du défaut) ;
+  `XamGetLanguage` lit la langue persistée, `XGetLanguage` servi par XAM. Family Settings non vérifié au banc.
 - **Terminal** : `[ngpu-diag]` seulement avec `DASH_NGPU_DIAG=1` ; les dessins sans pixel shader à masque couleur nul (passe de profondeur de l'avatar) sont rendus.
 - **Fibres de XAM** (`src_xam_patch/xam_fiber_switch.cpp`) : `sub_819BF2E0` bascule vraiment de pile (ucontext) ; sans cela un fil tourne à 99 % d'un cœur ; `DASH_XAM_FIBER_FIX=0` désactive.
 

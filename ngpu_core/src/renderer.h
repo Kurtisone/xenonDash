@@ -155,6 +155,16 @@ class Renderer {
   bool ReadResolved(uint32_t address, std::vector<uint8_t>& rgba, uint32_t& width,
                     uint32_t& height);
 
+  // The color surface the last crop resolve read (debugging: dumps).
+  bool ReadCropSource(std::vector<uint8_t>& rgba, uint32_t& width, uint32_t& height);
+
+  // The guest addresses of the resolved textures (debugging: dumps).
+  std::vector<uint32_t> ResolvedAddresses() const {
+    std::vector<uint32_t> addresses;
+    for (const auto& entry : resolved_) addresses.push_back(entry.first);
+    return addresses;
+  }
+
   // Why draws or textures were skipped, and counts, for reports.
   const std::map<std::string, uint32_t>& stats() const { return stats_; }
   // Where the renderer thread's time goes, for the pacing log.
@@ -203,6 +213,8 @@ class Renderer {
     uint32_t watch_stamp = 0;    // guest and resolved textures: WriteWatcher::Watch's
   };
   uint32_t ResolvedIndex(Texture& texture, uint32_t swizzle);
+  bool ReadHostTexture(Texture& texture, std::vector<uint8_t>& rgba, uint32_t& width, uint32_t& height);
+  Texture* crop_source_ = nullptr;
   // Releases a resolved texture once the recording frame has completed.
   void RetireResolved(Texture& texture);
 

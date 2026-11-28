@@ -56,7 +56,10 @@ struct SharedConstants {
     int32_t offset;
     uint32_t size, padding[3];
   } indexedFetches[32]{};
+  // Pixel shader loop constants i16..i31 (XenosRecomp patch 0010): the iteration count is the low byte.
+  uint32_t pixelLoops[16]{};
 };
+static_assert(offsetof(SharedConstants, pixelLoops) == 1312, "XenosRecomp's pixel loop constants");
 static_assert(offsetof(SharedConstants, indexedFetches) == 288, "XenosRecomp's xeIndexedVertexFetch table");
 
 struct ResolvePushConstants {
@@ -881,6 +884,27 @@ Renderer::Texture* Renderer::GetGuestTexture(const xenos::TextureFetch& t) {
   }
   const bool cube = t.dimension == 3;
   const std::vector<xenos::MipLevel> levels = xenos::GetMipLevels(t);
+  static const bool textureLog = getenv("DASH_NGPU_TEXLOG") != nullptr;  // debugging
+  if (textureLog)
+    fprintf(stderr, "[tex] %08X %ux%u fmt %u endian %u %s pitch %u mips %zu mip_address %08X swizzle %03X\n", t.address, t.width,
+            t.height, t.format, t.endian, t.tiled ? "tiled" : "linear", t.pitch, levels.size(), t.mip_address, t.swizzle);
+  if (static const char* dump = getenv("DASH_NGPU_TEXDUMP"); dump && textureLog) {  // raw guest bytes of the textures of a size "WxH" into $DASH_NGPU_TEXDUMP_DIR
+    uint32_t w = 0, h = 0;
+    static int written = 0;
+    static const auto dumpStart = std::chrono::steady_clock::now();
+    static const char* after = getenv("DASH_NGPU_TEXDUMP_AFTER");  // seconds since the first texture before dumping starts
+    if (sscanf(dump, "%ux%u", &w, &h) == 2 && t.width == w && t.height == h && written < 60 &&
+        (!after || std::chrono::duration<double>(std::chrono::steady_clock::now() - dumpStart).count() >= atof(after))) {
+      const char* dir = getenv("DASH_NGPU_TEXDUMP_DIR");
+      char name[512];
+      snprintf(name, sizeof name, "%s/%03d_%08X_%ux%u_f%u_e%u_%s_p%u.bin", dir ? dir : "/tmp", written++, t.address, t.width, t.height,
+               t.format, t.endian, t.tiled ? "tiled" : "linear", t.pitch);
+      if (FILE* f = fopen(name, "wb")) {
+        fwrite(physical_ + (t.address & 0x1FFFFFFF), 1, byteSize, f);
+        fclose(f);
+      }
+    }
+  }
   guest.format = format;
   guest.width = t.width;
   guest.height = t.height;
@@ -1127,7 +1151,7 @@ void Renderer::RetireResolved(Texture& dest) {
 void Renderer::Resolve(const ResolveCall& call) {
   const bool depth = call.flags & 4;
   Texture& source = depth ? GetDepthSurface(call.state) : GetColorSurface(call.state);
-  const uint32_t address = call.state.Reg(0x2319) & 0xFFFFF000;  // RB_COPY_DEST_BASE
+  uint32_t address = call.state.Reg(0x2319) & 0xFFFFF000;  // RB_COPY_DEST_BASE
   const uint32_t destPitch = call.state.Reg(0x231A) & 0x3FFF;      // RB_COPY_DEST_PITCH
   const uint32_t destHeight = (call.state.Reg(0x231A) >> 16) & 0x3FFF;
   int32_t rect[4] = {0, 0, int32_t(destPitch), int32_t(destHeight)};
@@ -1135,16 +1159,32 @@ void Renderer::Resolve(const ResolveCall& call) {
   // The source rect is in surface coordinates; the destination point (or
   // the rect's origin) is where it lands. RB_COPY_DEST_PITCH's height counts
   // from that point (predicated tiling resolves the bands one by one).
-  const int32_t x = call.has_dest_point ? call.dest_x : rect[0];
-  const int32_t y = call.has_dest_point ? call.dest_y : rect[1];
+  int32_t x = call.has_dest_point ? call.dest_x : rect[0];
+  int32_t y = call.has_dest_point ? call.dest_y : rect[1];
+  // A crop (the avatar editor's item thumbnails): the destination point lies in a tall texture whose rows are as wide as the
+  // crop, but the point's x is that of the source (96, for a 128 pitch): the rect overflows the pitch. The hardware writes
+  // whole 32x32 tiles in memory order, tile (y / 32) * pitch tiles + x / 32 first, and so the data is a standalone image that
+  // starts at that tile: the game fetches it there, as a texture of the crop's size.
+  const uint32_t cropWidth = uint32_t(rect[2] - rect[0]), cropHeight = uint32_t(rect[3] - rect[1]);
+  bool crop = false;
+  if (!depth && x >= 0 && y >= 0 && x % 32 == 0 && y % 32 == 0 && destPitch % 32 == 0 && destPitch &&
+      uint32_t(x) + cropWidth > destPitch && cropWidth <= destPitch) {
+    crop = true;
+    crop_source_ = &source;
+    address += ((uint32_t(y) / 32) * (destPitch / 32) + uint32_t(x) / 32) * 0x1000;
+    x = y = 0;
+    ++stats_["resolves of a crop (tile stream)"];
+    if (static const bool log = std::getenv("DASH_NGPU_RESOLVELOG") != nullptr; log)
+      std::fprintf(stderr, "[resolve-crop] dest %08X (%ux%u) from point %d,%d\n", address, cropWidth, cropHeight, call.dest_x, call.dest_y);
+  }
   // Textures are sampled with normalized coordinates, so the host texture has
   // the size the game fetches it at: the destination pitch, unless that is
   // just the width padded to 32 texels.
   const uint32_t rectWidth = uint32_t(rect[2] - rect[0]);
-  const uint32_t width = (rect[0] == 0 && destPitch == ((rectWidth + 31) & ~31u)) ? rectWidth : destPitch;
+  const uint32_t width = crop ? cropWidth : (rect[0] == 0 && destPitch == ((rectWidth + 31) & ~31u)) ? rectWidth : destPitch;
   // Predicated tiling resolves the tiles of one image into the same texture: the destination height is
   // then the image's, and the tile's point lies inside it. Otherwise it counts from the point.
-  const uint32_t height = uint32_t(y) + uint32_t(rect[3] - rect[1]) <= destHeight ? destHeight : uint32_t(y) + destHeight;
+  const uint32_t height = crop ? cropHeight : uint32_t(y) + uint32_t(rect[3] - rect[1]) <= destHeight ? destHeight : uint32_t(y) + destHeight;
   RenderFormat format = source.format;
   const float scale = source.scale, scaleX = source.scale_x;
   const uint32_t hostWidth = uint32_t(width * scaleX), hostHeight = uint32_t(height * scale);
@@ -1162,6 +1202,13 @@ void Renderer::Resolve(const ResolveCall& call) {
     format = RenderFormat::R16G16_UNORM;
   }
 
+  if (static const bool resolveLog = getenv("DASH_NGPU_RESOLVELOG") != nullptr; resolveLog)  // debugging
+    fprintf(stderr, "[resolve f%llu] dest %08X pitch %u height %u rect %d,%d,%d,%d point %d,%d -> %ux%u %s source %ux%u fmt %u flags %X\n",
+            (unsigned long long)frame_number_, address, destPitch, destHeight, rect[0], rect[1], rect[2], rect[3], x, y, width, height,
+            depth ? "depth" : "color", source.width, source.height, unsigned(source.format), call.flags);
+  if (static const bool resolveRegs = getenv("DASH_NGPU_RESOLVELOG") != nullptr && getenv("DASH_NGPU_RESOLVEREGS"); resolveRegs)
+    fprintf(stderr, "[resolveregs] COPY_CONTROL %08X DEST_BASE %08X PITCH %08X INFO %08X 231C %08X 231D %08X 2318 %08X\n", call.state.Reg(0x2318), call.state.Reg(0x2319),
+            call.state.Reg(0x231A), call.state.Reg(0x231B), call.state.Reg(0x231C), call.state.Reg(0x231D), call.state.Reg(0x2317));
   Texture& dest = resolved_[address];
   if (!dest.texture || dest.format != format || dest.width != hostWidth || dest.height < hostHeight) {
     ++texture_generation_;
@@ -1507,6 +1554,25 @@ void Renderer::Draw(const DrawCall& call) {
       entry.size = lastSize;
     }
   }
+  static const char* drawTex = getenv("DASH_NGPU_DRAWTEX");  // debugging: textures of each draw of the first frame after that many seconds
+  static const auto processStart = std::chrono::steady_clock::now();
+  static uint64_t drawTexFrame = 0;
+  static double drawTexNext = drawTex ? atof(drawTex) : 0.0;
+  if (drawTex && drawTexFrame != frame_number_ + 1 && drawTexFrame < frame_number_ &&
+      std::chrono::duration<double>(std::chrono::steady_clock::now() - processStart).count() >= drawTexNext) {
+    drawTexFrame = frame_number_ + 1;  // next frame, in full
+    drawTexNext += atof(drawTex);
+  }
+  if (drawTex && drawTexFrame == frame_number_) {
+    static uint64_t drawIndex = 0;
+    fprintf(stderr, "[drawtex f%llu %llu]", (unsigned long long)frame_number_, (unsigned long long)drawIndex++);
+    for (uint32_t slot = 0; slot < 16; ++slot) {
+      const xenos::TextureFetch t = xenos::DecodeTextureFetch(state, slot);
+      if (t.valid)
+        fprintf(stderr, " s%u:%08X/%08X %ux%u f%u %s p%u sw%03X", slot, t.address, t.mip_address, t.width, t.height, t.format, t.tiled ? "T" : "L", t.pitch, t.swizzle);
+    }
+    fputc('\n', stderr);
+  }
   for (uint32_t slot = 0; slot < 16; ++slot) {
     // A fetch constant already seen, with no texture changed since.
     const uint8_t* fetchConstant = state.data + xenos::device::kFetchConstants + 24 * slot;
@@ -1660,6 +1726,7 @@ void Renderer::Draw(const DrawCall& call) {
   const uint64_t psConstants = uploadConstants(ps_constants_, state.data + xenos::device::kPixelConstants);
   shared.booleans = (state.U32(xenos::device::kVertexBoolConstants) & 0xFF) |
                     ((state.U32(xenos::device::kPixelBoolConstants) & 0xFF) << 16);
+  for (uint32_t i = 0; i < 16; ++i) shared.pixelLoops[i] = state.U32(xenos::device::kPixelLoopConstants + 4 * i);
   shared.alphaThreshold = state.RegF(xenos::reg::RB_ALPHA_REF);
   const uint64_t sharedConstants = Allocate(&shared, sizeof(shared));
   const uint64_t pushConstants[] = {upload_address_ + vsConstants, upload_address_ + psConstants,
@@ -1799,7 +1866,15 @@ bool Renderer::ReadResolved(uint32_t address, std::vector<uint8_t>& rgba, uint32
                                 it->second.format != RenderFormat::R16G16_UNORM)) {
     return false;
   }
-  Texture& texture = it->second;
+  return ReadHostTexture(it->second, rgba, width, height);
+}
+
+bool Renderer::ReadCropSource(std::vector<uint8_t>& rgba, uint32_t& width, uint32_t& height) {
+  if (!crop_source_ || crop_source_->format != RenderFormat::R8G8B8A8_UNORM) return false;
+  return ReadHostTexture(*crop_source_, rgba, width, height);
+}
+
+bool Renderer::ReadHostTexture(Texture& texture, std::vector<uint8_t>& rgba, uint32_t& width, uint32_t& height) {
   width = texture.width;
   height = texture.height;
   auto readback = device_->createBuffer(RenderBufferDesc::ReadbackBuffer(uint64_t(width) * height * 4));
