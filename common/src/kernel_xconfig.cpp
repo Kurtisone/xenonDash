@@ -3,7 +3,8 @@
 // Le SDK n'implémente que quelques réglages (ExGetXConfigSetting : langue, fuseau, région AV...) et laisse ExSetXConfigSetting en
 // stub. XAM recompilé lit et écrit d'autres réglages pendant la création d'un profil et la connexion : compteur de XUID
 // (catégorie 1), adresse MAC (2), profil par défaut / contrôle parental (3), console (7)... Ici :
-//   - ExSetXConfigSetting range la valeur en mémoire (jusqu'à la fin du processus) ;
+//   - ExSetXConfigSetting et le RMW rangent la valeur en mémoire ; les réglages de l'utilisateur et de la console (catégories 3 à 7)
+//     sont en plus écrits dans <game_data_root>/xconfig.toml et relus au lancement suivant (voir « Persistance » plus bas) ;
 //   - ExGetXConfigSetting rend d'abord la valeur rangée, puis celle du SDK, puis, pour un réglage de l'utilisateur (catégorie 3)
 //     ou de la console (7) que le SDK ignore, des zéros de la taille demandée (console neuve : aucun réglage posé).
 // Les catégories 1 (statistiques) et 2 (sécurisées : MAC, clés) restent en échec quand le SDK les ignore : XAM génère alors un XUID
@@ -16,6 +17,7 @@
 #include <cstdint>
 #include <cstring>
 #include <map>
+#include <set>
 #include <mutex>
 #include <optional>
 #include <vector>
@@ -36,6 +38,8 @@
 #include "timezone_table.h"
 
 REXCVAR_DECLARE(std::string, game_data_root);
+REXCVAR_DECLARE(uint32_t, user_language);
+REXCVAR_DECLARE(uint32_t, user_country);
 
 namespace {
 
@@ -44,45 +48,113 @@ std::map<uint32_t, std::vector<uint8_t>> g_values;  // (catégorie << 16 | régl
 
 uint32_t Key(uint32_t category, uint32_t setting) { return (category & 0xFFFF) << 16 | (setting & 0xFFFF); }
 
-// Persistance : UNIQUEMENT 7/0x000C (drapeau de premier lancement), et seulement une valeur écrite par le RMW pendant l'exécution.
-// Fichier : <game_data_root>/xconfig.toml, clé `console_000C` (entier). Absent, illisible ou mal formé : ignoré.
-constexpr uint32_t kPersistedKey = (7u << 16) | 0x000Cu;
+// Persistance. Sur console, les réglages de System Settings (langue, région, affichage, horloge, démarrage, contrôle parental...) sont des
+// XConfig écrits en flash ; ici ExSetXConfigSetting et ExReadModifyWriteXConfigSettingUlong ne gardaient que la mémoire du processus
+// (réglage perdu au lancement suivant, mesure du 2026-11-28 : langue 3/0x0009, RETAIL_FLAGS 3/0x000C pour Chaîne de Bienvenue,
+// format de l'heure et effets sonores, niveaux de référence 3/0x0029, arrêt automatique 7/0x0002). Fichier
+// <game_data_root>/xconfig.toml, table [xconfig], clé `<catégorie>_<réglage hexa>` (ex. `3_0009`), valeur = octets en hexa, dans l'ordre
+// de l'invité. Seules les catégories 3 à 7 (utilisateur et console) sont gardées : les catégories 0 à 2 (statistiques, sécurisées : MAC,
+// clés) ne le sont jamais. Une écriture qui ne change pas la valeur lue (valeur du SDK, fuseau de l'hôte, zéros) n'est pas gardée : les
+// réglages par défaut restent ceux du programme, et un réglage jamais touché par l'utilisateur ne fige rien. Absent, illisible ou mal
+// formé : ignoré. Avant chaque écriture le fichier est relu et fusionné (l'éditeur d'avatar est un autre processus sur le même dossier).
+// Ancien format : `console_000C = <entier>` (7/0x000C seul), toujours lu.
+bool Persistable(uint32_t category) { return category >= 3 && category <= 7; }
 
 std::filesystem::path PersistPath() { return std::filesystem::absolute(REXCVAR_GET(game_data_root)) / "xconfig.toml"; }
+
+std::string ToHex(const std::vector<uint8_t>& b) {
+  std::string s;
+  for (uint8_t c : b) s += fmt::format("{:02X}", c);
+  return s;
+}
+
+bool FromHex(std::string_view s, std::vector<uint8_t>& out) {
+  if (s.empty() || s.size() % 2 || s.size() > 2 * 512) return false;
+  out.clear();
+  for (size_t i = 0; i < s.size(); i += 2) {
+    auto nib = [](char c) -> int { return c >= '0' && c <= '9' ? c - '0' : c >= 'A' && c <= 'F' ? c - 'A' + 10 : c >= 'a' && c <= 'f' ? c - 'a' + 10 : -1; };
+    const int hi = nib(s[i]), lo = nib(s[i + 1]);
+    if (hi < 0 || lo < 0) return false;
+    out.push_back(uint8_t(hi << 4 | lo));
+  }
+  return true;
+}
+
+// Lit le fichier : clé interne -> octets. Vide si absent ou illisible.
+std::map<uint32_t, std::vector<uint8_t>> ReadFile() {
+  std::map<uint32_t, std::vector<uint8_t>> out;
+  const auto path = PersistPath();
+  std::error_code ec;
+  if (!std::filesystem::is_regular_file(path, ec)) return out;
+  try {
+    auto tbl = toml::parse_file(path.string());
+    if (auto* t = tbl["xconfig"].as_table()) {
+      for (auto&& [k, v] : *t) {
+        const std::string key(k.str());
+        auto sv = v.value<std::string>();
+        unsigned cat = 0, set = 0;
+        std::vector<uint8_t> bytes;
+        if (!sv || sscanf(key.c_str(), "%u_%x", &cat, &set) != 2 || !Persistable(cat) || set > 0xFFFF || !FromHex(*sv, bytes)) {
+          REXLOG_WARN("[xconfig] {} : entrée « {} » ignorée", path.string(), key);
+          continue;
+        }
+        out[Key(cat, set)] = bytes;
+      }
+    }
+    if (auto v = tbl["console_000C"].value<int64_t>(); v && *v >= 0 && *v <= 0xFFFFFFFFll && !out.count(Key(7, 0x000C))) {
+      const uint32_t val = static_cast<uint32_t>(*v);
+      out[Key(7, 0x000C)] = {uint8_t(val >> 24), uint8_t(val >> 16), uint8_t(val >> 8), uint8_t(val)};
+    }
+  } catch (const std::exception& e) {
+    REXLOG_WARN("[xconfig] {} illisible ou mal formé, ignoré : {}", path.string(), e.what());
+    out.clear();
+  }
+  return out;
+}
+
+// Clés écrites par ce processus et à garder dans le fichier.
+std::set<uint32_t> g_dirty;
+
+// Effets de bord d'un réglage chargé ou écrit : langue et pays de l'utilisateur lus ailleurs dans le SDK par leurs variables.
+void ApplySideEffects(uint32_t key, const std::vector<uint8_t>& v) {
+  if (key == Key(3, 0x0009) && v.size() == 4) {
+    const uint32_t lang = uint32_t(v[0]) << 24 | uint32_t(v[1]) << 16 | uint32_t(v[2]) << 8 | v[3];
+    if (lang >= 1 && lang <= 12) REXCVAR_SET(user_language, lang);
+  } else if (key == Key(3, 0x000E) && v.size() == 1) {
+    REXCVAR_SET(user_country, uint32_t(v[0]));
+  }
+}
 
 // À appeler avec g_mutex tenu, avant toute lecture/écriture du magasin.
 void LoadPersistedLocked() {
   static bool loaded = false;
   if (loaded) return;
   loaded = true;
-  const auto path = PersistPath();
-  std::error_code ec;
-  if (!std::filesystem::is_regular_file(path, ec)) return;
-  try {
-    auto tbl = toml::parse_file(path.string());
-    auto v = tbl["console_000C"].value<int64_t>();
-    if (!v || *v < 0 || *v > 0xFFFFFFFFll) {
-      REXLOG_WARN("[xconfig] {} : clé console_000C absente ou hors limites, fichier ignoré", path.string());
-      return;
-    }
-    const uint32_t val = static_cast<uint32_t>(*v);
-    auto& bytes = g_values[kPersistedKey];
-    bytes = {uint8_t(val >> 24), uint8_t(val >> 16), uint8_t(val >> 8), uint8_t(val)};
-    REXLOG_INFO("[xconfig] 7/0x000C = 0x{:08X} relu depuis {}", val, path.string());
-  } catch (const std::exception& e) {
-    REXLOG_WARN("[xconfig] {} illisible ou mal formé, ignoré : {}", path.string(), e.what());
+  const auto file = ReadFile();
+  for (const auto& [key, bytes] : file) {
+    g_values[key] = bytes;
+    ApplySideEffects(key, bytes);
+    REXLOG_INFO("[xconfig] {}/0x{:04X} = {} relu depuis {}", key >> 16, key & 0xFFFF, ToHex(bytes), PersistPath().string());
   }
 }
 
-void PersistLocked(uint32_t val) {
+// Écrit le fichier : contenu actuel fusionné avec les clés de g_dirty (valeur de g_values). Avec g_mutex tenu.
+void PersistLocked() {
+  auto merged = ReadFile();
+  for (uint32_t key : g_dirty) {
+    auto it = g_values.find(key);
+    if (it != g_values.end()) merged[key] = it->second;
+  }
   const auto path = PersistPath();
   auto tmp = path;
   tmp += ".tmp";
   std::error_code ec;
   {
     std::ofstream f(tmp, std::ios::trunc);
-    f << "# Réglage XConfig 7/0x000C écrit par le Dashboard (ExReadModifyWriteXConfigSettingUlong).\n"
-      << "console_000C = " << val << "\n";
+    f << "# Réglages de console (XConfig) écrits par le Dashboard : System Settings. Clé <catégorie>_<réglage hexa>, valeur = octets hexa.\n"
+      << "# Supprimer une ligne ou le fichier rend le réglage par défaut.\n"
+      << "[xconfig]\n";
+    for (const auto& [key, bytes] : merged) f << fmt::format("{}_{:04X} = \"{}\"\n", key >> 16, key & 0xFFFF, ToHex(bytes));
     f.flush();
     if (!f) {
       REXLOG_WARN("[xconfig] écriture de {} impossible", tmp.string());
@@ -96,7 +168,7 @@ void PersistLocked(uint32_t val) {
     std::filesystem::remove(tmp, ec);
     return;
   }
-  REXLOG_INFO("[xconfig] 7/0x000C = {} persisté dans {}", val, path.string());
+  REXLOG_INFO("[xconfig] {} réglage(s) persisté(s) dans {}", merged.size(), path.string());
 }
 
 std::string_view Name4(const char (&name)[4]) { return {name, strnlen(name, 4)}; }
@@ -197,29 +269,63 @@ bool TimeZoneSetting(const uint8_t* base, uint32_t setting, uint8_t (&out)[4]) {
   }
 }
 
-// Valeur courante (4 octets) d'un réglage que le magasin ne contient pas : celle du SDK (ExGetXConfigSetting d'origine). Le tampon
+// Valeur du SDK (ExGetXConfigSetting d'origine) d'un réglage que le magasin ne contient pas, sur `size` octets (16 au plus). Le tampon
 // invité est pris sous le pointeur de pile de l'appelant (zone libre : la fonction du SDK est native et n'utilise pas la pile
-// invitée) ; r3-r7 de l'appelant sont restaurés. Faux si le SDK ne connaît pas le réglage.
-bool ReadSdkUlong(PPCContext& ctx, uint8_t* base, uint32_t category, uint32_t setting, uint32_t& out) {
+// invitée) ; r3-r7 de l'appelant sont restaurés. Faux si le SDK ne connaît pas le réglage ou si sa taille n'est pas `size`.
+bool ReadSdkBytes(PPCContext& ctx, uint8_t* base, uint32_t category, uint32_t setting, uint32_t size, std::vector<uint8_t>& out) {
   static PPCFunc* sdk = dash::SdkFunction("__imp__ExGetXConfigSetting");
-  if (!sdk) return false;
+  if (!sdk || size == 0 || size > 16) return false;
   const uint64_t r3 = ctx.r3.u64, r4 = ctx.r4.u64, r5 = ctx.r5.u64, r6 = ctx.r6.u64, r7 = ctx.r7.u64;
   const uint32_t scratch = (ctx.r1.u32 - 0x200) & ~0xFu;
-  std::memset(base + scratch, 0, 16);
+  std::memset(base + scratch, 0, 32);
   ctx.r3.u64 = category;
   ctx.r4.u64 = setting;
   ctx.r5.u64 = scratch;
-  ctx.r6.u64 = 4;
-  ctx.r7.u64 = scratch + 8;
+  ctx.r6.u64 = size;
+  ctx.r7.u64 = scratch + 24;
   sdk(ctx, base);
-  const bool ok = ctx.r3.u32 == 0;
-  if (ok) out = __builtin_bswap32(*reinterpret_cast<const uint32_t*>(base + scratch));
+  const bool ok = ctx.r3.u32 == 0 && __builtin_bswap16(*reinterpret_cast<const uint16_t*>(base + scratch + 24)) == size;
+  if (ok) out.assign(base + scratch, base + scratch + size);
   ctx.r3.u64 = r3;
   ctx.r4.u64 = r4;
   ctx.r5.u64 = r5;
   ctx.r6.u64 = r6;
   ctx.r7.u64 = r7;
   return ok;
+}
+
+bool ReadSdkUlong(PPCContext& ctx, uint8_t* base, uint32_t category, uint32_t setting, uint32_t& out) {
+  std::vector<uint8_t> v;
+  if (!ReadSdkBytes(ctx, base, category, setting, 4, v)) return false;
+  out = uint32_t(v[0]) << 24 | uint32_t(v[1]) << 16 | uint32_t(v[2]) << 8 | v[3];
+  return true;
+}
+
+// Valeur que lirait ExGetXConfigSetting pour un réglage absent du magasin : fuseau de l'hôte, SDK, zéros de la taille demandée pour les
+// réglages que le SDK ignore (catégories 3 et 7), sinon rien. Sert à ne pas garder une écriture qui ne change rien.
+std::optional<std::vector<uint8_t>> DefaultValue(PPCContext& ctx, uint8_t* base, uint32_t category, uint32_t setting, uint32_t size) {
+  if (uint8_t tz[4]; category == 3 && size == 4 && TimeZoneSetting(base, setting, tz)) return std::vector<uint8_t>(tz, tz + 4);
+  if (std::vector<uint8_t> v; ReadSdkBytes(ctx, base, category, setting, size, v)) return v;
+  if ((category == 3 || category == 7) && size <= 512) return std::vector<uint8_t>(size, 0);  // « réglage absent, zéros » de ExGetXConfigSetting
+  return std::nullopt;
+}
+
+// Range la valeur d'un réglage (g_mutex tenu) et, si elle change ce que lirait le Dashboard, la persiste.
+void StoreLocked(PPCContext& ctx, uint8_t* base, uint32_t category, uint32_t setting, std::vector<uint8_t> bytes) {
+  const uint32_t key = Key(category, setting);
+  const auto cur = g_values.find(key);
+  // Fuseau horaire (3/1..7, écrits ensemble par le Dashboard) : gardé en bloc dès qu'un des sept diffère de celui de l'hôte, sinon un
+  // changement d'hôte mélangerait les valeurs choisies et celles de l'hôte.
+  const bool tz = category == 3 && setting >= 1 && setting <= 7;
+  auto tz_dirty = [] { for (uint32_t i = 1; i <= 7; ++i) if (g_dirty.count(Key(3, i))) return true; return false; };
+  const bool changed = (cur != g_values.end() ? cur->second != bytes : DefaultValue(ctx, base, category, setting, uint32_t(bytes.size())) != bytes) ||
+                       (tz && tz_dirty());
+  g_values[key] = bytes;
+  ApplySideEffects(key, bytes);
+  if (!changed || !Persistable(category)) return;  // valeur par défaut réécrite telle quelle : rien à garder
+  g_dirty.insert(key);
+  if (tz) for (uint32_t i = 1; i <= 7; ++i) if (g_values.count(Key(3, i))) g_dirty.insert(Key(3, i));
+  PersistLocked();
 }
 
 }  // namespace
@@ -237,12 +343,11 @@ REX_HOOK_RAW(__imp__ExReadModifyWriteXConfigSettingUlong) {
   uint32_t old = 0;
   if (!stored && ReadSdkUlong(ctx, base, category, setting, old))
     REXLOG_INFO("[xconfig] RMW({}, 0x{:04X}) : valeur de départ du SDK 0x{:08X}", category, setting, old);
-  auto& bytes = g_values[Key(category, setting)];
-  if (bytes.size() == 4) old = uint32_t(bytes[0]) << 24 | uint32_t(bytes[1]) << 16 | uint32_t(bytes[2]) << 8 | bytes[3];
+  if (auto it = g_values.find(Key(category, setting)); it != g_values.end() && it->second.size() == 4)
+    old = uint32_t(it->second[0]) << 24 | uint32_t(it->second[1]) << 16 | uint32_t(it->second[2]) << 8 | it->second[3];
   const uint32_t val = (old & andMask) | orMask;
-  bytes = {uint8_t(val >> 24), uint8_t(val >> 16), uint8_t(val >> 8), uint8_t(val)};
   REXLOG_INFO("[xconfig] RMW({}, 0x{:04X}) : 0x{:08X} -> 0x{:08X}", category, setting, old, val);
-  if (Key(category, setting) == kPersistedKey) PersistLocked(val);
+  StoreLocked(ctx, base, category, setting, {uint8_t(val >> 24), uint8_t(val >> 16), uint8_t(val >> 8), uint8_t(val)});
   ctx.r3.u64 = 0;
 }
 
@@ -256,7 +361,7 @@ REX_HOOK_RAW(__imp__ExSetXConfigSetting) {
   {
     std::lock_guard lock(g_mutex);
     LoadPersistedLocked();
-    g_values[Key(category, setting)].assign(base + buf, base + buf + size);
+    StoreLocked(ctx, base, category, setting, std::vector<uint8_t>(base + buf, base + buf + size));
   }
   std::string hex;
   for (uint32_t i = 0; i < size && i < 8; ++i) hex += fmt::format("{:02X}", base[buf + i]);
@@ -281,6 +386,10 @@ REX_HOOK_RAW(__imp__ExGetXConfigSetting) {
         return;
       }
       std::memcpy(base + buf, it->second.data(), it->second.size());
+      static std::map<uint32_t, int> read_logged;  // sous g_mutex
+      if (read_logged[Key(category, setting)]++ < 3)
+        REXLOG_INFO("[xconfig] ExGetXConfigSetting({}, 0x{:04X}) = {} (lr {:08X})", category, setting, ToHex(it->second),
+                    static_cast<uint32_t>(ctx.lr));
       ctx.r3.u64 = 0;
       return;
     }
@@ -320,3 +429,15 @@ REX_HOOK_RAW(__imp__ExGetXConfigSetting) {
     REXLOG_INFO("[xconfig] ExGetXConfigSetting({}, 0x{:04X}, {} octets) -> 0x{:08X}", category, setting, size, status);
   }
 }
+
+namespace dash::xconfig {
+// Langue de la console (1 à 12, anglais par défaut) : XConfig 3/0x0009, relu du fichier au premier appel.
+uint32_t Language() {
+  {
+    std::lock_guard lock(g_mutex);
+    LoadPersistedLocked();
+  }
+  const uint32_t lang = REXCVAR_GET(user_language);
+  return lang >= 1 && lang <= 12 ? lang : 1;
+}
+}  // namespace dash::xconfig

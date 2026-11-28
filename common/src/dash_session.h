@@ -38,4 +38,11 @@ std::array<uint64_t, 4> SignedInXuids(const PPCContext& ctx, uint8_t* base);
 // attend la fin de la connexion (30 s au plus) : le titre démarre ensuite avec l'utilisateur déjà connecté. Sans fichier : ne fait rien.
 void Restore(rex::system::KernelState* ks);
 
+// Retour de l'éditeur d'avatar : les données de lancement rendues portent la commande 0x35, qu'aucun gestionnaire du Dashboard ne
+// traite (le Dashboard démarre alors sur son canal par défaut, Welcome). Sur console l'utilisateur revient là d'où il est parti,
+// My Xbox : le Dashboard natif demande ce canal (dashboards/<version>/src/dash_return_channel.cpp). Vrai tant que la demande n'a
+// pas été honorée ; ReturnToMyXboxDone() la retire.
+bool ReturnToMyXbox();
+void ReturnToMyXboxDone();
+
 }  // namespace dash::session

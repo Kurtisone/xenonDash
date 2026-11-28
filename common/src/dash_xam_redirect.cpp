@@ -1224,7 +1224,8 @@ void Configure(rex::system::KernelState* ks, rex::runtime::ExportResolver* resol
                     "XamShowKeyboardUI,XamShowSigninUI,XamShowSigninUIp,XamShowCreateProfileUI,XamShowDeviceSelectorUI,"
                     "XamShowGamerCardUIForXUID,XamShowGuideUI,"
                     "XamShowAchievementsUIEx,XamShowGamerCardUI,XNotifyQueueUI,"
-                    "XamAppUnloadStack,XamFormatDateString,XamFormatTimeString,";
+                    "XamAppUnloadStack,XamFormatDateString,XamFormatTimeString,"
+                    "XGetLanguage,";  // SDK : toujours l'anglais ; XAM lit XConfig 3/0x0009 (réglage Language, persisté)
     redirect_list += kAvatarImports;
     if (const char* e = std::getenv("DASH_XAM_REDIRECT"); e && *e) redirect_list += std::string(",") + e;
     REXLOG_INFO("[xamredir] DASH_PROFILE_MODE=xam : redirections {}", redirect_list);

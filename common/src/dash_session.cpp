@@ -83,13 +83,21 @@ bool Read(Session& s) {
 }
 
 std::atomic<bool> g_logon_done{false};
+std::atomic<bool> g_return_my_xbox{false};
 }  // namespace
+
+bool ReturnToMyXbox() { return g_return_my_xbox.load(); }
+void ReturnToMyXboxDone() { g_return_my_xbox.store(false); }
 
 void Restore(rex::system::KernelState* ks) {
   Session s;
   if (!Read(s)) return;
   REXLOG_INFO("[session] lue : {} compte(s), {} octets de données de lancement", int(!!s.xuid[0]) + int(!!s.xuid[1]) + int(!!s.xuid[2]) + int(!!s.xuid[3]),
               s.launch.size());
+  if (s.launch.size() >= 8)
+    REXLOG_INFO("[session] données de lancement : commande (+4) {:#x}, début {}", uint32_t(s.launch[4]) << 24 | uint32_t(s.launch[5]) << 16 | uint32_t(s.launch[6]) << 8 | s.launch[7],
+                Hex(std::vector<uint8_t>(s.launch.begin(), s.launch.begin() + std::min<size_t>(s.launch.size(), 96))));
+  if (s.launch.size() >= 8 && s.launch[4] == 0 && s.launch[5] == 0 && s.launch[6] == 0 && s.launch[7] == 0x35) g_return_my_xbox.store(true);
   if (!s.launch.empty()) {
     if (auto xam = ks->GetKernelModule<rex::kernel::xam::XamModule>("xam.xex")) {
       auto& ld = xam->loader_data();

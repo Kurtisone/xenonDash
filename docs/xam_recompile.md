@@ -109,8 +109,7 @@ git (liste en fin de fichier). État courant : `docs/REPRISE.md`. Les mesures da
   court, journal `avatar.log`). L'import génère `shaders/avatar` depuis `SystemExtPartition/20352400/AvatarEditor.xex` (89 shaders sur 91 ;
   `92093410_PS` et `92093B30_PS` : constante de boucle `i16` des pixel shaders, non fournie hors extensions Trials). Banc : `banc.py start --appimage`.
   Restes mesurés (phase 3) : icônes d'objets des grilles (Tops...) vides ou brouillées alors que XamPngDecode réussit (PNG 64x64 et 32x32 bien décodés,
-  pas de texture périmée ni de shader manquant : à chercher côté textures XUI) ; retour au Dashboard sur Welcome (commande 0x35 des données de
-  retour non traitée par la chaîne de `sub_9216B740`).
+  pas de texture périmée ni de shader manquant : à chercher côté textures XUI). Retour au Dashboard : voir « Retour de l'éditeur d'avatar » (section 5).
 - « Customize Avatar » de dash.xex (`sub_9231DC28`) : `XamPackageManagerGetExperienceMode` (retour `0x9231DC44`) et `XamPackageManagerGetFileSize`
   (retour `0x9231DC64`) vont à XAM recompilé pour CET appel seulement (mesuré le 2026-11-26 : mode `0x2`, `AvatarEditor.xex` 15 556 608 octets
   dans l'index) ; ailleurs le HLE (r3 = 0), car la redirection globale ouvre `AvatarEditor.xex` au démarrage. Le Dashboard appelle alors
@@ -232,6 +231,7 @@ git (liste en fin de fichier). État courant : `docs/REPRISE.md`. Les mesures da
 | `NetDll_WSAStartupEx` = `NetDll_WSAStartup` | `signin.xex` l'appelle par `XexGetProcedureAddress(xam, 36)` ; le stub rendait 2 : « temporarily unavailable, 80004005 » |
 | `Rtl*String`, `ObTranslateSymbolicLink`, `NtOpenSymbolicLinkObject`, `XeKeysObfuscate`, `StfsCreateDevice`, `XeCryptMd5`, `Ex*XConfigSetting` | création de profil (voir ci-dessous) |
 | RMW XConfig (`kernel_xconfig.cpp`) | `ExReadModifyWriteXConfigSettingUlong` part de la valeur du SDK : Getting Started effaçait le bit `0x40` « console configurée » et déconnectait les profils |
+| Réglages persistants (`kernel_xconfig.cpp`, `kernel_stubs.cpp`) | XConfig 3 (utilisateur, dont langue 3/9, `RETAIL_FLAGS` 3/0xC : Welcome masqué, horloge 24 h, effets sonores, niveaux de référence 3/0x29), 4..7 (console : arrêt auto 7/2, lecture auto 7/6) et fuseau 3/1..7 écrits par `ExSetXConfigSetting`/`ExReadModifyWriteXConfigSettingUlong` vont dans `<game_data_root>/xconfig.toml` (table `[xconfig]`, clé `<catégorie>_<réglage hexa>`, octets en hexa ; fusion avec le fichier, renommage atomique ; une valeur égale à la valeur par défaut n'est pas écrite ; supprimer une ligne rend le défaut). Les catégories 1 et 2 (sécurisées, statistiques) restent en mémoire. La langue de l'interface vient de `XamGetLanguage` (HLE, `dash::xconfig::Language()` = 3/9 persisté, 1 sans fichier) et de `XGetLanguage` (redirigé vers XAM par défaut) : avant, le HLE rendait toujours 1 et la langue choisie était perdue même quand le réglage était gardé. Non couvert : date et heure (horloge de l'hôte), région (grisée), Remote Control (aucune écriture observée), Family Settings (code d'accès non pilotable au banc), réglages par profil (`XamUserWriteProfileSettings` : binaires seulement, utilisateur 0) |
 | Fuseau horaire (`kernel_xconfig.cpp`, `host_timezone.h`, `timezone_table.h`) | XConfig 3/1..7 depuis l'hôte, table cherchée dans l'image de tout Dashboard ; noms vides en 17559 (ils font planter Clock) |
 | Trap non fatal (SDK `function_dispatcher.cpp`, `f2c7948`) | appel indirect invité vers 0 avortait le processus (sortie de Game Library) ; journal borné, `r3 = 0` |
 | Journal sans `[error]` (SDK `dec33681`) | périphériques/modules absents, XLIVEBASE hors ligne : un avertissement par cas ; `tools/banc_suite.py` échoue sur toute ligne `[error]` |
@@ -313,6 +313,7 @@ Interface Xbox seule (To-Do 1 et 4) :
 | `DASH_TRACE_VD`, `DASH_TRACE_VD_SCAN`, `DASH_TRACE_VD_DUMP` | descripteur et contenu PM4 du tampon système |
 | `DASH_GUIDE_TRACE=1`, `DASH_LOGON_TRACE=1`, `DASH_WATCH_APPS=1` | traces de l'ouverture du Guide, de la tâche de connexion (`sub_818B2BF8`), de l'application active `0x817E4B64` |
 | `DASH_TEST_MSGBOX`, `DASH_TEST_KEYBOARD`, `DASH_TEST_SIGNIN`, `DASH_TEST_CREATEPROFILE`, `DASH_TEST_GUIDE`, `DASH_TEST_BUILDBOX=start|fail|progress` (secondes ; `_WAIT` borne l'attente), `DASH_TEST_UI=<s>` + `DASH_TEST_UI_CALL="Import:arg,arg,w:texte;..."`, `DASH_TEST_PEEK=<adresse>` | déclenchent une fenêtre du HUD sans manette (`DASH_TEST_UI_CALL` appelle n'importe quel import hooké) ; mémoire invitée |
+| `DASH_RETURN_CHANNEL=0` | retour de l'éditeur d'avatar sur Welcome au lieu de My Xbox (diagnostic) |
 | `DASH_AUDIO=nop`, `DASH_RETURNED_FROM`, `DASH_XENIA` | audio muet ; titre dont on revient ; binaire Xenia |
 | `REX_LOG_THREADS`, `REX_LOG_DLLMAIN` | instrumentation du SDK (création de fils, `DllMain`) |
 
@@ -337,6 +338,17 @@ bits : 0 → 4 au boot → 0) est non nul ; `ShowXamGuide` le remet à 0 le temp
 `UIstate(0x81BFCAE8)+172 != 0`, `+176 != 0`, `+216 == 0` ; avec `XeKeysGetStatus = 0x4` le fil du HUD (`sub_818A2F90` → `sub_818A2C98`) les pose
 lui-même (plus de `0x80000012` à la main). Le Guide s'affiche (lames Marketplace/Games/Home/Media/Settings, Sign In, horloge locale) et les boîtes
 système se ferment au bouton B. Le Guide et le HUD sont inséparables (`DASH_HUD_DISABLE=1` : accepté mais invisible).
+
+### Retour de l'éditeur d'avatar (2026-11-28)
+- « Save and Exit » de `avatar` : `XamLoaderSetLaunchData` (1020 octets, commande `0x35`, ou `0x41` selon l'origine) puis `XamLoaderLaunchTitleEx(NULL)` ; le superviseur
+  écrit `session.txt`, le Dashboard relancé la lit (`dash::session::Restore`). La commande `0x35` n'est traitée par aucun gestionnaire de `sub_9216B740` : le Dashboard
+  démarre comme sans données de lancement. Le canal n'est ni un réglage XConfig, ni le contexte de Dashboard (`XamSetDashContext`, toujours 0), ni un réglage de profil.
+- Cause du retour sur Welcome : `sub_92300258` (configuration de la page d'accueil, liste des canaux en +0x48, canal demandé en +0x58 : pointeur vers l'identifiant large)
+  prend WELCOME tant que le canal n'est pas masqué (`RETAIL_FLAGS`, `& 0x8000000`) et qu'aucun canal n'est demandé ; `defaultchannelid` de `homepage.xzp` (XBOX360) ne sert
+  que sans Welcome. Premier démarrage hors ligne (aucun profil) : My Xbox.
+- Correctif : `dashboards/2.0.13604.0-xam/src/dash_return_channel.cpp` entoure `sub_92300258` ; si les données de lancement rendues portent `0x35`
+  (`dash::session::ReturnToMyXbox`), il pose +0x58 = identifiant large « XBOX360 » du Dashboard (`0x9202B2E0`) jusqu'à ce que la liste fournisse un canal. Welcome reste dans la liste.
+  `DASH_RETURN_CHANNEL=0` désactive. Banc : sans le correctif Welcome (`r2`), avec lui My Xbox (`r3`).
 
 ### Avatar (banc, 2026-11-24)
 - L'avatar choisi s'affiche en couleur sur le XMB. Causes de la silhouette grise, toutes corrigées : `LDI*` (LZX) stubs (`xam_kernel_stubs.cpp`,

@@ -50,8 +50,12 @@ std::atomic<u32> g_dash_context{0};
 
 }  // namespace dash::stubs
 
-// XamGetLanguage() : langue du système (XC_LANGUAGE_ENGLISH = 1).
-REX_HOOK_RAW(__imp__XamGetLanguage) { (void)base; ctx.r3.u64 = 1; }
+// XamGetLanguage() : langue du système, réglage XConfig 3/0x0009 (kernel_xconfig.cpp : persisté, 1 = anglais par défaut). Le Dashboard
+// l'appelle en une dizaine d'endroits (chaînes, polices) : une valeur fixe laissait l'interface en anglais après un changement de langue.
+namespace dash::xconfig {
+uint32_t Language();
+}
+REX_HOOK_RAW(__imp__XamGetLanguage) { (void)base; ctx.r3.u64 = dash::xconfig::Language(); }
 // XamSetDashContext(ctx) / XamGetDashContext() : contexte courant du Dashboard (conservé tel quel).
 REX_HOOK_RAW(__imp__XamSetDashContext) { (void)base; dash::stubs::g_dash_context = ctx.r3.u32; ctx.r3.u64 = 0; }
 REX_HOOK_RAW(__imp__XamGetDashContext) { (void)base; ctx.r3.u64 = dash::stubs::g_dash_context.load(); }
